@@ -11,16 +11,12 @@ pub struct Timestamp {
 }
 
 impl Timestamp {
-    #[must_use]
-    pub const fn from_unix_seconds(unix_seconds: i64) -> Self {
-        Self {
-            unix_seconds,
-            subsec_nanos: 0,
-        }
+    pub fn from_unix_seconds(unix_seconds: i64) -> Result<Self, MemoriaError> {
+        Self::from_parts(unix_seconds, 0)
     }
 
     pub fn from_parts(unix_seconds: i64, subsec_nanos: u32) -> Result<Self, MemoriaError> {
-        if subsec_nanos >= 1_000_000_000 {
+        if unix_seconds < 0 || subsec_nanos >= 1_000_000_000 {
             return Err(MemoriaError::InvalidTimestamp {
                 value: format!("{unix_seconds}.{subsec_nanos:09}"),
             });
@@ -62,9 +58,16 @@ impl Timestamp {
         self.subsec_nanos
     }
 
-    #[must_use]
-    pub fn as_system_time(self) -> SystemTime {
-        UNIX_EPOCH + Duration::new(self.unix_seconds as u64, self.subsec_nanos)
+    pub fn as_system_time(self) -> Result<SystemTime, MemoriaError> {
+        let seconds =
+            u64::try_from(self.unix_seconds).map_err(|_| MemoriaError::InvalidTimestamp {
+                value: self.unix_seconds.to_string(),
+            })?;
+        UNIX_EPOCH
+            .checked_add(Duration::new(seconds, self.subsec_nanos))
+            .ok_or_else(|| MemoriaError::InvalidTimestamp {
+                value: format!("{}.{:09}", self.unix_seconds, self.subsec_nanos),
+            })
     }
 }
 
@@ -83,11 +86,18 @@ mod tests {
         let timestamp = Timestamp::from_system_time(system_time).unwrap();
         assert_eq!(timestamp.unix_seconds(), 42);
         assert_eq!(timestamp.subsec_nanos(), 123_456_700);
-        assert_eq!(timestamp.as_system_time(), system_time);
+        assert_eq!(timestamp.as_system_time().unwrap(), system_time);
     }
 
     #[test]
     fn timestamp_rejects_out_of_range_nanoseconds() {
         assert!(Timestamp::from_parts(42, 1_000_000_000).is_err());
+    }
+
+    #[test]
+    fn timestamp_rejects_negative_seconds_without_wrapping_to_u64() {
+        assert!(Timestamp::from_unix_seconds(-1).is_err());
+        assert!(Timestamp::from_parts(-1, 0).is_err());
+        assert!(Timestamp::from_system_time(UNIX_EPOCH - Duration::from_secs(1)).is_err());
     }
 }

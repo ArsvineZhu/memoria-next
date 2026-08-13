@@ -90,28 +90,24 @@ define_generation!(AdaptiveGeneration, "adaptive generation");
 #[derive(
     Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum RevisionSemanticIntent {
     #[default]
-    Create,
-    Amend,
-    Retract,
-    Supersede,
-}
-
-impl RevisionSemanticIntent {
-    #[must_use]
-    pub const fn is_retraction(self) -> bool {
-        matches!(self, Self::Retract)
-    }
+    Edit,
+    Transition,
+    Correction,
+    Supersession,
+    Merge,
 }
 
 impl fmt::Display for RevisionSemanticIntent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
-            Self::Create => "create",
-            Self::Amend => "amend",
-            Self::Retract => "retract",
-            Self::Supersede => "supersede",
+            Self::Edit => "edit",
+            Self::Transition => "transition",
+            Self::Correction => "correction",
+            Self::Supersession => "supersession",
+            Self::Merge => "merge",
         };
         formatter.write_str(value)
     }
@@ -122,10 +118,11 @@ impl FromStr for RevisionSemanticIntent {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "create" => Ok(Self::Create),
-            "amend" => Ok(Self::Amend),
-            "retract" => Ok(Self::Retract),
-            "supersede" => Ok(Self::Supersede),
+            "edit" => Ok(Self::Edit),
+            "transition" => Ok(Self::Transition),
+            "correction" => Ok(Self::Correction),
+            "supersession" => Ok(Self::Supersession),
+            "merge" => Ok(Self::Merge),
             value => Err(MemoriaError::Serialization(format!(
                 "unknown revision semantic intent `{value}`"
             ))),
@@ -161,10 +158,26 @@ mod tests {
     }
 
     #[test]
-    fn revision_semantic_intent_round_trips_as_stable_text() {
-        let intent = RevisionSemanticIntent::Retract;
-        assert_eq!(intent.to_string(), "retract");
-        assert_eq!(RevisionSemanticIntent::from_str("retract").unwrap(), intent);
-        assert!(intent.is_retraction());
+    fn revision_semantic_intents_round_trip_all_contract_values() {
+        let cases = [
+            (RevisionSemanticIntent::Edit, "edit"),
+            (RevisionSemanticIntent::Transition, "transition"),
+            (RevisionSemanticIntent::Correction, "correction"),
+            (RevisionSemanticIntent::Supersession, "supersession"),
+            (RevisionSemanticIntent::Merge, "merge"),
+        ];
+
+        for (intent, text) in cases {
+            assert_eq!(intent.to_string(), text);
+            assert_eq!(RevisionSemanticIntent::from_str(text).unwrap(), intent);
+            assert_eq!(
+                serde_json::to_string(&intent).unwrap(),
+                format!("\"{text}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<RevisionSemanticIntent>(&format!("\"{text}\"")).unwrap(),
+                intent
+            );
+        }
     }
 }
