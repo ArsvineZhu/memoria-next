@@ -330,6 +330,7 @@ impl MemoriaRuntime {
         let work = NeedWork::Embeddings(crate::EmbeddingBatchRequest {
             work_id,
             signature: "memoria-embedding-v1".to_owned(),
+            dimensions: 3,
             items: vec![crate::EmbeddingItem {
                 key: memory_id.to_string(),
                 text: String::from_utf8_lossy(source).into_owned(),

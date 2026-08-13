@@ -136,6 +136,7 @@ pub struct JsProviderWork {
     pub work_id: String,
     pub work_type: String,
     pub signature: String,
+    pub dimensions: u32,
     pub items: Vec<JsProviderItem>,
     pub query: Option<String>,
     pub candidates: Vec<String>,
@@ -149,6 +150,7 @@ impl From<NeedWork> for JsProviderWork {
                 work_id: request.work_id,
                 work_type: "embedding".to_owned(),
                 signature: request.signature,
+                dimensions: u32::try_from(request.dimensions).unwrap_or(u32::MAX),
                 items: request
                     .items
                     .into_iter()
@@ -165,6 +167,7 @@ impl From<NeedWork> for JsProviderWork {
                 work_id: request.work_id,
                 work_type: "rerank".to_owned(),
                 signature: request.signature,
+                dimensions: 0,
                 items: Vec::new(),
                 query: Some(request.query),
                 candidates: request.candidates,
@@ -174,6 +177,7 @@ impl From<NeedWork> for JsProviderWork {
                 work_id: request.work_id,
                 work_type: "enrichment".to_owned(),
                 signature: request.signature,
+                dimensions: 0,
                 items: Vec::new(),
                 query: None,
                 candidates: Vec::new(),

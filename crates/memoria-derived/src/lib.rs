@@ -2,6 +2,7 @@ mod artifact;
 mod catalog;
 mod compiler;
 mod dependency;
+mod embedding;
 mod gc;
 mod lease;
 mod manifest;
@@ -17,6 +18,11 @@ pub use artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
 pub use catalog::DerivedCatalog;
 pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
+pub use embedding::{
+    EmbeddingCacheKey, EmbeddingNormalization, EmbeddingPayloadCache, EmbeddingResult,
+    EmbeddingResultItem, EmbeddingSignature, EmbeddingVector, EmbeddingWork, EmbeddingWorkItem,
+    default_content_signature, validate_embedding_result,
+};
 pub use gc::{DerivedGc, GcReport};
 pub use lease::ManifestLease;
 pub use manifest::{CapabilityStatus, DerivedManifest, ManifestId};

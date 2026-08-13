@@ -8,6 +8,11 @@ export interface EmbeddingProvider {
   execute(work: EmbeddingWork, signal: AbortSignal): Promise<unknown>;
 }
 
+export interface EmbeddingPayload {
+  key: string;
+  values: number[];
+}
+
 export interface RerankProvider {
   execute(work: RerankWork, signal: AbortSignal): Promise<unknown>;
 }
@@ -37,6 +42,7 @@ export interface ProviderHostOptions {
 export interface ProviderResult {
   workId: string;
   accepted: boolean;
+  embeddings?: EmbeddingPayload[];
 }
 
 export class ProviderExecutionError extends Error {
@@ -44,9 +50,11 @@ export class ProviderExecutionError extends Error {
   readonly attempts: number;
 
   constructor(providerType: ProviderType, attempts: number, cause: unknown) {
-    super(`${providerType} provider failed after ${attempts} attempt(s)`, {
-      cause,
-    });
+    const reason = cause instanceof Error ? `: ${cause.message}` : "";
+    super(
+      `${providerType} provider failed after ${attempts} attempt(s)${reason}`,
+      { cause },
+    );
     this.name = "ProviderExecutionError";
     this.providerType = providerType;
     this.attempts = attempts;

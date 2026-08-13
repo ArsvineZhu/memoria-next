@@ -43,6 +43,7 @@ export interface JsProviderWork {
   workId: string
   workType: string
   signature: string
+  dimensions: number
   items: Array<JsProviderItem>
   query?: string
   candidates: Array<string>

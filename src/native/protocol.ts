@@ -51,6 +51,7 @@ export interface NativeProviderWork {
   workId: string;
   workType: string;
   signature: string;
+  dimensions: number;
   items: NativeProviderItem[];
   query?: string;
   candidates: string[];
@@ -88,6 +89,7 @@ export type NeedWork =
       type: "embedding";
       workId: string;
       signature: string;
+      dimensions: number;
       items: Array<{ key: string; text: string }>;
     }
   | {
@@ -111,6 +113,7 @@ export function toNeedWork(work: NativeProviderWork): NeedWork {
         type: "embedding",
         workId: work.workId,
         signature: work.signature,
+        dimensions: work.dimensions,
         items: work.items,
       };
     case "rerank":

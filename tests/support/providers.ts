@@ -1,7 +1,7 @@
 import type { EmbeddingProvider } from "../../src/providers/types.js";
 
 interface PendingEmbedding {
-  resolve: () => void;
+  resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 }
 
@@ -14,9 +14,15 @@ export interface DeferredEmbeddingProvider extends EmbeddingProvider {
 export function deferredEmbeddingProvider(): DeferredEmbeddingProvider {
   const pending: PendingEmbedding[] = [];
   return {
-    execute(_work, _signal) {
-      return new Promise<void>((resolve, reject) => {
-        pending.push({ resolve, reject });
+    execute(work, _signal) {
+      return new Promise<unknown>((resolve, reject) => {
+        pending.push({
+          resolve: () =>
+            resolve({
+              vectors: [Array.from({ length: work.dimensions }, () => 0)],
+            }),
+          reject,
+        });
       });
     },
     pendingCount() {
@@ -25,7 +31,7 @@ export function deferredEmbeddingProvider(): DeferredEmbeddingProvider {
     resolveAll() {
       const work = pending.splice(0);
       for (const item of work) {
-        item.resolve();
+        item.resolve(undefined);
       }
     },
     rejectAll(error = new Error("deferred provider rejected")) {

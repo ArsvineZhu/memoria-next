@@ -1,6 +1,8 @@
 import type { NeedWork } from "../native/protocol.js";
 import {
   ProviderExecutionError,
+  type EmbeddingPayload,
+  type EmbeddingWork,
   type ProviderHostOptions,
   type ProviderResult,
   type ProviderSet,
@@ -37,8 +39,12 @@ export class ProviderHost {
         throw new DOMException("The operation was aborted", "AbortError");
       }
       try {
-        await this.executeOnce(egressWork, signal);
-        return { workId: work.workId, accepted: true };
+        const providerResult = await this.executeOnce(egressWork, signal);
+        const embeddings =
+          egressWork.type === "embedding"
+            ? validateEmbeddingPayload(egressWork, providerResult)
+            : undefined;
+        return { workId: work.workId, accepted: true, embeddings };
       } catch (error) {
         lastError = error;
         if (signal.aborted || attempt === this.#maxAttempts) {
@@ -56,32 +62,62 @@ export class ProviderHost {
   private async executeOnce(
     work: NeedWork,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<unknown> {
     switch (work.type) {
       case "embedding": {
         const provider = this.#providers.embedding;
         if (!provider) {
           throw new Error("embedding provider is not configured");
         }
-        await provider.execute(work, signal);
-        break;
+        return provider.execute(work, signal);
       }
       case "rerank": {
         const provider = this.#providers.rerank;
         if (!provider) {
           throw new Error("rerank provider is not configured");
         }
-        await provider.execute(work, signal);
-        break;
+        return provider.execute(work, signal);
       }
       case "enrichment": {
         const provider = this.#providers.enrichment;
         if (!provider) {
           throw new Error("enrichment provider is not configured");
         }
-        await provider.execute(work, signal);
-        break;
+        return provider.execute(work, signal);
       }
     }
   }
+}
+
+function validateEmbeddingPayload(
+  work: EmbeddingWork,
+  result: unknown,
+): EmbeddingPayload[] {
+  const vectors = Array.isArray(result)
+    ? result
+    : result && typeof result === "object" && "vectors" in result
+      ? (result as { vectors: unknown }).vectors
+      : undefined;
+  if (!Array.isArray(vectors) || vectors.length !== work.items.length) {
+    throw new Error("embedding provider returned the wrong item count");
+  }
+  return vectors.map((vector, index) => {
+    const values = Array.isArray(vector)
+      ? vector
+      : vector && typeof vector === "object" && "values" in vector
+        ? (vector as { values: unknown }).values
+        : undefined;
+    if (
+      !Array.isArray(values) ||
+      values.length !== work.dimensions ||
+      values.some(
+        (value) => typeof value !== "number" || !Number.isFinite(value),
+      )
+    ) {
+      throw new Error(
+        `embedding dimension/value validation failed for item ${work.items[index]?.key ?? index}`,
+      );
+    }
+    return { key: work.items[index].key, values: [...values] };
+  });
 }

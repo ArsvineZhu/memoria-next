@@ -17,6 +17,7 @@ test("provider host preserves work id", async () => {
       type: "embedding",
       workId: "W1",
       signature: "embedding-v1",
+      dimensions: 3,
       items: [{ key: "u1", text: "career" }],
     },
     new AbortController().signal,
@@ -36,6 +37,7 @@ test("provider host retries provider-specific failures and applies egress policy
           if (attempts === 1) {
             throw new Error("transient network failure");
           }
+          return [[1, 0, 0]];
         },
       },
     },
@@ -56,6 +58,7 @@ test("provider host retries provider-specific failures and applies egress policy
       type: "embedding",
       workId: "W2",
       signature: "embedding-v1",
+      dimensions: 3,
       items: [{ key: "u2", text: "private career note" }],
     },
     new AbortController().signal,
@@ -80,6 +83,7 @@ test("provider host exposes bounded provider failure", async () => {
           type: "embedding",
           workId: "W3",
           signature: "embedding-v1",
+          dimensions: 3,
           items: [{ key: "u3", text: "career" }],
         },
         new AbortController().signal,

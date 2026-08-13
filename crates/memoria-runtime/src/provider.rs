@@ -8,6 +8,7 @@ pub struct EmbeddingItem {
 pub struct EmbeddingBatchRequest {
     pub work_id: String,
     pub signature: String,
+    pub dimensions: usize,
     pub items: Vec<EmbeddingItem>,
 }
 
