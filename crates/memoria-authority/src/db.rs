@@ -3,11 +3,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use memoria_types::AuthorityGeneration;
+use memoria_types::{AuthorityGeneration, MemoriaError};
 use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::model::{
-    AuthorityTransaction, AuthorityWriteResult, authority_generation, schema_error,
+    AuthorityTransaction, AuthorityWriteResult, authority_generation, database_error, schema_error,
     sqlite_conversion_error, sqlite_generation,
 };
 use crate::schema::{
@@ -76,6 +76,64 @@ impl AuthorityDb {
         transaction.transaction.commit()?;
 
         Ok(AuthorityWriteResult::new(value, next_generation))
+    }
+
+    pub(crate) fn write_memoria<F, T>(
+        &self,
+        operation: F,
+    ) -> Result<AuthorityWriteResult<T>, MemoriaError>
+    where
+        F: for<'tx> FnOnce(&mut AuthorityTransaction<'tx>) -> Result<T, MemoriaError>,
+    {
+        let mut connection = self.open_connection().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let base_generation = transaction
+            .query_row(
+                "SELECT generation FROM authority_generation WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .and_then(authority_generation)
+            .map_err(database_error)?;
+        let next_generation =
+            base_generation
+                .checked_next()
+                .ok_or_else(|| MemoriaError::Database {
+                    message: "authority generation exhausted".to_owned(),
+                })?;
+        let mut transaction =
+            AuthorityTransaction::new(transaction, base_generation, next_generation);
+
+        let value = operation(&mut transaction)?;
+        let base_generation_value = sqlite_generation(base_generation).map_err(database_error)?;
+        let next_generation_value = sqlite_generation(next_generation).map_err(database_error)?;
+        let updated = transaction
+            .transaction
+            .execute(
+                "UPDATE authority_generation
+                 SET generation = ?1
+                 WHERE id = 1 AND generation = ?2",
+                params![next_generation_value, base_generation_value],
+            )
+            .map_err(database_error)?;
+        if updated != 1 {
+            return Err(MemoriaError::Database {
+                message: "authority generation compare-and-swap failed".to_owned(),
+            });
+        }
+        transaction.transaction.commit().map_err(database_error)?;
+
+        Ok(AuthorityWriteResult::new(value, next_generation))
+    }
+
+    pub(crate) fn read<F, T>(&self, operation: F) -> rusqlite::Result<T>
+    where
+        F: FnOnce(&Connection) -> rusqlite::Result<T>,
+    {
+        let connection = self.open_connection()?;
+        operation(&connection)
     }
 
     fn open_connection(&self) -> rusqlite::Result<Connection> {

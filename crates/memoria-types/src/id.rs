@@ -1,16 +1,16 @@
 use std::{fmt, str::FromStr};
 
-use data_encoding::BASE32_NOPAD;
+use data_encoding::{BASE32_NOPAD, HEXLOWER};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::MemoriaError;
 
-const ID_BYTES: usize = 16;
+const RANDOM_ID_BYTES: usize = 16;
 
 macro_rules! define_id {
-    ($name:ident, $kind:literal, $prefix:literal) => {
+    ($name:ident, $kind:literal, $prefix:literal, $bytes:expr) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name([u8; ID_BYTES]);
+        pub struct $name([u8; $bytes]);
 
         impl $name {
             const TEXT_PREFIX: &'static str = concat!($prefix, "_");
@@ -21,23 +21,23 @@ macro_rules! define_id {
             }
 
             pub fn try_new() -> Result<Self, MemoriaError> {
-                let mut bytes = [0_u8; ID_BYTES];
+                let mut bytes = [0_u8; $bytes];
                 getrandom::fill(&mut bytes).map_err(MemoriaError::Randomness)?;
                 Ok(Self(bytes))
             }
 
             #[must_use]
-            pub const fn from_bytes(bytes: [u8; ID_BYTES]) -> Self {
+            pub const fn from_bytes(bytes: [u8; $bytes]) -> Self {
                 Self(bytes)
             }
 
             #[must_use]
-            pub const fn as_bytes(&self) -> &[u8; ID_BYTES] {
+            pub const fn as_bytes(&self) -> &[u8; $bytes] {
                 &self.0
             }
 
             #[must_use]
-            pub const fn into_bytes(self) -> [u8; ID_BYTES] {
+            pub const fn into_bytes(self) -> [u8; $bytes] {
                 self.0
             }
 
@@ -78,7 +78,7 @@ macro_rules! define_id {
                         value: value.to_owned(),
                     }
                 })?;
-                let bytes: [u8; ID_BYTES] =
+                let bytes: [u8; $bytes] =
                     bytes.try_into().map_err(|_| MemoriaError::InvalidId {
                         kind: $kind,
                         expected_prefix: Self::TEXT_PREFIX,
@@ -109,10 +109,93 @@ macro_rules! define_id {
     };
 }
 
-define_id!(StoreId, "store id", "ST");
-define_id!(SpaceId, "space id", "SP");
-define_id!(MemoryId, "memory id", "M");
-define_id!(RevisionId, "revision id", "R");
+define_id!(StoreId, "store id", "ST", RANDOM_ID_BYTES);
+define_id!(SpaceId, "space id", "SP", RANDOM_ID_BYTES);
+define_id!(MemoryId, "memory id", "M", RANDOM_ID_BYTES);
+
+const REVISION_ID_BYTES: usize = 32;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RevisionId([u8; REVISION_ID_BYTES]);
+
+impl RevisionId {
+    const TEXT_PREFIX: &'static str = "R_";
+
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; REVISION_ID_BYTES]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; REVISION_ID_BYTES] {
+        &self.0
+    }
+
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; REVISION_ID_BYTES] {
+        self.0
+    }
+
+    #[must_use]
+    pub const fn prefix() -> &'static str {
+        Self::TEXT_PREFIX
+    }
+}
+
+impl fmt::Display for RevisionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(Self::TEXT_PREFIX)?;
+        formatter.write_str(&HEXLOWER.encode(&self.0))
+    }
+}
+
+impl FromStr for RevisionId {
+    type Err = MemoriaError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let encoded =
+            value
+                .strip_prefix(Self::TEXT_PREFIX)
+                .ok_or_else(|| MemoriaError::InvalidId {
+                    kind: "revision id",
+                    expected_prefix: Self::TEXT_PREFIX,
+                    value: value.to_owned(),
+                })?;
+        let bytes = HEXLOWER
+            .decode(encoded.as_bytes())
+            .map_err(|_| MemoriaError::InvalidId {
+                kind: "revision id",
+                expected_prefix: Self::TEXT_PREFIX,
+                value: value.to_owned(),
+            })?;
+        let bytes: [u8; REVISION_ID_BYTES] =
+            bytes.try_into().map_err(|_| MemoriaError::InvalidId {
+                kind: "revision id",
+                expected_prefix: Self::TEXT_PREFIX,
+                value: value.to_owned(),
+            })?;
+        Ok(Self(bytes))
+    }
+}
+
+impl Serialize for RevisionId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for RevisionId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -127,9 +210,9 @@ mod tests {
 
     #[test]
     fn ids_round_trip_from_fixed_bytes() {
-        let id = RevisionId::from_bytes([0xAB; 16]);
+        let id = RevisionId::from_bytes([0xAB; 32]);
         assert_eq!(id.to_string().parse::<RevisionId>().unwrap(), id);
-        assert_eq!(id.as_bytes(), &[0xAB; 16]);
+        assert_eq!(id.as_bytes(), &[0xAB; 32]);
     }
 
     #[test]

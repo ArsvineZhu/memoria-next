@@ -233,6 +233,7 @@ dependencies = [
  "fs2",
  "memoria-types",
  "rusqlite",
+ "sha2",
  "tempfile",
 ]
 
