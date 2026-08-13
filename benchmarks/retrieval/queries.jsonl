@@ -1,0 +1,8 @@
+{"id":"q-current-career","case":"current","text":"career Rust systems","scope":["personal"],"state":"current","relevant":{"personal-m1-r1":3,"personal-m4-r1":2,"personal-m11-r1":2}}
+{"id":"q-historical-deployment","case":"historical","text":"old deployment","scope":["personal"],"state":"historical","relevant":{"personal-m1-r0":3}}
+{"id":"q-entity-alex","case":"entity","text":"Alex","scope":["personal"],"entities":["person:alex"],"relevant":{"personal-m1-r1":3,"personal-m1-r0":2,"personal-m9-r1":1}}
+{"id":"q-tag-rust","case":"tag-association","text":"Rust systems","scope":["personal"],"tags":["rust"],"relevant":{"personal-m1-r1":3,"personal-m4-r1":2,"personal-m8-r0":1}}
+{"id":"q-relation-support","case":"relation","text":"support graph retrieval","scope":["personal"],"tags":["graph"],"relationKinds":["supports"],"relevant":{"personal-m4-r1":3,"personal-m1-r1":2}}
+{"id":"q-cross-space","case":"cross-space","text":"career Rust","scope":["personal"],"tags":["career","rust"],"relevant":{"personal-m1-r1":3,"personal-m11-r1":2}}
+{"id":"q-cooking","case":"current","text":"sourdough vegetables","scope":["personal"],"state":"current","relevant":{"personal-m2-r1":3}}
+{"id":"q-work-planning","case":"relation","text":"Apollo planning systems","scope":["work"],"entities":["project:apollo"],"tags":["planning"],"relevant":{"work-m5-r1":3,"work-m10-r1":2}}
