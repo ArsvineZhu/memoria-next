@@ -1,5 +1,8 @@
-use memoria_query::{EntityRef, MemoryQuery, QueryError};
+use memoria_derived::DerivedCatalog;
+use memoria_query::{AuthorityConsistency, EntityRef, MemoryQuery, QueryCompiler, QueryError};
+use memoria_types::AuthorityGeneration;
 use memoria_types::SpaceId;
+use tempfile::tempdir;
 
 fn fixture_space() -> SpaceId {
     SpaceId::from_bytes([7; 16])
@@ -20,4 +23,49 @@ fn cue_entity_is_not_a_constraint() {
         .unwrap();
     assert_eq!(query.cue.entities.len(), 1);
     assert!(query.constraints.entities.is_empty());
+}
+
+fn compiler_with_semantic_coverage(authority: u64, coverage: u64) -> QueryCompiler {
+    let dir = tempdir().unwrap();
+    let mut catalog = DerivedCatalog::open(dir.path().join("derived.sqlite")).unwrap();
+    let manifest = catalog
+        .publish_manifest_at_generation(
+            Vec::new(),
+            AuthorityGeneration::new(coverage),
+            vec!["semantic".to_owned()],
+        )
+        .unwrap();
+    QueryCompiler::new(AuthorityGeneration::new(authority), Some(manifest))
+}
+
+#[test]
+fn required_semantic_cannot_use_stale_coverage() {
+    let query = MemoryQuery::builder()
+        .spaces(vec![fixture_space()])
+        .require_capability("semantic")
+        .authority_at_least(AuthorityGeneration::new(12))
+        .fail_if_not_ready()
+        .build()
+        .unwrap();
+    let compiler = compiler_with_semantic_coverage(12, 10);
+    assert!(matches!(
+        compiler.compile(query),
+        Err(QueryError::CapabilityNotReady { .. })
+    ));
+}
+
+#[test]
+fn preferred_semantic_may_degrade_explicitly() {
+    let query = MemoryQuery::builder()
+        .spaces(vec![fixture_space()])
+        .prefer_capability("semantic")
+        .build()
+        .unwrap();
+    let compiler = compiler_with_semantic_coverage(12, 10);
+    let compiled = compiler.compile(query).unwrap();
+    assert!(compiled.execution.degraded);
+    assert!(matches!(
+        compiled.query.consistency.authority,
+        AuthorityConsistency::Latest
+    ));
 }

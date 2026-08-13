@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 
 use thiserror::Error;
 
+use memoria_types::AuthorityGeneration;
+
 use crate::model::MemoryQuery;
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -32,6 +34,24 @@ pub enum QueryError {
 
     #[error("minimum relevance must be finite and between 0 and 1")]
     InvalidQuality,
+
+    #[error("Authority generation {actual} is below required generation {required}")]
+    AuthorityNotReady {
+        required: AuthorityGeneration,
+        actual: AuthorityGeneration,
+    },
+
+    #[error(
+        "required capability `{capability}` is not ready at {required}; available coverage is {available}"
+    )]
+    CapabilityNotReady {
+        capability: String,
+        required: AuthorityGeneration,
+        available: AuthorityGeneration,
+    },
+
+    #[error("a Derived Manifest is required to compile this query")]
+    DerivedSnapshotUnavailable,
 }
 
 pub(crate) fn validate_query(query: &MemoryQuery) -> Result<(), QueryError> {
