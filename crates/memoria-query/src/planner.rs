@@ -26,6 +26,11 @@ pub struct CapabilityTarget {
 pub struct CapabilityPlanner;
 
 impl CapabilityPlanner {
+    #[must_use]
+    pub fn prefers_lexical(query: &MemoryQuery) -> bool {
+        !query.cue.text.is_empty()
+    }
+
     pub fn target(
         query: &MemoryQuery,
         current_authority: AuthorityGeneration,

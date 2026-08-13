@@ -169,6 +169,11 @@ impl ExactIndex {
     }
 
     #[must_use]
+    pub fn record_for_target(&self, target: CandidateTarget) -> Option<&ExactRecord> {
+        self.records.iter().find(|record| record.target == target)
+    }
+
+    #[must_use]
     pub fn resolve(
         &self,
         reference: &MemoryReference,
