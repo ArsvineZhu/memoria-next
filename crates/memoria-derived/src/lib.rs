@@ -16,6 +16,14 @@ pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 pub use manifest::{DerivedManifest, ManifestId};
 pub use memoria_types::AuthorityGeneration;
 pub use projection::PROJECTION_SCHEMA_VERSION;
+pub use projection::ProjectionTarget;
+pub use projection::entities::{
+    EntityObservation, EntityObservationArtifact, EntityObservationBuilder, EntityRef,
+};
+pub use projection::relations::{RelationArtifact, RelationBuilder, RelationRecord};
+pub use projection::structural::{StructuralArtifact, StructuralBuilder, StructuralEntry};
+pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembership, TagProvenance};
+pub use projection::temporal::{TemporalArtifact, TemporalAssertion, TemporalBuilder};
 
 #[derive(Debug, Error)]
 pub enum DerivedError {
@@ -24,6 +32,9 @@ pub enum DerivedError {
 
     #[error("derived catalog SQLite error: {0}")]
     Sql(#[from] rusqlite::Error),
+
+    #[error("MDX projection error: {0}")]
+    Mdx(#[from] memoria_mdx::MdxError),
 
     #[error("artifact {id} is not validated (state: {state:?})")]
     ArtifactNotValidated {
@@ -54,6 +65,9 @@ pub enum DerivedError {
 
     #[error("integer conversion failed: {0}")]
     IntegerConversion(#[from] TryFromIntError),
+
+    #[error("invalid projection value: {value}")]
+    InvalidProjectionValue { value: String },
 }
 
 fn generation_to_sql(generation: AuthorityGeneration) -> Result<i64, DerivedError> {
