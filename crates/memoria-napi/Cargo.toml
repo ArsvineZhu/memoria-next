@@ -4,3 +4,16 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi = { version = "3.0.0", features = ["async"] }
+napi-derive = "3.0.0"
+memoria-types = { version = "0.1.0", path = "../memoria-types" }
+memoria-runtime = { version = "0.1.0", path = "../memoria-runtime" }
+memoria-query = { version = "0.1.0", path = "../memoria-query" }
+
+[build-dependencies]
+napi-build = "1.0.1"
