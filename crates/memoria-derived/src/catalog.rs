@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::Path;
+use std::{collections::BTreeSet, fs};
 
 use memoria_types::AuthorityGeneration;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -45,6 +45,11 @@ impl DerivedCatalog {
                 manifest_id INTEGER NOT NULL REFERENCES manifests(id),
                 artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
                 PRIMARY KEY (manifest_id, artifact_id)
+            );
+            CREATE TABLE IF NOT EXISTS manifest_capabilities (
+                manifest_id INTEGER NOT NULL REFERENCES manifests(id),
+                capability TEXT NOT NULL,
+                PRIMARY KEY (manifest_id, capability)
             );
             CREATE TABLE IF NOT EXISTS build_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,28 +162,34 @@ impl DerivedCatalog {
         &mut self,
         artifact_ids: Vec<ArtifactId>,
     ) -> Result<DerivedManifest, DerivedError> {
-        let transaction = self.connection.transaction()?;
         let generation = if let Some(id) = artifact_ids.first() {
-            let generation = transaction
-                .query_row(
-                    "SELECT authority_generation FROM artifacts WHERE id = ?1",
-                    params![id.value()],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()?
-                .ok_or(DerivedError::ArtifactNotFound { id: *id })?;
-            let generation = u64::try_from(generation)
-                .map_err(|_| DerivedError::InvalidGeneration { value: generation })?;
-            AuthorityGeneration::new(generation)
+            self.artifact(*id)?.authority_generation()
         } else {
             AuthorityGeneration::initial()
         };
+        self.publish_manifest_at_generation(artifact_ids, generation, Vec::new())
+    }
+
+    pub fn publish_manifest_at_generation(
+        &mut self,
+        artifact_ids: Vec<ArtifactId>,
+        generation: AuthorityGeneration,
+        capabilities: Vec<String>,
+    ) -> Result<DerivedManifest, DerivedError> {
+        let transaction = self.connection.transaction()?;
+        let mut kinds = BTreeSet::new();
         for id in &artifact_ids {
-            let state = transaction
+            let (state, artifact_generation, kind) = transaction
                 .query_row(
-                    "SELECT state FROM artifacts WHERE id = ?1",
+                    "SELECT state, authority_generation, kind FROM artifacts WHERE id = ?1",
                     params![id.value()],
-                    |row| row.get::<_, String>(0),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
                 )
                 .optional()?
                 .ok_or(DerivedError::ArtifactNotFound { id: *id })?;
@@ -186,7 +197,26 @@ impl DerivedCatalog {
             if !state.can_publish() {
                 return Err(DerivedError::ArtifactNotValidated { id: *id, state });
             }
+            let artifact_generation = u64::try_from(artifact_generation).map_err(|_| {
+                DerivedError::InvalidGeneration {
+                    value: artifact_generation,
+                }
+            })?;
+            let artifact_generation = AuthorityGeneration::new(artifact_generation);
+            if artifact_generation != generation {
+                return Err(DerivedError::ArtifactGenerationMismatch {
+                    id: *id,
+                    expected: generation,
+                    actual: artifact_generation,
+                });
+            }
+            kinds.insert(kind);
         }
+        let capabilities = if capabilities.is_empty() {
+            capabilities_for_kinds(&kinds)
+        } else {
+            capabilities
+        };
         transaction.execute(
             "INSERT INTO manifests(authority_generation) VALUES (?1)",
             params![generation_to_sql(generation)?],
@@ -200,6 +230,13 @@ impl DerivedCatalog {
             transaction.execute(
                 "UPDATE artifacts SET state = ?1 WHERE id = ?2",
                 params![ArtifactState::Published.as_str(), id.value()],
+            )?;
+        }
+        for capability in &capabilities {
+            transaction.execute(
+                "INSERT INTO manifest_capabilities(manifest_id, capability)
+                 VALUES (?1, ?2)",
+                params![manifest_id.value(), capability],
             )?;
         }
         transaction.execute(
@@ -269,10 +306,18 @@ impl DerivedCatalog {
             .into_iter()
             .map(ArtifactId::from_raw)
             .collect();
+        let mut statement = self.connection.prepare(
+            "SELECT capability FROM manifest_capabilities
+             WHERE manifest_id = ?1 ORDER BY capability",
+        )?;
+        let capabilities = statement
+            .query_map(params![id.value()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(DerivedManifest::new(
             id,
             AuthorityGeneration::new(generation),
             artifacts,
+            capabilities,
         ))
     }
 
@@ -285,4 +330,34 @@ impl DerivedCatalog {
         id.map(|id| self.manifest(ManifestId::from_raw(id)))
             .transpose()
     }
+}
+
+fn capabilities_for_kinds(kinds: &BTreeSet<String>) -> Vec<String> {
+    let mut capabilities = Vec::new();
+    if kinds.contains("lexical") {
+        capabilities.push("lexical".to_owned());
+    }
+    if kinds.contains("structural")
+        && kinds.contains("temporal")
+        && kinds.contains("relations")
+        && kinds.contains("entity_observations")
+        && kinds.contains("explicit_tags")
+    {
+        capabilities.push("structured".to_owned());
+    }
+    if [
+        "ir",
+        "structural",
+        "temporal",
+        "relations",
+        "entity_observations",
+        "explicit_tags",
+        "lexical",
+    ]
+    .iter()
+    .all(|kind| kinds.contains(*kind))
+    {
+        capabilities.push("base-search".to_owned());
+    }
+    capabilities
 }

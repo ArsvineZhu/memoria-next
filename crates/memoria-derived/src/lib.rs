@@ -11,9 +11,9 @@ use thiserror::Error;
 
 pub use artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
 pub use catalog::DerivedCatalog;
-pub use compiler::DerivedCompiler;
+pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
-pub use manifest::{DerivedManifest, ManifestId};
+pub use manifest::{CapabilityStatus, DerivedManifest, ManifestId};
 pub use memoria_types::AuthorityGeneration;
 pub use projection::PROJECTION_SCHEMA_VERSION;
 pub use projection::ProjectionTarget;
@@ -70,6 +70,15 @@ pub enum DerivedError {
     InvalidArtifactTransition {
         id: ArtifactId,
         state: ArtifactState,
+    },
+
+    #[error(
+        "artifact {id} belongs to authority generation {actual}, expected manifest generation {expected}"
+    )]
+    ArtifactGenerationMismatch {
+        id: ArtifactId,
+        expected: AuthorityGeneration,
+        actual: AuthorityGeneration,
     },
 
     #[error("authority generation cannot be represented as SQLite integer: {value}")]

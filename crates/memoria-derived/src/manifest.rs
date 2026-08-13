@@ -3,6 +3,28 @@ use std::fmt;
 
 use crate::artifact::ArtifactId;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityStatus {
+    ready: bool,
+    coverage: AuthorityGeneration,
+}
+
+impl CapabilityStatus {
+    pub(crate) const fn new(ready: bool, coverage: AuthorityGeneration) -> Self {
+        Self { ready, coverage }
+    }
+
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        self.ready
+    }
+
+    #[must_use]
+    pub const fn coverage(self) -> AuthorityGeneration {
+        self.coverage
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ManifestId(i64);
 
@@ -28,6 +50,7 @@ pub struct DerivedManifest {
     id: ManifestId,
     authority_generation: AuthorityGeneration,
     artifacts: Vec<ArtifactId>,
+    capabilities: Vec<String>,
 }
 
 impl DerivedManifest {
@@ -35,11 +58,13 @@ impl DerivedManifest {
         id: ManifestId,
         authority_generation: AuthorityGeneration,
         artifacts: Vec<ArtifactId>,
+        capabilities: Vec<String>,
     ) -> Self {
         Self {
             id,
             authority_generation,
             artifacts,
+            capabilities,
         }
     }
 
@@ -55,5 +80,19 @@ impl DerivedManifest {
 
     pub fn artifacts(&self) -> impl Iterator<Item = ArtifactId> + '_ {
         self.artifacts.iter().copied()
+    }
+
+    #[must_use]
+    pub fn capability(&self, name: &str) -> CapabilityStatus {
+        CapabilityStatus::new(
+            self.capabilities
+                .iter()
+                .any(|capability| capability == name),
+            self.authority_generation,
+        )
+    }
+
+    pub fn capabilities(&self) -> impl Iterator<Item = &str> {
+        self.capabilities.iter().map(String::as_str)
     }
 }
