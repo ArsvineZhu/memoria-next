@@ -1,4 +1,10 @@
-import { asMemoryId, asRevisionId, asSpaceId, type MemoryId, type RevisionId } from "./ids.js";
+import {
+  asMemoryId,
+  asRevisionId,
+  asSpaceId,
+  type MemoryId,
+  type RevisionId,
+} from "./ids.js";
 import { toMemoriaError } from "./errors.js";
 import type { Space } from "./spaces.js";
 
@@ -58,8 +64,12 @@ export function createDocumentsApi(engine: DocumentEngine): DocumentsApi {
     async create(input) {
       const created = await engine.createMemory({
         spaceId: input.space.id,
-        ...(input.documentKey === undefined ? {} : { documentKey: input.documentKey }),
-        ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+        ...(input.documentKey === undefined
+          ? {}
+          : { documentKey: input.documentKey }),
+        ...(input.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: input.idempotencyKey }),
         mdx: input.mdx,
       });
       return {

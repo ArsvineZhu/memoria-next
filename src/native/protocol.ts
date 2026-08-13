@@ -49,7 +49,7 @@ export interface NativeProviderItem {
 
 export interface NativeProviderWork {
   workId: string;
-  workType: "embedding" | "rerank" | "enrichment" | string;
+  workType: string;
   signature: string;
   items: NativeProviderItem[];
   query?: string;

@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { createMemoria } from "../../src-next/engine/create-memoria.js";
-import { isMemoriaError } from "../../src-next/domain/errors.js";
-import type { MemoriaConfig } from "../../src-next/domain/config.js";
+import { createMemoria } from "../../src/engine/create-memoria.js";
+import { isMemoriaError } from "../../src/domain/errors.js";
+import type { MemoriaConfig } from "../../src/domain/config.js";
 
 test("public config rejects physical planner knobs", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-config-"));

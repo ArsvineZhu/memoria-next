@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { createMemoria } from "../../src-next/engine/create-memoria.js";
-import { isMemoriaError } from "../../src-next/domain/errors.js";
+import { createMemoria } from "../../src/engine/create-memoria.js";
+import { isMemoriaError } from "../../src/domain/errors.js";
 import type {
   NativeBinding,
   NativeCreateMemoryRequest,
@@ -16,7 +16,7 @@ import type {
   NativeReviseMemoryRequest,
   NativeStatus,
   NativeStoreHandle,
-} from "../../src-next/native/protocol.js";
+} from "../../src/native/protocol.js";
 
 function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
   const status: NativeStatus = {
@@ -44,7 +44,10 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
     authorityCreateSpace() {
       return "SP_fake";
     },
-    authorityMutate(_value: NativeStoreHandle, _request: NativeCreateMemoryRequest) {
+    authorityMutate(
+      _value: NativeStoreHandle,
+      _request: NativeCreateMemoryRequest,
+    ) {
       return "M_fake";
     },
     authorityRevise(
@@ -65,7 +68,10 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
     providerPollWork() {
       return null;
     },
-    providerSubmitResult(_value: NativeStoreHandle, _result: NativeProviderResult) {},
+    providerSubmitResult(
+      _value: NativeStoreHandle,
+      _result: NativeProviderResult,
+    ) {},
     readSessionOpen() {
       return "RS_fake";
     },
@@ -83,7 +89,10 @@ function neverCompletes(
 
 test("cancelled query returns ABORTED and releases its snapshot lease", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-cancel-"));
-  const memoria = await createMemoria({ dataDir, binding: fakeBinding(neverCompletes) });
+  const memoria = await createMemoria({
+    dataDir,
+    binding: fakeBinding(neverCompletes),
+  });
   try {
     const controller = new AbortController();
     const promise = memoria.query({ scope: [] }, { signal: controller.signal });
@@ -102,7 +111,10 @@ test("cancelled query returns ABORTED and releases its snapshot lease", async ()
 
 test("query timeout is distinct from capability-not-ready", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-timeout-"));
-  const memoria = await createMemoria({ dataDir, binding: fakeBinding(neverCompletes) });
+  const memoria = await createMemoria({
+    dataDir,
+    binding: fakeBinding(neverCompletes),
+  });
   try {
     await assert.rejects(
       () => memoria.query({ scope: [] }, { timeoutMs: 1 }),

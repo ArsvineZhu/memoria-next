@@ -4,7 +4,6 @@ import {
   type ProviderHostOptions,
   type ProviderResult,
   type ProviderSet,
-  type ProviderType,
 } from "./types.js";
 
 export class ProviderHost {
@@ -28,7 +27,9 @@ export class ProviderHost {
   }
 
   async execute(work: NeedWork, signal: AbortSignal): Promise<ProviderResult> {
-    const egressWork = this.#onDataEgress ? await this.#onDataEgress(work) : work;
+    const egressWork = this.#onDataEgress
+      ? await this.#onDataEgress(work)
+      : work;
     const providerType = egressWork.type;
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
@@ -45,10 +46,17 @@ export class ProviderHost {
         }
       }
     }
-    throw new ProviderExecutionError(providerType, this.#maxAttempts, lastError);
+    throw new ProviderExecutionError(
+      providerType,
+      this.#maxAttempts,
+      lastError,
+    );
   }
 
-  private async executeOnce(work: NeedWork, signal: AbortSignal): Promise<void> {
+  private async executeOnce(
+    work: NeedWork,
+    signal: AbortSignal,
+  ): Promise<void> {
     switch (work.type) {
       case "embedding": {
         const provider = this.#providers.embedding;

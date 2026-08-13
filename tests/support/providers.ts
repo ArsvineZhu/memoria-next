@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from "../../src-next/providers/types.js";
+import type { EmbeddingProvider } from "../../src/providers/types.js";
 
 interface PendingEmbedding {
   resolve: () => void;
@@ -57,10 +57,15 @@ export async function waitForSemanticCoverage(
 ): Promise<void> {
   const target = BigInt(targetGeneration);
   const deadline = Date.now() + timeoutMs;
-  while (BigInt((await memoria.status()).semanticCoverage) < target && Date.now() < deadline) {
+  while (
+    BigInt((await memoria.status()).semanticCoverage) < target &&
+    Date.now() < deadline
+  ) {
     await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
   if (BigInt((await memoria.status()).semanticCoverage) < target) {
-    throw new Error(`semantic coverage did not reach ${targetGeneration} before timeout`);
+    throw new Error(
+      `semantic coverage did not reach ${targetGeneration} before timeout`,
+    );
   }
 }

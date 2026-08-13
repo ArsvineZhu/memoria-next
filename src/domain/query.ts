@@ -12,7 +12,9 @@ export interface NormalizedMemoryQuery {
 
 export function normalizeQuery(input: MemoryQueryInput): NormalizedMemoryQuery {
   return {
-    scope: input.scope.map((space) => (typeof space === "string" ? space : space.id)),
+    scope: input.scope.map((space) =>
+      typeof space === "string" ? space : space.id,
+    ),
     ...(input.text === undefined ? {} : { text: input.text }),
   };
 }

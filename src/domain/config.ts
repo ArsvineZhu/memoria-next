@@ -31,11 +31,18 @@ export interface MemoriaConfig {
 
 function assertPositiveInteger(name: string, value: number | undefined): void {
   if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
-    throw new MemoriaError("UNSUPPORTED_OPERATION", `${name} must be a positive integer`);
+    throw new MemoriaError(
+      "UNSUPPORTED_OPERATION",
+      `${name} must be a positive integer`,
+    );
   }
 }
 
-function assertAllowedKeys(value: object, allowed: readonly string[], scope: string): void {
+function assertAllowedKeys(
+  value: object,
+  allowed: readonly string[],
+  scope: string,
+): void {
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key)) {
       throw new MemoriaError(
@@ -48,20 +55,37 @@ function assertAllowedKeys(value: object, allowed: readonly string[], scope: str
 
 export function validateMemoriaConfig(config: MemoriaConfig): MemoriaConfig {
   if (!config.dataDir.trim()) {
-    throw new MemoriaError("UNSUPPORTED_OPERATION", "dataDir must not be empty");
+    throw new MemoriaError(
+      "UNSUPPORTED_OPERATION",
+      "dataDir must not be empty",
+    );
   }
   assertAllowedKeys(
     config,
-    ["dataDir", "providers", "runtime", "privacy", "resourceLimits", "diagnostics"],
+    [
+      "dataDir",
+      "providers",
+      "runtime",
+      "privacy",
+      "resourceLimits",
+      "diagnostics",
+    ],
     "config",
   );
   if (config.runtime) {
     assertAllowedKeys(
       config.runtime,
-      ["providerConcurrency", "defaultReadinessTimeoutMs", "backgroundWorkBatchSize"],
+      [
+        "providerConcurrency",
+        "defaultReadinessTimeoutMs",
+        "backgroundWorkBatchSize",
+      ],
       "config.runtime",
     );
-    assertPositiveInteger("config.runtime.providerConcurrency", config.runtime.providerConcurrency);
+    assertPositiveInteger(
+      "config.runtime.providerConcurrency",
+      config.runtime.providerConcurrency,
+    );
     assertPositiveInteger(
       "config.runtime.defaultReadinessTimeoutMs",
       config.runtime.defaultReadinessTimeoutMs,

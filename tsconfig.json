@@ -3,14 +3,12 @@
     "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "dist-next-test",
-    "rootDir": ".",
     "strict": true,
-    "noEmitOnError": true,
+    "noEmit": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src-next/**/*.ts", "tests-next/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

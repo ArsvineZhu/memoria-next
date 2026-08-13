@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ProviderHost } from "../../src-next/providers/host.js";
-import { ProviderExecutionError } from "../../src-next/providers/types.js";
+import { ProviderHost } from "../../src/providers/host.js";
+import { ProviderExecutionError } from "../../src/providers/types.js";
 
 test("provider host preserves work id", async () => {
   const host = new ProviderHost({
@@ -44,7 +44,10 @@ test("provider host retries provider-specific failures and applies egress policy
       if (work.type !== "embedding") {
         return work;
       }
-      return { ...work, items: work.items.map((item) => ({ ...item, text: "redacted" })) };
+      return {
+        ...work,
+        items: work.items.map((item) => ({ ...item, text: "redacted" })),
+      };
     },
   });
 
@@ -81,6 +84,7 @@ test("provider host exposes bounded provider failure", async () => {
         },
         new AbortController().signal,
       ),
-    (error: unknown) => error instanceof ProviderExecutionError && error.attempts === 1,
+    (error: unknown) =>
+      error instanceof ProviderExecutionError && error.attempts === 1,
   );
 });

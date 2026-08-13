@@ -7,7 +7,9 @@ import { Memoria } from "./memoria.js";
 
 export type CreateMemoriaOptions = MemoriaConfig & { binding?: NativeBinding };
 
-export async function createMemoria(options: CreateMemoriaOptions): Promise<Memoria> {
+export async function createMemoria(
+  options: CreateMemoriaOptions,
+): Promise<Memoria> {
   const { binding: injectedBinding, ...publicConfig } = options;
   const config = validateMemoriaConfig(publicConfig);
   const binding = injectedBinding ?? loadNativeBinding();
@@ -17,5 +19,9 @@ export async function createMemoria(options: CreateMemoriaOptions): Promise<Memo
   } catch (error) {
     throw toMemoriaError(error);
   }
-  return new Memoria(binding, store, config.providers ? new ProviderHost(config.providers) : undefined);
+  return new Memoria(
+    binding,
+    store,
+    config.providers ? new ProviderHost(config.providers) : undefined,
+  );
 }

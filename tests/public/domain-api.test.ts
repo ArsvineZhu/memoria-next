@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { createMemoria } from "../../src-next/engine/create-memoria.js";
-import { serializeRestrictedMdx } from "../../src-next/authoring/serialize.js";
-import { asRevisionId } from "../../src-next/domain/ids.js";
-import { isMemoriaError } from "../../src-next/domain/errors.js";
+import { createMemoria } from "../../src/engine/create-memoria.js";
+import { serializeRestrictedMdx } from "../../src/authoring/serialize.js";
+import { asRevisionId } from "../../src/domain/ids.js";
+import { isMemoriaError } from "../../src/domain/errors.js";
 
 test("revise requires explicit expected head", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-domain-"));
@@ -45,7 +45,11 @@ test("revise requires explicit expected head", async () => {
 
 test("restricted authoring serializer emits declarative MDX", () => {
   assert.equal(
-    serializeRestrictedMdx({ title: "Career", tags: ["work"], body: "Rust systems" }),
+    serializeRestrictedMdx({
+      title: "Career",
+      tags: ["work"],
+      body: "Rust systems",
+    }),
     '# Career\n<Tag value="work"/>\nRust systems\n',
   );
 });

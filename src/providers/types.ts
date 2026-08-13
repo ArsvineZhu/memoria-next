@@ -24,7 +24,9 @@ export interface ProviderSet {
 
 export type ProviderType = "embedding" | "rerank" | "enrichment";
 
-export type ProviderEgressHook = (work: NeedWork) => NeedWork | Promise<NeedWork>;
+export type ProviderEgressHook = (
+  work: NeedWork,
+) => NeedWork | Promise<NeedWork>;
 
 export interface ProviderHostOptions {
   providers: ProviderSet;
@@ -42,7 +44,9 @@ export class ProviderExecutionError extends Error {
   readonly attempts: number;
 
   constructor(providerType: ProviderType, attempts: number, cause: unknown) {
-    super(`${providerType} provider failed after ${attempts} attempt(s)`, { cause });
+    super(`${providerType} provider failed after ${attempts} attempt(s)`, {
+      cause,
+    });
     this.name = "ProviderExecutionError";
     this.providerType = providerType;
     this.attempts = attempts;

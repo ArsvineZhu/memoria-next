@@ -3,18 +3,45 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "native"
+  ],
   "engines": {
     "node": ">=24.18.1 <25"
   },
   "packageManager": "pnpm@11.20.0",
   "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "oxlint src tests scripts --type-aware --deny-warnings",
     "build:native": "napi build --manifest-path ./crates/memoria-napi/Cargo.toml --platform --output-dir ./native -- --locked",
-    "build:next-test": "tsc -p tsconfig.next-test.json",
-    "test:next-engine": "pnpm build:next-test && node --test dist-next-test/tests-next/public/engine.test.js"
+    "build:ts": "tsc -p tsconfig.build.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "build": "corepack pnpm build:native && corepack pnpm build:ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:rust": "cargo test --workspace",
+    "test:ts": "corepack pnpm build:test && node scripts/run-tests.mjs",
+    "test": "corepack pnpm test:rust && corepack pnpm test:ts",
+    "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
+    "verify:pack": "node scripts/verify-packed-consumer.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
     "@types/node": "^24.0.0",
+    "oxlint": "^1.78.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
     "typescript": "7.0.2"
   }
 }

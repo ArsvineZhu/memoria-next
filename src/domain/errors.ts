@@ -54,7 +54,11 @@ const knownCodes: readonly MemoriaErrorCode[] = [
 export class MemoriaError extends Error {
   readonly code: MemoriaErrorCode;
 
-  constructor(code: MemoriaErrorCode, message: string, options?: { cause?: unknown }) {
+  constructor(
+    code: MemoriaErrorCode,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
     super(message, options);
     this.name = "MemoriaError";
     this.code = code;
@@ -78,6 +82,9 @@ export function toMemoriaError(error: unknown): MemoriaError {
   return new MemoriaError(codeFromMessage(message), message, { cause: error });
 }
 
-export function isMemoriaError(error: unknown, code: MemoriaErrorCode): boolean {
+export function isMemoriaError(
+  error: unknown,
+  code: MemoriaErrorCode,
+): boolean {
   return toMemoriaError(error).code === code;
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { createMemoria } from "../../src-next/engine/create-memoria.js";
+import { createMemoria } from "../../src/engine/create-memoria.js";
 import {
   deferredEmbeddingProvider,
   waitForPendingProvider,
@@ -14,7 +14,10 @@ import {
 test("authority mutation returns before provider completion and background pump advances readiness", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-provider-"));
   const provider = deferredEmbeddingProvider();
-  const memoria = await createMemoria({ dataDir, providers: { embedding: provider } });
+  const memoria = await createMemoria({
+    dataDir,
+    providers: { embedding: provider },
+  });
   try {
     const spaceId = await memoria.createSpace("personal");
     const created = await memoria.createMemory({
@@ -26,13 +29,17 @@ test("authority mutation returns before provider completion and background pump 
 
     const before = await memoria.status();
     assert.equal(provider.pendingCount(), 1);
-    assert(BigInt(before.semanticCoverage) < BigInt(created.authorityGeneration));
+    assert(
+      BigInt(before.semanticCoverage) < BigInt(created.authorityGeneration),
+    );
 
     provider.resolveAll();
     await waitForSemanticCoverage(memoria, created.authorityGeneration);
 
     const after = await memoria.status();
-    assert(BigInt(after.semanticCoverage) >= BigInt(created.authorityGeneration));
+    assert(
+      BigInt(after.semanticCoverage) >= BigInt(created.authorityGeneration),
+    );
   } finally {
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -42,7 +49,10 @@ test("authority mutation returns before provider completion and background pump 
 test("engine close does not wait indefinitely for provider backlog", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-provider-close-"));
   const provider = deferredEmbeddingProvider();
-  const memoria = await createMemoria({ dataDir, providers: { embedding: provider } });
+  const memoria = await createMemoria({
+    dataDir,
+    providers: { embedding: provider },
+  });
   try {
     const spaceId = await memoria.createSpace("personal");
     await memoria.createMemory({
@@ -55,7 +65,10 @@ test("engine close does not wait indefinitely for provider backlog", async () =>
     await Promise.race([
       memoria.close(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("close waited for provider backlog")), 100),
+        setTimeout(
+          () => reject(new Error("close waited for provider backlog")),
+          100,
+        ),
       ),
     ]);
   } finally {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { createMemoria } from "../../src-next/engine/create-memoria.js";
+import { createMemoria } from "../../src/engine/create-memoria.js";
 
 test("engine opens reports status and closes", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-engine-"));

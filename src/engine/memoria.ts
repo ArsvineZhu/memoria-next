@@ -74,7 +74,11 @@ export class Memoria {
   #readSessions = new Set<string>();
   #closed = false;
 
-  constructor(binding: NativeBinding, store: NativeStoreHandle, providerHost?: ProviderHost) {
+  constructor(
+    binding: NativeBinding,
+    store: NativeStoreHandle,
+    providerHost?: ProviderHost,
+  ) {
     this.#binding = binding;
     this.#store = store;
     this.#providerHost = providerHost;
@@ -119,13 +123,22 @@ export class Memoria {
   async status(): Promise<MemoriaStatus> {
     try {
       const status = mapStatus(this.store().status());
-      return { ...status, activeReadLeases: Math.max(status.activeReadLeases, this.#readSessions.size) };
+      return {
+        ...status,
+        activeReadLeases: Math.max(
+          status.activeReadLeases,
+          this.#readSessions.size,
+        ),
+      };
     } catch (error) {
       throw toMemoriaError(error);
     }
   }
 
-  async query(query: MemoriaQuery, options: QueryOptions = {}): Promise<NativeQueryResponse> {
+  async query(
+    query: MemoriaQuery,
+    options: QueryOptions = {},
+  ): Promise<NativeQueryResponse> {
     this.assertNotAborted(options.signal);
     const store = this.store();
     const operationId = this.startOperation();
@@ -155,8 +168,12 @@ export class Memoria {
   async createMemory(request: CreateMemoryRequest): Promise<CreatedMemory> {
     const nativeRequest: NativeCreateMemoryRequest = {
       spaceId: request.spaceId,
-      ...(request.documentKey === undefined ? {} : { documentKey: request.documentKey }),
-      ...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
+      ...(request.documentKey === undefined
+        ? {}
+        : { documentKey: request.documentKey }),
+      ...(request.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: request.idempotencyKey }),
       mdx: request.mdx,
     };
     const memoryId = this.#binding.authorityMutate(this.store(), nativeRequest);
@@ -208,7 +225,10 @@ export class Memoria {
       const work = decodeNeedWork(nativeWork);
       let result;
       try {
-        result = await this.#providerHost.execute(work, this.#providerAbort.signal);
+        result = await this.#providerHost.execute(
+          work,
+          this.#providerAbort.signal,
+        );
       } catch {
         result = { workId: work.workId, accepted: false };
       }
@@ -238,7 +258,10 @@ export class Memoria {
     return operationId;
   }
 
-  private cancelNativeOperation(store: NativeStoreHandle, operationId: string): void {
+  private cancelNativeOperation(
+    store: NativeStoreHandle,
+    operationId: string,
+  ): void {
     try {
       this.#binding.cancelOperation(store, operationId);
     } catch {
@@ -256,7 +279,10 @@ export class Memoria {
       (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)
     ) {
       return Promise.reject(
-        new MemoriaError("QUERY_TIMEOUT", "timeoutMs must be a positive integer"),
+        new MemoriaError(
+          "QUERY_TIMEOUT",
+          "timeoutMs must be a positive integer",
+        ),
       );
     }
     const store = this.store();
@@ -276,7 +302,9 @@ export class Memoria {
       };
       const onAbort = () => {
         this.cancelNativeOperation(store, operationId);
-        finish(() => reject(new MemoriaError("ABORTED", "The operation was aborted")));
+        finish(() =>
+          reject(new MemoriaError("ABORTED", "The operation was aborted")),
+        );
       };
       if (options.signal) {
         if (options.signal.aborted) {
@@ -288,7 +316,9 @@ export class Memoria {
       if (options.timeoutMs !== undefined) {
         timer = setTimeout(() => {
           this.cancelNativeOperation(store, operationId);
-          finish(() => reject(new MemoriaError("QUERY_TIMEOUT", "The query timed out")));
+          finish(() =>
+            reject(new MemoriaError("QUERY_TIMEOUT", "The query timed out")),
+          );
         }, options.timeoutMs);
       }
       operation.then(
