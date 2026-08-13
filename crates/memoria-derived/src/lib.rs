@@ -4,6 +4,8 @@ mod compiler;
 mod dependency;
 mod manifest;
 mod projection;
+mod scheduler;
+mod status;
 
 use std::num::TryFromIntError;
 
@@ -27,6 +29,8 @@ pub use projection::relations::{RelationArtifact, RelationBuilder, RelationRecor
 pub use projection::structural::{StructuralArtifact, StructuralBuilder, StructuralEntry};
 pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembership, TagProvenance};
 pub use projection::temporal::{TemporalArtifact, TemporalAssertion, TemporalBuilder};
+pub use scheduler::DerivedScheduler;
+pub use status::DerivedStatus;
 
 #[derive(Debug, Error)]
 pub enum DerivedError {
@@ -89,6 +93,20 @@ pub enum DerivedError {
 
     #[error("invalid projection value: {value}")]
     InvalidProjectionValue { value: String },
+
+    #[error("derived scheduler has stopped")]
+    SchedulerStopped,
+
+    #[error("derived scheduler state was poisoned")]
+    SchedulerPoisoned,
+
+    #[error(
+        "capability `{capability}` did not reach authority generation {generation} before timeout"
+    )]
+    CapabilityTimeout {
+        capability: String,
+        generation: AuthorityGeneration,
+    },
 }
 
 fn generation_to_sql(generation: AuthorityGeneration) -> Result<i64, DerivedError> {
