@@ -44,5 +44,5 @@ fn rrf_fuses_channels_without_mixing_raw_score_scales() {
     );
     assert_eq!(fused.len(), 2);
     assert_eq!(fused[0].score, rrf(0, 60.0) + rrf(1, 60.0));
-    assert!(!fused[0].evidence.exact.is_empty());
+    assert_eq!(fused[0].evidence.exact.len(), 2);
 }

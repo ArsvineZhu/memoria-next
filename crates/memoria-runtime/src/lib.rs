@@ -6,6 +6,6 @@ pub use engine::{MemoriaRuntime, MemoryMutation, RuntimeError};
 pub use memoria_query::{MemoryQuery, RetrievalResponse};
 pub use provider::{
     EmbeddingBatchRequest, EmbeddingItem, EnrichmentBatchRequest, NeedWork, ProviderWorkResult,
-    RerankBatchRequest,
+    RerankBatchRequest, RerankScore,
 };
 pub use status::RuntimeStatus;

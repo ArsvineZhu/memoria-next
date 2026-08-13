@@ -17,6 +17,11 @@ export interface RerankProvider {
   execute(work: RerankWork, signal: AbortSignal): Promise<unknown>;
 }
 
+export interface RerankScore {
+  handle: string;
+  score: number;
+}
+
 export interface TagEnrichmentProvider {
   execute(work: EnrichmentWork, signal: AbortSignal): Promise<unknown>;
 }
@@ -43,6 +48,7 @@ export interface ProviderResult {
   workId: string;
   accepted: boolean;
   embeddings?: EmbeddingPayload[];
+  scores?: RerankScore[];
   tags?: string[];
 }
 

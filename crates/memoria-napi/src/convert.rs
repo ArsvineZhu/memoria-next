@@ -121,7 +121,15 @@ pub struct JsQueryResponse {
 pub struct JsProviderResult {
     pub work_id: String,
     pub accepted: bool,
+    pub scores: Option<Vec<JsRerankScore>>,
     pub tags: Option<Vec<String>>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsRerankScore {
+    pub handle: String,
+    pub score: f64,
 }
 
 #[napi(object)]

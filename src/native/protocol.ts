@@ -40,6 +40,7 @@ export interface NativeMemoryMutation {
 export interface NativeProviderResult {
   workId: string;
   accepted: boolean;
+  scores?: Array<{ handle: string; score: number }>;
   tags?: string[];
 }
 

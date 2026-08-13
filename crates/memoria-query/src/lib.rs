@@ -11,6 +11,8 @@ mod history;
 mod lexical;
 mod model;
 mod planner;
+mod relation_expand;
+mod rerank;
 mod response;
 mod semantic;
 mod snapshot;
@@ -39,7 +41,7 @@ pub use evidence::{
 pub use exact::{
     ExactIndex, ExactRecord, MemoryReference, ReferenceStatus, ResolvedReference, execute_exact,
 };
-pub use fusion::{FusedCandidate, fuse_channels, rrf};
+pub use fusion::{FusedCandidate, fuse_channels, fuse_channels_scoped, rrf};
 pub use history::execute_history;
 pub use lexical::{LexicalCandidate, LexicalCandidateIndex, execute_lexical};
 pub use model::{
@@ -48,6 +50,13 @@ pub use model::{
     ReadinessBehavior,
 };
 pub use planner::{CapabilityExecution, CapabilityPlanner, CapabilityTarget};
+pub use relation_expand::{
+    RelationExpansionBudget, RelationExpansionError, RelationLink, expand_relations,
+};
+pub use rerank::{
+    MAX_RERANK_CANDIDATES, RerankBatch, RerankError, RerankScore, RerankView, apply_rerank,
+    build_rerank_batch, rerank_handle,
+};
 pub use response::{RetrievalResponse, build_response};
 pub use semantic::{
     SemanticCandidate, SemanticCandidateIndex, SemanticResolution, execute_semantic,

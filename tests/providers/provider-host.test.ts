@@ -25,6 +25,62 @@ test("provider host preserves work id", async () => {
   assert.equal(result.workId, "W1");
 });
 
+test("provider host validates rerank handles and scores", async () => {
+  const host = new ProviderHost({
+    rerank: {
+      async execute() {
+        return {
+          scores: [
+            { handle: "h2", score: 0.9 },
+            { handle: "h1", score: 0.1 },
+          ],
+        };
+      },
+    },
+  });
+  const result = await host.execute(
+    {
+      type: "rerank",
+      workId: "WR1",
+      signature: "rerank-v1",
+      query: "career",
+      candidates: ["h1", "h2"],
+    },
+    new AbortController().signal,
+  );
+
+  assert.deepEqual(result.scores, [
+    { handle: "h2", score: 0.9 },
+    { handle: "h1", score: 0.1 },
+  ]);
+});
+
+test("provider host rejects rerank scores for unknown handles", async () => {
+  const host = new ProviderHost({
+    rerank: {
+      async execute() {
+        return [{ handle: "outside-space", score: 1 }];
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      host.execute(
+        {
+          type: "rerank",
+          workId: "WR2",
+          signature: "rerank-v1",
+          query: "career",
+          candidates: ["in-scope"],
+        },
+        new AbortController().signal,
+      ),
+    (error: unknown) =>
+      error instanceof ProviderExecutionError &&
+      error.message.includes("unknown or duplicate handle"),
+  );
+});
+
 test("provider host retries provider-specific failures and applies egress policy", async () => {
   let attempts = 0;
   let sentText = "";

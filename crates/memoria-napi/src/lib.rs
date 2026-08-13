@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use memoria_query::{MemoryQuery, ReadSession};
-use memoria_runtime::{MemoriaRuntime, ProviderWorkResult};
+use memoria_runtime::{MemoriaRuntime, ProviderWorkResult, RerankScore};
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -222,6 +222,15 @@ pub fn provider_submit_result(store: &NativeStore, result: JsProviderResult) -> 
         .provider_submit_result(ProviderWorkResult {
             work_id: result.work_id,
             accepted: result.accepted,
+            scores: result
+                .scores
+                .unwrap_or_default()
+                .into_iter()
+                .map(|score| RerankScore {
+                    handle: score.handle,
+                    score: score.score as f32,
+                })
+                .collect(),
             tags: result.tags.unwrap_or_default(),
         })
         .map_err(runtime_error)

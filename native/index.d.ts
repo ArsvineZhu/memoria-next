@@ -48,6 +48,7 @@ export interface JsProviderItem {
 export interface JsProviderResult {
   workId: string
   accepted: boolean
+  scores?: Array<JsRerankScore>
   tags?: Array<string>
 }
 
@@ -71,6 +72,11 @@ export interface JsQueryResponse {
   resultCount: number
   authorityGeneration: string
   degraded: boolean
+}
+
+export interface JsRerankScore {
+  handle: string
+  score: number
 }
 
 export interface JsReviseMemoryRequest {

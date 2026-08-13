@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use memoria_types::SpaceId;
+
 use crate::evidence::{CandidateEvidence, CandidateTarget, LexicalEvidence};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,20 +52,44 @@ pub fn fuse_channels(
     values
 }
 
+pub fn fuse_channels_scoped(
+    channels: impl IntoIterator<Item = Vec<CandidateEvidence>>,
+    k: f32,
+    limit: usize,
+    allowed_spaces: &[SpaceId],
+) -> Vec<FusedCandidate> {
+    let scope = allowed_spaces
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    fuse_channels(channels, k, limit)
+        .into_iter()
+        .filter(|candidate| scope.contains(&candidate.evidence.target.space_id))
+        .collect()
+}
+
 fn merge_evidence(target: &mut CandidateEvidence, source: CandidateEvidence) {
-    target.exact.extend(source.exact);
-    target.lexical.extend(source.lexical);
-    target.semantic.extend(source.semantic);
-    target.tags.extend(source.tags);
-    target.propagation.extend(source.propagation);
-    target.relations.extend(source.relations);
-    target.history.extend(source.history);
+    extend_unique(&mut target.exact, source.exact);
+    extend_unique(&mut target.lexical, source.lexical);
+    extend_unique(&mut target.semantic, source.semantic);
+    extend_unique(&mut target.tags, source.tags);
+    extend_unique(&mut target.propagation, source.propagation);
+    extend_unique(&mut target.relations, source.relations);
+    extend_unique(&mut target.history, source.history);
     if target.text.is_empty() {
         target.text = source.text;
     }
     for entity in source.entity_refs {
         if !target.entity_refs.contains(&entity) {
             target.entity_refs.push(entity);
+        }
+    }
+}
+
+fn extend_unique<T: PartialEq>(target: &mut Vec<T>, source: impl IntoIterator<Item = T>) {
+    for item in source {
+        if !target.contains(&item) {
+            target.push(item);
         }
     }
 }

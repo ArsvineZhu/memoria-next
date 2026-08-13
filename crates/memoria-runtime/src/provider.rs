@@ -36,9 +36,16 @@ pub enum NeedWork {
     Enrichment(EnrichmentBatchRequest),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RerankScore {
+    pub handle: String,
+    pub score: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProviderWorkResult {
     pub work_id: String,
     pub accepted: bool,
+    pub scores: Vec<RerankScore>,
     pub tags: Vec<String>,
 }

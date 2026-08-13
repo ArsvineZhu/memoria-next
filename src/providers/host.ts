@@ -7,6 +7,8 @@ import {
   type ProviderHostOptions,
   type ProviderResult,
   type ProviderSet,
+  type RerankScore,
+  type RerankWork,
 } from "./types.js";
 
 export class ProviderHost {
@@ -45,11 +47,21 @@ export class ProviderHost {
           egressWork.type === "embedding"
             ? validateEmbeddingPayload(egressWork, providerResult)
             : undefined;
+        const scores =
+          egressWork.type === "rerank"
+            ? validateRerankPayload(egressWork, providerResult)
+            : undefined;
         const tags =
           egressWork.type === "enrichment"
             ? validateTagEnrichmentPayload(egressWork, providerResult)
             : undefined;
-        return { workId: work.workId, accepted: true, embeddings, tags };
+        return {
+          workId: work.workId,
+          accepted: true,
+          embeddings,
+          scores,
+          tags,
+        };
       } catch (error) {
         lastError = error;
         if (signal.aborted || attempt === this.#maxAttempts) {
@@ -124,6 +136,56 @@ function validateEmbeddingPayload(
       );
     }
     return { key: work.items[index].key, values: [...values] };
+  });
+}
+
+function validateRerankPayload(
+  work: RerankWork,
+  result: unknown,
+): RerankScore[] {
+  const scores = Array.isArray(result)
+    ? result
+    : result && typeof result === "object" && "scores" in result
+      ? (result as { scores: unknown }).scores
+      : undefined;
+  if (!Array.isArray(scores) || scores.length !== work.candidates.length) {
+    throw new Error("rerank provider returned the wrong score count");
+  }
+  const expected = new Set(work.candidates);
+  const seen = new Set<string>();
+  return scores.map((item, index) => {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !("handle" in item) ||
+      !("score" in item)
+    ) {
+      throw new Error(`rerank score ${index} must contain a handle and score`);
+    }
+    const handle = (item as { handle: unknown }).handle;
+    const score = (item as { score: unknown }).score;
+    if (
+      typeof handle !== "string" ||
+      handle.length === 0 ||
+      !expected.has(handle) ||
+      seen.has(handle)
+    ) {
+      throw new Error(
+        `rerank score ${index} returned an unknown or duplicate handle`,
+      );
+    }
+    if (
+      typeof score !== "number" ||
+      !Number.isFinite(score) ||
+      score < 0 ||
+      score > 1
+    ) {
+      throw new Error(
+        `rerank score ${index} must be finite and between 0 and 1`,
+      );
+    }
+    seen.add(handle);
+    return { handle, score };
   });
 }
 
