@@ -1,0 +1,20 @@
+{
+  "name": "memoria-next",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.18.1 <25"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "build:native": "napi build --manifest-path ./crates/memoria-napi/Cargo.toml --platform --output-dir ./native -- --locked",
+    "build:next-test": "tsc -p tsconfig.next-test.json",
+    "test:next-engine": "pnpm build:next-test && node --test dist-next-test/tests-next/public/engine.test.js"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "@types/node": "^24.0.0",
+    "typescript": "7.0.2"
+  }
+}

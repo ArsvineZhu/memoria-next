@@ -1,3 +1,5 @@
 **/target/
+node_modules/
+dist-next-test/
 /crates/memoria-mdx/fuzz/Cargo.lock
 .superpowers/
