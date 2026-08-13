@@ -1,3 +1,4 @@
+pub mod algorithms;
 mod assessment;
 mod compile;
 mod consolidate;
@@ -15,6 +16,10 @@ mod snapshot;
 mod tags;
 mod validate;
 
+pub use algorithms::{
+    MAX_TAG_BASIS_DIMENSIONS, MAX_TAG_BASIS_VECTORS, TagBasisError, TagBasisResult, l2_norm,
+    project_tag_basis,
+};
 pub use assessment::{RecallAssessment, assess};
 pub use compile::{CompiledQuery, QueryCompiler};
 pub use consolidate::{
