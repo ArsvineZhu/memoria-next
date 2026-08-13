@@ -1,0 +1,1 @@
+pub const PROJECTION_SCHEMA_VERSION: u32 = 1;

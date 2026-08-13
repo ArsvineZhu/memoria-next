@@ -250,8 +250,10 @@ dependencies = [
 name = "memoria-derived"
 version = "0.1.0"
 dependencies = [
+ "memoria-mdx",
  "memoria-types",
  "rusqlite",
+ "sha2",
  "tempfile",
  "thiserror",
 ]

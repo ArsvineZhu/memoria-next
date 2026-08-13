@@ -1,6 +1,9 @@
 mod artifact;
 mod catalog;
+mod compiler;
+mod dependency;
 mod manifest;
+mod projection;
 
 use std::num::TryFromIntError;
 
@@ -8,8 +11,11 @@ use thiserror::Error;
 
 pub use artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
 pub use catalog::DerivedCatalog;
+pub use compiler::DerivedCompiler;
+pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 pub use manifest::{DerivedManifest, ManifestId};
 pub use memoria_types::AuthorityGeneration;
+pub use projection::PROJECTION_SCHEMA_VERSION;
 
 #[derive(Debug, Error)]
 pub enum DerivedError {
