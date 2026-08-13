@@ -190,6 +190,64 @@ fn incompatible_existing_schema_is_rejected_without_bootstrap_mutation() {
 }
 
 #[test]
+fn same_version_malformed_schema_is_rejected_without_mutation() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    drop(db);
+
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute_batch(
+            "DROP INDEX space_state_current_key;
+             CREATE INDEX space_state_current_key
+             ON space_state_history (space_id)
+             WHERE valid_to_generation IS NULL;",
+        )
+        .unwrap();
+    let malformed_index_sql = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master
+             WHERE type = 'index' AND name = 'space_state_current_key'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    drop(connection);
+
+    let result = AuthorityDb::open(database);
+    assert!(
+        result.is_err(),
+        "same-version malformed schemas must be rejected"
+    );
+
+    let connection = Connection::open(database).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT sql FROM sqlite_master
+                 WHERE type = 'index' AND name = 'space_state_current_key'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        malformed_index_sql
+    );
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
 fn space_history_rejects_overlapping_intervals_and_duplicate_current_rows() {
     let fixture = TestStore::new();
     let database = fixture.layout().authority_database();

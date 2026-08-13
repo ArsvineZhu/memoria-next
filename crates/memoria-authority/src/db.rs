@@ -166,6 +166,14 @@ fn validate_schema_v1(connection: &Connection) -> rusqlite::Result<()> {
         )));
     }
 
+    let expected_schema = expected_schema_catalog()?;
+    let actual_schema = schema_catalog(connection)?;
+    if actual_schema != expected_schema {
+        return Err(schema_error(format!(
+            "Authority schema definitions do not match V1: expected {expected_schema:?}, found {actual_schema:?}"
+        )));
+    }
+
     let schema_version = connection.query_row(
         "SELECT meta_value FROM store_meta WHERE meta_key = 'schema_version'",
         [],
@@ -190,6 +198,40 @@ fn validate_schema_v1(connection: &Connection) -> rusqlite::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SchemaObject {
+    object_type: String,
+    name: String,
+    table_name: String,
+    sql: Option<String>,
+}
+
+fn expected_schema_catalog() -> rusqlite::Result<Vec<SchemaObject>> {
+    let connection = Connection::open_in_memory()?;
+    configure_connection(&connection)?;
+    connection.execute_batch(SCHEMA_V1)?;
+    schema_catalog(&connection)
+}
+
+fn schema_catalog(connection: &Connection) -> rusqlite::Result<Vec<SchemaObject>> {
+    let mut statement = connection.prepare(
+        "SELECT type, name, tbl_name, sql
+         FROM sqlite_master
+         WHERE name NOT LIKE 'sqlite_%'
+         ORDER BY type, name",
+    )?;
+    statement
+        .query_map([], |row| {
+            Ok(SchemaObject {
+                object_type: row.get(0)?,
+                name: row.get(1)?,
+                table_name: row.get(2)?,
+                sql: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
 }
 
 fn schema_object_names(
