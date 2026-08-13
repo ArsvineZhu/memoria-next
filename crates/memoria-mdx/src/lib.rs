@@ -1,4 +1,5 @@
 mod canonical;
+mod diff;
 mod ir;
 mod patch;
 mod profile;
@@ -13,6 +14,7 @@ use std::ops::Range;
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 pub use canonical::{compile_ir, compile_validated};
+pub use diff::{InvalidationCategory, SemanticDiff, SemanticDiffCategory};
 pub use ir::{IrNode, MEMORY_IR_VERSION, MemoryIr, SemanticHash, SourceMapping};
 pub use memoria_types::RevisionSemanticIntent;
 pub use patch::{
