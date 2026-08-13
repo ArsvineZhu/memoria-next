@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use memoria_query::{MemoryQuery, ReadSession};
 use memoria_runtime::{MemoriaRuntime, ProviderWorkResult};
-use memoria_types::SpaceId;
+use memoria_types::{MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 
 use crate::convert::{
-    JsCreateMemoryRequest, JsProviderResult, JsProviderWork, JsQueryRequest, JsQueryResponse,
-    JsStatus, QueryRequest,
+    JsCreateMemoryRequest, JsMemoryMutation, JsProviderResult, JsProviderWork, JsQueryRequest,
+    JsQueryResponse, JsReviseMemoryRequest, JsStatus, QueryRequest,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -95,14 +95,52 @@ pub fn authority_mutate(store: &NativeStore, request: JsCreateMemoryRequest) -> 
     let runtime = runtime
         .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
-    let memory_id = runtime
-        .create_memory(
-            space_id,
-            request.document_key.as_deref(),
-            request.mdx.as_bytes(),
-        )
-        .map_err(runtime_error)?;
+    let memory_id = match request.idempotency_key.as_deref() {
+        Some(idempotency_key) => runtime
+            .create_memory_idempotent(
+                space_id,
+                request.document_key.as_deref(),
+                request.mdx.as_bytes(),
+                idempotency_key,
+            )
+            .map_err(runtime_error)?,
+        None => runtime
+            .create_memory(
+                space_id,
+                request.document_key.as_deref(),
+                request.mdx.as_bytes(),
+            )
+            .map_err(runtime_error)?,
+    };
     Ok(memory_id.to_string())
+}
+
+#[napi]
+pub fn authority_revise(
+    store: &NativeStore,
+    request: JsReviseMemoryRequest,
+) -> Result<JsMemoryMutation> {
+    let memory_id = request
+        .memory_id
+        .parse::<MemoryId>()
+        .map_err(to_napi_error)?;
+    let expected_head = request
+        .expected_head
+        .parse::<RevisionId>()
+        .map_err(to_napi_error)?;
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    let mutation = runtime
+        .revise_memory(memory_id, expected_head, request.mdx.as_bytes())
+        .map_err(runtime_error)?;
+    Ok(JsMemoryMutation {
+        memory_id: mutation.memory_id.to_string(),
+        space_id: mutation.space_id.to_string(),
+        revision_id: mutation.revision_id.to_string(),
+        authority_generation: mutation.generation.to_string(),
+    })
 }
 
 #[napi]

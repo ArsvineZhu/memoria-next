@@ -10,7 +10,7 @@ use memoria_query::{
     ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex, MemoryQuery, QueryCompiler,
     ReadSession, RetrievalResponse, build_response, execute_exact, execute_lexical,
 };
-use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, SpaceId};
+use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use thiserror::Error;
 
 use crate::provider::{NeedWork, ProviderWorkResult};
@@ -64,6 +64,14 @@ pub struct MemoriaRuntime {
 struct PendingProviderWork {
     generation: AuthorityGeneration,
     work: NeedWork,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryMutation {
+    pub memory_id: MemoryId,
+    pub space_id: SpaceId,
+    pub revision_id: RevisionId,
+    pub generation: AuthorityGeneration,
 }
 
 impl MemoriaRuntime {
@@ -120,6 +128,51 @@ impl MemoriaRuntime {
         self.enqueue_embedding_work(memory_id, result.generation(), source);
         self.rebuild_base_for_space(space_id, result.generation());
         Ok(memory_id)
+    }
+
+    pub fn create_memory_idempotent(
+        &mut self,
+        space_id: SpaceId,
+        document_key: Option<&str>,
+        source: &[u8],
+        idempotency_key: &str,
+    ) -> Result<MemoryId, RuntimeError> {
+        self.ensure_open()?;
+        let before = self.authority_generation()?;
+        let result = self.authority.create_memory_idempotent(
+            &self.cas,
+            space_id,
+            document_key,
+            source,
+            idempotency_key,
+        )?;
+        let memory_id = result.value().memory_id;
+        if result.generation() > before {
+            self.enqueue_embedding_work(memory_id, result.generation(), source);
+            self.rebuild_base_for_space(space_id, result.generation());
+        }
+        Ok(memory_id)
+    }
+
+    pub fn revise_memory(
+        &mut self,
+        memory_id: MemoryId,
+        expected_head: RevisionId,
+        source: &[u8],
+    ) -> Result<MemoryMutation, RuntimeError> {
+        self.ensure_open()?;
+        let result = self
+            .authority
+            .revise_memory(&self.cas, memory_id, expected_head, source)?;
+        let record = result.value();
+        self.enqueue_embedding_work(record.memory_id, result.generation(), source);
+        self.rebuild_base_for_space(record.space_id, result.generation());
+        Ok(MemoryMutation {
+            memory_id: record.memory_id,
+            space_id: record.space_id,
+            revision_id: record.head_revision_id,
+            generation: result.generation(),
+        })
     }
 
     pub fn query(&mut self, query: MemoryQuery) -> Result<RetrievalResponse, RuntimeError> {
@@ -259,7 +312,7 @@ impl MemoriaRuntime {
         generation: AuthorityGeneration,
         source: &[u8],
     ) {
-        let work_id = format!("EW_{memory_id}");
+        let work_id = format!("EW_{memory_id}_{generation}");
         let work = NeedWork::Embeddings(crate::EmbeddingBatchRequest {
             work_id,
             signature: "memoria-embedding-v1".to_owned(),
@@ -289,9 +342,16 @@ impl MemoriaRuntime {
     }
 
     fn authority_generation_or_initial(&self) -> AuthorityGeneration {
+        self.authority_generation()
+            .unwrap_or_else(|_| AuthorityGeneration::initial())
+    }
+
+    fn authority_generation(&self) -> Result<AuthorityGeneration, RuntimeError> {
         self.authority
             .current_generation()
-            .unwrap_or_else(|_| AuthorityGeneration::initial())
+            .map_err(|error| RuntimeError::AuthorityDatabase {
+                message: error.to_string(),
+            })
     }
 
     fn try_rebuild_base_for_space(

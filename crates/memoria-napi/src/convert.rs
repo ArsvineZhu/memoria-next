@@ -77,7 +77,25 @@ impl From<QueryRequest> for JsQueryRequest {
 pub struct JsCreateMemoryRequest {
     pub space_id: String,
     pub document_key: Option<String>,
+    pub idempotency_key: Option<String>,
     pub mdx: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsReviseMemoryRequest {
+    pub memory_id: String,
+    pub expected_head: String,
+    pub mdx: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsMemoryMutation {
+    pub memory_id: String,
+    pub space_id: String,
+    pub revision_id: String,
+    pub authority_generation: String,
 }
 
 #[napi(object)]

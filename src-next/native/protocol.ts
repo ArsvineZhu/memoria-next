@@ -20,7 +20,21 @@ export interface NativeStatus {
 export interface NativeCreateMemoryRequest {
   spaceId: string;
   documentKey?: string;
+  idempotencyKey?: string;
   mdx: string;
+}
+
+export interface NativeReviseMemoryRequest {
+  memoryId: string;
+  expectedHead: string;
+  mdx: string;
+}
+
+export interface NativeMemoryMutation {
+  memoryId: string;
+  spaceId: string;
+  revisionId: string;
+  authorityGeneration: string;
 }
 
 export interface NativeProviderResult {
@@ -53,6 +67,7 @@ export interface NativeBinding {
   closeStore(store: NativeStoreHandle): void;
   authorityMutate(store: NativeStoreHandle, request: NativeCreateMemoryRequest): string;
   authorityCreateSpace(store: NativeStoreHandle, spaceKey: string): string;
+  authorityRevise(store: NativeStoreHandle, request: NativeReviseMemoryRequest): NativeMemoryMutation;
   queryStart(store: NativeStoreHandle, request: NativeQueryRequest): NativeQueryResponse;
   queryResume(store: NativeStoreHandle, operationId: string): NativeQueryResponse;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;

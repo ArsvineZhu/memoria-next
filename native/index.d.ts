@@ -9,6 +9,8 @@ export declare function authorityCreateSpace(store: NativeStore, spaceKey: strin
 
 export declare function authorityMutate(store: NativeStore, request: JsCreateMemoryRequest): string
 
+export declare function authorityRevise(store: NativeStore, request: JsReviseMemoryRequest): JsMemoryMutation
+
 export declare function cancelOperation(store: NativeStore, operationId: string): void
 
 export declare function closeStore(store: NativeStore): void
@@ -16,7 +18,15 @@ export declare function closeStore(store: NativeStore): void
 export interface JsCreateMemoryRequest {
   spaceId: string
   documentKey?: string
+  idempotencyKey?: string
   mdx: string
+}
+
+export interface JsMemoryMutation {
+  memoryId: string
+  spaceId: string
+  revisionId: string
+  authorityGeneration: string
 }
 
 export interface JsProviderItem {
@@ -48,6 +58,12 @@ export interface JsQueryResponse {
   resultCount: number
   authorityGeneration: string
   degraded: boolean
+}
+
+export interface JsReviseMemoryRequest {
+  memoryId: string
+  expectedHead: string
+  mdx: string
 }
 
 export interface JsStatus {

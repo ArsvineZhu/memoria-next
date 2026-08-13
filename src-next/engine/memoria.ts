@@ -1,6 +1,7 @@
 import type {
   NativeBinding,
   NativeCreateMemoryRequest,
+  NativeMemoryMutation,
   NativeQueryRequest,
   NativeQueryResponse,
   NativeStatus,
@@ -8,6 +9,10 @@ import type {
 } from "../native/protocol.js";
 import { toNeedWork as decodeNeedWork } from "../native/protocol.js";
 import { ProviderHost } from "../providers/host.js";
+import { createAdminApi, type AdminApi } from "../admin/index.js";
+import { createDocumentsApi, type DocumentsApi } from "../domain/documents.js";
+import { createFeedbackApi, type FeedbackApi } from "../domain/feedback.js";
+import { createSpacesApi, type SpacesApi } from "../domain/spaces.js";
 
 export interface MemoriaQuery {
   scope: string[];
@@ -29,6 +34,7 @@ export interface QueryOptions {
 export interface CreateMemoryRequest {
   spaceId: string;
   documentKey?: string;
+  idempotencyKey?: string;
   mdx: string;
 }
 
@@ -52,6 +58,10 @@ function mapResponse(response: NativeQueryResponse): NativeQueryResponse {
 }
 
 export class Memoria {
+  readonly spaces: SpacesApi;
+  readonly documents: DocumentsApi;
+  readonly feedback: FeedbackApi;
+  readonly admin: AdminApi;
   #binding: NativeBinding;
   #store: NativeStoreHandle | undefined;
   #providerHost: ProviderHost | undefined;
@@ -63,6 +73,10 @@ export class Memoria {
     this.#binding = binding;
     this.#store = store;
     this.#providerHost = providerHost;
+    this.spaces = createSpacesApi(this);
+    this.documents = createDocumentsApi(this);
+    this.feedback = createFeedbackApi();
+    this.admin = createAdminApi(this);
     if (providerHost) {
       void this.runProviderPump();
     }
@@ -106,12 +120,23 @@ export class Memoria {
     const nativeRequest: NativeCreateMemoryRequest = {
       spaceId: request.spaceId,
       ...(request.documentKey === undefined ? {} : { documentKey: request.documentKey }),
+      ...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
       mdx: request.mdx,
     };
     const memoryId = this.#binding.authorityMutate(this.store(), nativeRequest);
     this.#wakeProviderPump?.();
     const status = await this.status();
     return { memoryId, authorityGeneration: status.authorityGeneration };
+  }
+
+  async reviseMemory(request: {
+    memoryId: string;
+    expectedHead: string;
+    mdx: string;
+  }): Promise<NativeMemoryMutation> {
+    const mutation = this.#binding.authorityRevise(this.store(), request);
+    this.#wakeProviderPump?.();
+    return mutation;
   }
 
   private async runProviderPump(): Promise<void> {
