@@ -1,9 +1,12 @@
+mod support;
+
 use memoria_authority::{
     AuthorityDb, AuthorityMutationBatch, AuthorityOperation, MemoryRecord, SourceCas, SpaceRecord,
     StoreLayout, StoreWriterLock,
 };
 use memoria_types::{
-    AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SourceBlobHash, SpaceId,
+    AuthorityGeneration, MemoriaError, MemoryId, RevisionId, RevisionSemanticIntent,
+    SourceBlobHash, SpaceId,
 };
 
 struct TestAuthority {
@@ -146,6 +149,39 @@ impl TestAuthority {
         batch: AuthorityMutationBatch,
     ) -> Result<memoria_authority::AuthorityWriteResult<()>, MemoriaError> {
         self.db.apply_mutation_batch(&self.cas, batch)
+    }
+
+    fn test_only_create_detached_revision(
+        &self,
+        memory_id: MemoryId,
+        parents: Vec<RevisionId>,
+        source: &[u8],
+        semantic_intent: RevisionSemanticIntent,
+    ) -> Result<RevisionId, MemoriaError> {
+        support::test_only_create_detached_revision(
+            &self.db,
+            &self.cas,
+            memory_id,
+            parents,
+            source,
+            semantic_intent,
+        )
+    }
+
+    fn merge_memory(
+        &self,
+        memory_id: MemoryId,
+        expected_head: RevisionId,
+        parents: Vec<RevisionId>,
+        source: &[u8],
+    ) -> Result<MemoryRecord, MemoriaError> {
+        self.db
+            .merge_memory(&self.cas, memory_id, expected_head, parents, source)
+            .map(|result| result.into_value())
+    }
+
+    fn revision_parents(&self, revision_id: RevisionId) -> Result<Vec<RevisionId>, MemoriaError> {
+        Ok(self.db.get_revision(revision_id)?.parents)
     }
 
     fn get_memory(&self, memory_id: MemoryId) -> Result<MemoryRecord, MemoriaError> {
@@ -599,6 +635,40 @@ fn batch_rolls_back_earlier_operations_when_later_operation_fails() {
 }
 
 #[test]
+fn idempotent_batch_replays_without_advancing_generation_or_accepting_changes() {
+    let store = TestAuthority::new();
+    let space = store.create_space("p").unwrap();
+    let memory = store
+        .create_memory(space.id(), Some("old"), b"# A\n")
+        .unwrap();
+    let batch = AuthorityMutationBatch {
+        idempotency_key: Some("batch-1".to_owned()),
+        expected_generation: Some(memory.generation()),
+        operations: vec![AuthorityOperation::RenameDocumentKey {
+            memory_id: memory.memory_id(),
+            document_key: Some("new".to_owned()),
+        }],
+    };
+
+    let first = store.apply_batch(batch.clone()).unwrap();
+    let replay = store.apply_batch(batch).unwrap();
+    assert_eq!(replay.generation(), first.generation());
+    assert_eq!(store.db.current_generation().unwrap(), first.generation());
+
+    let conflict = store.apply_batch(AuthorityMutationBatch {
+        idempotency_key: Some("batch-1".to_owned()),
+        expected_generation: Some(first.generation()),
+        operations: vec![AuthorityOperation::RetireMemory {
+            memory_id: memory.memory_id(),
+        }],
+    });
+    assert!(matches!(
+        conflict,
+        Err(MemoriaError::IdempotencyConflict { .. })
+    ));
+}
+
+#[test]
 fn batch_expected_generation_conflict_does_not_mutate() {
     let store = TestAuthority::new();
     let space = store.create_space("p").unwrap();
@@ -623,34 +693,6 @@ fn batch_expected_generation_conflict_does_not_mutate() {
         store.get_memory(memory.memory_id()).unwrap().lifecycle,
         memoria_authority::MemoryLifecycle::Active
     );
-}
-
-#[test]
-fn merge_operation_shape_is_retained_but_execution_is_deferred() {
-    let store = TestAuthority::new();
-    let space = store.create_space("p").unwrap();
-    let memory = store
-        .create_memory(space.id(), Some("a"), b"# A\n")
-        .unwrap();
-
-    let result = store.apply_batch(AuthorityMutationBatch {
-        idempotency_key: None,
-        expected_generation: Some(memory.generation()),
-        operations: vec![AuthorityOperation::MergeMemory {
-            memory_id: memory.memory_id(),
-            expected_head: memory.revision_id(),
-            parents: vec![memory.revision_id(), RevisionId::from_bytes([9; 32])],
-            source: b"# Merge\n".to_vec(),
-        }],
-    });
-
-    assert!(matches!(
-        result,
-        Err(MemoriaError::UnsupportedOperation {
-            operation: "MergeMemory"
-        })
-    ));
-    assert_eq!(store.db.current_generation().unwrap(), memory.generation());
 }
 
 #[test]
@@ -701,4 +743,162 @@ fn authority_mutation_batch_exposes_task6_operation_shapes() {
     };
 
     assert_eq!(batch.operations.len(), 10);
+}
+
+#[test]
+fn merge_revision_keeps_all_valid_same_memory_parents() {
+    let store = TestAuthority::new();
+    let space = store.create_space("p").unwrap();
+    let base = store
+        .create_memory(space.id(), Some("m"), b"# M\nbase")
+        .unwrap();
+    let left = store
+        .test_only_create_detached_revision(
+            base.memory_id(),
+            vec![base.revision_id()],
+            b"# M\nleft",
+            RevisionSemanticIntent::Edit,
+        )
+        .unwrap();
+    let right = store
+        .test_only_create_detached_revision(
+            base.memory_id(),
+            vec![base.revision_id()],
+            b"# M\nright",
+            RevisionSemanticIntent::Edit,
+        )
+        .unwrap();
+
+    let merged = store
+        .merge_memory(
+            base.memory_id(),
+            base.revision_id(),
+            vec![left, right],
+            b"# M\ncaller resolved merge",
+        )
+        .unwrap();
+
+    assert_eq!(
+        store.revision_parents(merged.revision_id()).unwrap(),
+        vec![left, right]
+    );
+    assert_eq!(
+        store
+            .db
+            .get_revision(merged.revision_id())
+            .unwrap()
+            .semantic_intent,
+        RevisionSemanticIntent::Merge
+    );
+}
+
+#[test]
+fn merge_batch_publishes_one_generation_and_updates_head() {
+    let store = TestAuthority::new();
+    let space = store.create_space("p").unwrap();
+    let base = store
+        .create_memory(space.id(), Some("m"), b"# M\nbase")
+        .unwrap();
+    let left = store
+        .test_only_create_detached_revision(
+            base.memory_id(),
+            vec![base.revision_id()],
+            b"# M\nleft",
+            RevisionSemanticIntent::Edit,
+        )
+        .unwrap();
+    let right = store
+        .test_only_create_detached_revision(
+            base.memory_id(),
+            vec![base.revision_id()],
+            b"# M\nright",
+            RevisionSemanticIntent::Edit,
+        )
+        .unwrap();
+    let before = store.db.current_generation().unwrap();
+
+    let result = store
+        .apply_batch(AuthorityMutationBatch {
+            idempotency_key: None,
+            expected_generation: Some(before),
+            operations: vec![AuthorityOperation::MergeMemory {
+                memory_id: base.memory_id(),
+                expected_head: base.revision_id(),
+                parents: vec![left, right],
+                source: b"# M\nmerged".to_vec(),
+            }],
+        })
+        .unwrap();
+
+    assert_eq!(result.generation(), before.next());
+    let merged = store.get_memory(base.memory_id()).unwrap();
+    assert_eq!(merged.generation(), result.generation());
+    assert_eq!(
+        store.db.get_revision(merged.revision_id()).unwrap().parents,
+        vec![left, right]
+    );
+}
+
+#[test]
+fn merge_rejects_invalid_parent_sets_without_mutation() {
+    let store = TestAuthority::new();
+    let first_space = store.create_space("first").unwrap();
+    let second_space = store.create_space("second").unwrap();
+    let first = store
+        .create_memory(first_space.id(), Some("first"), b"# First\n")
+        .unwrap();
+    let second = store
+        .create_memory(second_space.id(), Some("second"), b"# Second\n")
+        .unwrap();
+
+    let fewer_than_two = store.merge_memory(
+        first.memory_id(),
+        first.revision_id(),
+        vec![first.revision_id()],
+        b"# First\nmerge",
+    );
+    assert!(matches!(
+        fewer_than_two,
+        Err(MemoriaError::InvalidMutationBatch { .. })
+    ));
+
+    let wrong_memory = store.merge_memory(
+        first.memory_id(),
+        first.revision_id(),
+        vec![first.revision_id(), second.revision_id()],
+        b"# First\nmerge",
+    );
+    assert!(matches!(
+        wrong_memory,
+        Err(MemoriaError::InvalidMutationBatch { .. })
+    ));
+
+    let duplicate = store.merge_memory(
+        first.memory_id(),
+        first.revision_id(),
+        vec![first.revision_id(), first.revision_id()],
+        b"# First\nmerge",
+    );
+    assert!(matches!(
+        duplicate,
+        Err(MemoriaError::InvalidMutationBatch { .. })
+    ));
+    assert_eq!(store.db.current_generation().unwrap(), second.generation());
+    assert_eq!(
+        store.get_memory(first.memory_id()).unwrap().revision_id(),
+        first.revision_id()
+    );
+}
+
+#[test]
+fn retired_space_is_not_a_default_writable_target() {
+    let store = TestAuthority::new();
+    let space = store.create_space("p").unwrap();
+    let retired = store.retire_space(space.id(), space.generation()).unwrap();
+
+    assert!(matches!(
+        store.create_memory(space.id(), Some("m"), b"# M\n"),
+        Err(MemoriaError::SpaceRetired { .. })
+    ));
+    assert_eq!(store.db.current_generation().unwrap(), retired.generation());
 }

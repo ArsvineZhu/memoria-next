@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::{collections::HashSet, fmt::Write as _};
 
 use memoria_types::{
     AuthorityGeneration, MemoriaError, MemoryId, RevisionId, RevisionSemanticIntent,
@@ -79,6 +79,12 @@ enum PreparedOperation {
     ReviseMemory {
         memory_id: MemoryId,
         expected_head: RevisionId,
+        source_blob_hash: SourceBlobHash,
+    },
+    MergeMemory {
+        memory_id: MemoryId,
+        expected_head: RevisionId,
+        parents: Vec<RevisionId>,
         source_blob_hash: SourceBlobHash,
     },
     MoveMemory {
@@ -213,6 +219,36 @@ impl AuthorityDb {
         })
     }
 
+    pub fn merge_memory(
+        &self,
+        cas: &SourceCas,
+        memory_id: MemoryId,
+        expected_head: RevisionId,
+        parents: Vec<RevisionId>,
+        source: &[u8],
+    ) -> Result<AuthorityWriteResult<MemoryRecord>, MemoriaError> {
+        let source_blob_hash = cas.put(source)?;
+        self.write_memoria(|tx| {
+            merge_memory_in_transaction(tx, memory_id, expected_head, &parents, source_blob_hash)
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn test_only_create_detached_revision(
+        &self,
+        cas: &SourceCas,
+        memory_id: MemoryId,
+        parents: Vec<RevisionId>,
+        source: &[u8],
+        semantic_intent: RevisionSemanticIntent,
+    ) -> Result<AuthorityWriteResult<RevisionId>, MemoriaError> {
+        let source_blob_hash = cas.put(source)?;
+        self.write_memoria(|tx| {
+            current_memory_state(tx, memory_id)?;
+            insert_validated_revision(tx, memory_id, &parents, source_blob_hash, semantic_intent)
+        })
+    }
+
     pub fn move_memory(
         &self,
         memory_id: MemoryId,
@@ -342,16 +378,6 @@ impl AuthorityDb {
                 message: "operations must not be empty".to_owned(),
             });
         }
-        if batch
-            .operations
-            .iter()
-            .any(|operation| matches!(operation, AuthorityOperation::MergeMemory { .. }))
-        {
-            return Err(MemoriaError::UnsupportedOperation {
-                operation: "MergeMemory",
-            });
-        }
-
         let request_fingerprint = mutation_batch_fingerprint(&batch);
         let prepared_operations = prepare_operations(cas, &batch.operations)?;
         let idempotency_key = batch.idempotency_key;
@@ -447,22 +473,13 @@ fn revise_memory_in_transaction(
     }
     ensure_memory_is_active(memory_id, &state)?;
 
-    let revision_id = derive_revision_id(
+    let revision_id = insert_validated_revision(
+        tx,
         memory_id,
         &[expected_head],
         source_blob_hash,
         RevisionSemanticIntent::Edit,
-    );
-    let committed_at = Timestamp::now()?;
-    tx.insert_revision_record(
-        memory_id,
-        revision_id,
-        source_blob_hash,
-        RevisionSemanticIntent::Edit,
-        committed_at,
-        &[expected_head],
-    )
-    .map_err(database_error)?;
+    )?;
     replace_memory_state(
         tx,
         memory_id,
@@ -476,6 +493,54 @@ fn revise_memory_in_transaction(
         memory_id,
         state.space_id,
         state.document_key.clone(),
+        revision_id,
+        state.lifecycle,
+        source_blob_hash,
+        tx.generation(),
+    ))
+}
+
+fn merge_memory_in_transaction(
+    tx: &mut AuthorityTransaction<'_>,
+    memory_id: MemoryId,
+    expected_head: RevisionId,
+    parents: &[RevisionId],
+    source_blob_hash: SourceBlobHash,
+) -> Result<MemoryRecord, MemoriaError> {
+    if parents.len() < 2 {
+        return Err(MemoriaError::InvalidMutationBatch {
+            message: "MergeMemory requires at least two parents".to_owned(),
+        });
+    }
+    let state = current_memory_state(tx, memory_id)?;
+    if state.head_revision_id != expected_head {
+        return Err(MemoriaError::HeadConflict {
+            memory_id,
+            expected_head,
+            actual_head: state.head_revision_id,
+        });
+    }
+    ensure_memory_is_active(memory_id, &state)?;
+    let revision_id = insert_validated_revision(
+        tx,
+        memory_id,
+        parents,
+        source_blob_hash,
+        RevisionSemanticIntent::Merge,
+    )?;
+    replace_memory_state(
+        tx,
+        memory_id,
+        state.space_id,
+        state.document_key.as_deref(),
+        revision_id,
+        state.lifecycle,
+    )?;
+
+    Ok(memory_record(
+        memory_id,
+        state.space_id,
+        state.document_key,
         revision_id,
         state.lifecycle,
         source_blob_hash,
@@ -716,6 +781,14 @@ fn apply_prepared_operation(
         } => {
             revise_memory_in_transaction(tx, memory_id, expected_head, source_blob_hash)?;
         }
+        PreparedOperation::MergeMemory {
+            memory_id,
+            expected_head,
+            parents,
+            source_blob_hash,
+        } => {
+            merge_memory_in_transaction(tx, memory_id, expected_head, &parents, source_blob_hash)?;
+        }
         PreparedOperation::MoveMemory {
             memory_id,
             space_id,
@@ -776,8 +849,16 @@ fn prepare_operations(
                 expected_head: *expected_head,
                 source_blob_hash: cas.put(source)?,
             }),
-            AuthorityOperation::MergeMemory { .. } => Err(MemoriaError::UnsupportedOperation {
-                operation: "MergeMemory",
+            AuthorityOperation::MergeMemory {
+                memory_id,
+                expected_head,
+                parents,
+                source,
+            } => Ok(PreparedOperation::MergeMemory {
+                memory_id: *memory_id,
+                expected_head: *expected_head,
+                parents: parents.clone(),
+                source_blob_hash: cas.put(source)?,
             }),
             AuthorityOperation::MoveMemory {
                 memory_id,
@@ -876,6 +957,115 @@ fn ensure_memory_is_active(
         return Err(MemoriaError::MemoryRetired { memory_id });
     }
     Ok(())
+}
+
+fn insert_validated_revision(
+    tx: &mut AuthorityTransaction<'_>,
+    memory_id: MemoryId,
+    parents: &[RevisionId],
+    source_blob_hash: SourceBlobHash,
+    semantic_intent: RevisionSemanticIntent,
+) -> Result<RevisionId, MemoriaError> {
+    let revision_id = derive_revision_id(memory_id, parents, source_blob_hash, semantic_intent);
+    validate_revision_parents(tx, memory_id, revision_id, parents)?;
+    let committed_at = Timestamp::now()?;
+    tx.insert_revision_record(
+        memory_id,
+        revision_id,
+        source_blob_hash,
+        semantic_intent,
+        committed_at,
+        parents,
+    )
+    .map_err(database_error)?;
+    Ok(revision_id)
+}
+
+fn validate_revision_parents(
+    transaction: &AuthorityTransaction<'_>,
+    memory_id: MemoryId,
+    revision_id: RevisionId,
+    parents: &[RevisionId],
+) -> Result<(), MemoriaError> {
+    let mut seen = HashSet::with_capacity(parents.len());
+    for parent_revision_id in parents {
+        if !seen.insert(*parent_revision_id) {
+            return Err(MemoriaError::InvalidMutationBatch {
+                message: format!("revision parent {parent_revision_id} is listed more than once"),
+            });
+        }
+        let parent_memory_id = transaction
+            .transaction
+            .query_row(
+                "SELECT memory_id FROM revisions WHERE revision_id = ?1",
+                params![parent_revision_id.as_bytes().as_slice()],
+                |row| {
+                    Ok(MemoryId::from_bytes(parse_fixed_bytes(
+                        row.get::<_, Vec<u8>>(0)?,
+                        "memory id",
+                    )?))
+                },
+            )
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => MemoriaError::InvalidMutationBatch {
+                    message: format!("revision parent {parent_revision_id} does not exist"),
+                },
+                other => database_error(other),
+            })?;
+        if parent_memory_id != memory_id {
+            return Err(MemoriaError::InvalidMutationBatch {
+                message: format!(
+                    "revision parent {parent_revision_id} belongs to {parent_memory_id}, not {memory_id}"
+                ),
+            });
+        }
+        if revision_reaches(transaction, *parent_revision_id, revision_id)? {
+            return Err(MemoriaError::InvalidMutationBatch {
+                message: format!(
+                    "revision edge {revision_id} -> {parent_revision_id} would create a cycle"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn revision_reaches(
+    transaction: &AuthorityTransaction<'_>,
+    start: RevisionId,
+    target: RevisionId,
+) -> Result<bool, MemoriaError> {
+    let mut pending = vec![start];
+    let mut visited = HashSet::new();
+    while let Some(revision_id) = pending.pop() {
+        if revision_id == target {
+            return Ok(true);
+        }
+        if !visited.insert(revision_id) {
+            continue;
+        }
+        let mut statement = transaction
+            .transaction
+            .prepare(
+                "SELECT parent_revision_id
+                 FROM revision_parents
+                 WHERE revision_id = ?1
+                 ORDER BY parent_order",
+            )
+            .map_err(database_error)?;
+        let parents = statement
+            .query_map(params![revision_id.as_bytes().as_slice()], |row| {
+                Ok(RevisionId::from_bytes(parse_fixed_bytes(
+                    row.get::<_, Vec<u8>>(0)?,
+                    "revision id",
+                )?))
+            })
+            .map_err(database_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(database_error)?;
+        pending.extend(parents);
+    }
+    Ok(false)
 }
 
 fn ensure_space_key_available(

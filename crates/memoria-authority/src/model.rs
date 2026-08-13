@@ -115,6 +115,11 @@ impl RevisionRecord {
     pub fn parent_revision_ids(&self) -> &[RevisionId] {
         &self.parents
     }
+
+    #[must_use]
+    pub fn intent(&self) -> RevisionSemanticIntent {
+        self.semantic_intent
+    }
 }
 
 #[derive(Debug)]
