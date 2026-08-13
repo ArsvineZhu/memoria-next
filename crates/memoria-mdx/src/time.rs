@@ -37,18 +37,23 @@ impl TemporalValue {
             value: value.to_owned(),
             span: 0..value.len(),
         };
-        if value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        let bytes = value.as_bytes();
+        if value.len() == 4 && bytes.iter().all(u8::is_ascii_digit) {
             return Ok(Self {
                 raw: value.to_owned(),
                 precision: TemporalPrecision::Year,
-                year: value.parse().map_err(|_| invalid())?,
+                year: parse_digits(&bytes[..4])
+                    .and_then(|year| i32::try_from(year).ok())
+                    .ok_or_else(invalid)?,
                 month: None,
                 day: None,
             });
         }
-        if value.len() == 7 && value.as_bytes()[4] == b'-' {
-            let year = value[..4].parse().map_err(|_| invalid())?;
-            let month = value[5..].parse().map_err(|_| invalid())?;
+        if value.len() == 7 && bytes[4] == b'-' {
+            let year = parse_digits(&bytes[..4])
+                .and_then(|year| i32::try_from(year).ok())
+                .ok_or_else(invalid)?;
+            let month = parse_digits(&bytes[5..7]).ok_or_else(invalid)? as u8;
             if !(1..=12).contains(&month) {
                 return Err(invalid());
             }
@@ -60,10 +65,12 @@ impl TemporalValue {
                 day: None,
             });
         }
-        if value.len() == 10 && value.as_bytes()[4] == b'-' && value.as_bytes()[7] == b'-' {
-            let year = value[..4].parse().map_err(|_| invalid())?;
-            let month = value[5..7].parse().map_err(|_| invalid())?;
-            let day = value[8..].parse().map_err(|_| invalid())?;
+        if value.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-' {
+            let year = parse_digits(&bytes[..4])
+                .and_then(|year| i32::try_from(year).ok())
+                .ok_or_else(invalid)?;
+            let month = parse_digits(&bytes[5..7]).ok_or_else(invalid)? as u8;
+            let day = parse_digits(&bytes[8..10]).ok_or_else(invalid)? as u8;
             if !(1..=12).contains(&month) || !(1..=days_in_month(year, month)).contains(&day) {
                 return Err(invalid());
             }
@@ -76,9 +83,12 @@ impl TemporalValue {
             });
         }
         if value.len() >= 20
-            && value.as_bytes().get(4) == Some(&b'-')
-            && value.as_bytes().get(7) == Some(&b'-')
-            && value.as_bytes().get(10) == Some(&b'T')
+            && bytes.get(4) == Some(&b'-')
+            && bytes.get(7) == Some(&b'-')
+            && bytes.get(10) == Some(&b'T')
+            && bytes
+                .get(..19)
+                .is_some_and(|prefix| prefix.iter().all(u8::is_ascii))
         {
             return Self::parse_timestamp(value);
         }
@@ -95,9 +105,9 @@ impl TemporalValue {
         if bytes.get(13) != Some(&b':') || bytes.get(16) != Some(&b':') {
             return Err(invalid());
         }
-        let hour = parse_two_digits(&value[11..13]).ok_or_else(invalid)?;
-        let minute = parse_two_digits(&value[14..16]).ok_or_else(invalid)?;
-        let second = parse_two_digits(&value[17..19]).ok_or_else(invalid)?;
+        let hour = parse_two_digits(&bytes[11..13]).ok_or_else(invalid)?;
+        let minute = parse_two_digits(&bytes[14..16]).ok_or_else(invalid)?;
+        let second = parse_two_digits(&bytes[17..19]).ok_or_else(invalid)?;
         if hour > 23 || minute > 59 || second > 59 {
             return Err(invalid());
         }
@@ -120,9 +130,9 @@ impl TemporalValue {
                     return Err(invalid());
                 }
                 let offset_hour =
-                    parse_two_digits(&value[cursor + 1..cursor + 3]).ok_or_else(invalid)?;
+                    parse_two_digits(&bytes[cursor + 1..cursor + 3]).ok_or_else(invalid)?;
                 let offset_minute =
-                    parse_two_digits(&value[cursor + 4..cursor + 6]).ok_or_else(invalid)?;
+                    parse_two_digits(&bytes[cursor + 4..cursor + 6]).ok_or_else(invalid)?;
                 if offset_hour > 23 || offset_minute > 59 {
                     return Err(invalid());
                 }
@@ -188,9 +198,20 @@ fn days_in_month(year: i32, month: u8) -> u8 {
     }
 }
 
-fn parse_two_digits(value: &str) -> Option<u8> {
-    if value.len() != 2 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+fn parse_digits(value: &[u8]) -> Option<u32> {
+    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    value.parse().ok()
+    value.iter().try_fold(0_u32, |value, byte| {
+        value
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(u32::from(byte - b'0')))
+    })
+}
+
+fn parse_two_digits(value: &[u8]) -> Option<u8> {
+    (value.len() == 2)
+        .then(|| parse_digits(value))
+        .flatten()
+        .and_then(|value| u8::try_from(value).ok())
 }

@@ -1,4 +1,4 @@
-use memoria_mdx::{MdxError, parse_source};
+use memoria_mdx::{MdxError, parse_and_validate, parse_source};
 
 #[test]
 fn semantic_element_keeps_exact_span() {
@@ -60,4 +60,20 @@ fn unicode_before_tag_does_not_break_byte_scanning() {
     let src = "中文\n<State id=\"s\">A</State>\n";
     let parsed = parse_source(src).unwrap();
     assert_eq!(parsed.semantic_elements().next().unwrap().name(), "State");
+}
+
+#[test]
+fn pathological_nesting_hits_resource_limit() {
+    let mut src = String::new();
+    for _ in 0..300 {
+        src.push_str("<Section id=\"x\">");
+    }
+    src.push('x');
+    for _ in 0..300 {
+        src.push_str("</Section>");
+    }
+    assert!(matches!(
+        parse_and_validate(&src),
+        Err(MdxError::ResourceLimit { .. })
+    ));
 }

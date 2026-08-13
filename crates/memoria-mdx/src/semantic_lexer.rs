@@ -16,6 +16,7 @@ const CORE_ELEMENT_NAMES: &[&str] = &[
     "Quote",
     "Extension",
 ];
+const MAX_NESTING_DEPTH: usize = 128;
 
 #[derive(Clone, Debug)]
 struct OpenElement {
@@ -93,6 +94,11 @@ pub(crate) fn lex_source(
         if self_closing {
             elements.push(make_element(name, cursor..tag_end, attributes, true));
         } else {
+            if stack.len() >= MAX_NESTING_DEPTH {
+                return Err(MdxError::ResourceLimit {
+                    resource: "semantic nesting depth",
+                });
+            }
             stack.push(OpenElement {
                 name,
                 start: cursor,
