@@ -198,7 +198,7 @@ fn parse_open_tag(
             .ok_or_else(|| malformed("attribute value is missing", span.clone()))?;
         if delimiter != b'\'' && delimiter != b'"' {
             return Err(MdxError::ExecutableSyntax {
-                span: span.start + cursor..span.start + cursor + 1,
+                span: span.start + 1 + cursor..span.start + 1 + cursor + 1,
             });
         }
         let value_start = cursor + 1;
@@ -216,7 +216,7 @@ fn parse_open_tag(
         attributes.push(make_attribute(
             attribute_name,
             value.to_owned(),
-            span.start + value_start..span.start + value_end,
+            span.start + 1 + value_start..span.start + 1 + value_end,
         ));
         cursor = value_end + 1;
     }

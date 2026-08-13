@@ -1,5 +1,6 @@
 mod canonical;
 mod ir;
+mod patch;
 mod profile;
 mod semantic_lexer;
 mod source;
@@ -13,6 +14,11 @@ use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 pub use canonical::{compile_ir, compile_validated};
 pub use ir::{IrNode, MEMORY_IR_VERSION, MemoryIr, SemanticHash, SourceMapping};
+pub use memoria_types::RevisionSemanticIntent;
+pub use patch::{
+    CorrectionPatch, PatchOp, SupersessionPatch, TransitionState, apply_correction_patch,
+    apply_patch, apply_supersession_patch, apply_transition_state,
+};
 pub use profile::{NodeId, SemanticKind, SemanticNodeId, ValidatedDocument, ValidatedNode};
 pub use source::{ParsedSource, SemanticAttribute, SemanticElement};
 pub use syntax::MdxError;

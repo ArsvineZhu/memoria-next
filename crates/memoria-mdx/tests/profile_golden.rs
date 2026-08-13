@@ -28,6 +28,15 @@ fn literal_attributes_are_retained_and_self_closing_elements_have_exact_span() {
 }
 
 #[test]
+fn literal_attribute_spans_point_at_values() {
+    let src = "<State id=\"s\" validFrom=\"2025\"/>";
+    let parsed = parse_source(src).unwrap();
+    let node = parsed.semantic_elements().next().unwrap();
+    assert_eq!(&src[node.attributes()[0].span()], "s");
+    assert_eq!(&src[node.attributes()[1].span()], "2025");
+}
+
+#[test]
 fn runtime_components_and_directives_are_rejected() {
     assert!(matches!(
         parse_source("<Button>Run</Button>"),

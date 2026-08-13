@@ -60,4 +60,10 @@ pub enum MdxError {
 
     #[error("MDX resource limit exceeded: {resource}")]
     ResourceLimit { resource: &'static str },
+
+    #[error("semantic patch target `{id}` was not found")]
+    PatchTargetNotFound { id: String },
+
+    #[error("invalid semantic patch operation: {message}")]
+    InvalidPatchOperation { message: String },
 }

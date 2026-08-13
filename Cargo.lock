@@ -254,6 +254,7 @@ version = "0.1.0"
 name = "memoria-mdx"
 version = "0.1.0"
 dependencies = [
+ "memoria-types",
  "pulldown-cmark",
  "sha2",
  "thiserror",

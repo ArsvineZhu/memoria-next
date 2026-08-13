@@ -198,6 +198,11 @@ impl ValidatedDocument {
     }
 
     #[must_use]
+    pub fn node(&self, id: &SemanticNodeId) -> Option<&ValidatedNode> {
+        self.nodes.iter().find(|node| node.id.as_ref() == Some(id))
+    }
+
+    #[must_use]
     pub fn event(&self, id: &str) -> Option<&ValidatedNode> {
         self.find(SemanticKind::Event, id)
     }
