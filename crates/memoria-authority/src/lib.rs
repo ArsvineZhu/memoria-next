@@ -1,5 +1,6 @@
 mod cas;
 mod db;
+mod integrity;
 mod layout;
 mod lock;
 mod model;
@@ -9,6 +10,7 @@ mod schema;
 
 pub use cas::SourceCas;
 pub use db::AuthorityDb;
+pub use integrity::{IntegrityIssue, IntegrityReport};
 pub use layout::StoreLayout;
 pub use lock::StoreWriterLock;
 pub use memoria_types::{AuthorityGeneration, RevisionSemanticIntent};

@@ -1,18 +1,21 @@
-use memoria_authority::{SourceCas, StoreLayout};
+use memoria_authority::{AuthorityDb, SourceCas, StoreLayout};
 use memoria_types::SourceBlobHash;
 
 struct TestStore {
     _directory: tempfile::TempDir,
     layout: StoreLayout,
+    db: AuthorityDb,
 }
 
 impl TestStore {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let layout = StoreLayout::create(directory.path()).unwrap();
+        let db = AuthorityDb::open(layout.authority_database()).unwrap();
         Self {
             _directory: directory,
             layout,
+            db,
         }
     }
 
@@ -65,4 +68,75 @@ fn missing_object_is_not_contained_and_cannot_be_read() {
 
     assert!(!cas.contains(hash).unwrap());
     assert!(cas.get(hash).is_err());
+}
+
+#[test]
+fn missing_referenced_blob_is_corruption() {
+    let fixture = TestStore::new();
+    let cas = fixture.source_cas();
+    let space = fixture.db.create_space("p").unwrap().into_value();
+    let memory = fixture
+        .db
+        .create_memory(&cas, space.id(), None, b"# X\n")
+        .unwrap()
+        .into_value();
+    std::fs::remove_file(
+        fixture
+            .layout
+            .objects_dir()
+            .join(memory.source_blob_hash().to_string()),
+    )
+    .unwrap();
+
+    assert!(
+        fixture
+            .db
+            .verify_full(&cas)
+            .unwrap()
+            .has_authority_corruption()
+    );
+}
+
+#[test]
+fn orphan_blob_is_only_collectable_garbage() {
+    let fixture = TestStore::new();
+    let cas = fixture.source_cas();
+    cas.put(b"# not committed\n").unwrap();
+
+    assert!(
+        !fixture
+            .db
+            .verify_full(&cas)
+            .unwrap()
+            .has_authority_corruption()
+    );
+}
+
+#[test]
+fn modified_referenced_blob_is_corruption() {
+    let fixture = TestStore::new();
+    let cas = fixture.source_cas();
+    let space = fixture.db.create_space("p").unwrap().into_value();
+    let memory = fixture
+        .db
+        .create_memory(&cas, space.id(), None, b"# X\n")
+        .unwrap()
+        .into_value();
+    std::fs::write(
+        fixture
+            .layout
+            .objects_dir()
+            .join(memory.source_blob_hash().to_string()),
+        b"# tampered\n",
+    )
+    .unwrap();
+
+    let report = fixture.db.verify_full(&cas).unwrap();
+    assert!(report.has_authority_corruption());
+    assert!(
+        report
+            .issues()
+            .iter()
+            .any(|issue| issue.code == "SOURCE_BLOB_HASH")
+    );
 }
