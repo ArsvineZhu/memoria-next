@@ -1,4 +1,6 @@
+mod assessment;
 mod compile;
+mod consolidate;
 mod evidence;
 mod exact;
 mod fusion;
@@ -6,10 +8,15 @@ mod history;
 mod lexical;
 mod model;
 mod planner;
+mod response;
 mod snapshot;
 mod validate;
 
+pub use assessment::{RecallAssessment, assess};
 pub use compile::{CompiledQuery, QueryCompiler};
+pub use consolidate::{
+    ConsolidationCandidate, ConsolidationError, MemoryMatch, MemoryResult, consolidate,
+};
 pub use evidence::{
     CandidateEvidence, CandidateResponse, CandidateTarget, ExactEvidence, HistoryEvidence,
     LexicalEvidence, PropagationEvidence, RelationEvidence, SemanticEvidence, TagEvidence,
@@ -26,5 +33,6 @@ pub use model::{
     ReadinessBehavior,
 };
 pub use planner::{CapabilityExecution, CapabilityPlanner, CapabilityTarget};
+pub use response::{RetrievalResponse, build_response};
 pub use snapshot::{AdaptiveSnapshotIdentity, QuerySnapshot};
 pub use validate::QueryError;
