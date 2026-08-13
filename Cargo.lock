@@ -249,6 +249,12 @@ dependencies = [
 [[package]]
 name = "memoria-derived"
 version = "0.1.0"
+dependencies = [
+ "memoria-types",
+ "rusqlite",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "memoria-mdx"
