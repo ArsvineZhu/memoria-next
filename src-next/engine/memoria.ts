@@ -11,6 +11,7 @@ import { toNeedWork as decodeNeedWork } from "../native/protocol.js";
 import { ProviderHost } from "../providers/host.js";
 import { createAdminApi, type AdminApi } from "../admin/index.js";
 import { createDocumentsApi, type DocumentsApi } from "../domain/documents.js";
+import { MemoriaError, toMemoriaError } from "../domain/errors.js";
 import { createFeedbackApi, type FeedbackApi } from "../domain/feedback.js";
 import { createSpacesApi, type SpacesApi } from "../domain/spaces.js";
 
@@ -29,6 +30,7 @@ export interface MemoriaStatus {
 
 export interface QueryOptions {
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export interface CreateMemoryRequest {
@@ -67,6 +69,9 @@ export class Memoria {
   #providerHost: ProviderHost | undefined;
   #providerAbort = new AbortController();
   #wakeProviderPump: (() => void) | undefined;
+  #nextOperation = 0;
+  #operations = new Set<string>();
+  #readSessions = new Set<string>();
   #closed = false;
 
   constructor(binding: NativeBinding, store: NativeStoreHandle, providerHost?: ProviderHost) {
@@ -91,6 +96,20 @@ export class Memoria {
     this.#providerAbort.abort();
     this.#wakeProviderPump?.();
     this.#wakeProviderPump = undefined;
+    if (store) {
+      for (const operationId of this.#operations) {
+        this.cancelNativeOperation(store, operationId);
+      }
+      for (const sessionId of this.#readSessions) {
+        try {
+          this.#binding.readSessionClose(store, sessionId);
+        } catch {
+          // Store close is the final lease boundary; native cleanup is best effort here.
+        }
+      }
+    }
+    this.#operations.clear();
+    this.#readSessions.clear();
     this.#store = undefined;
     if (store) {
       this.#binding.closeStore(store);
@@ -98,18 +117,35 @@ export class Memoria {
   }
 
   async status(): Promise<MemoriaStatus> {
-    return mapStatus(this.store().status());
+    try {
+      const status = mapStatus(this.store().status());
+      return { ...status, activeReadLeases: Math.max(status.activeReadLeases, this.#readSessions.size) };
+    } catch (error) {
+      throw toMemoriaError(error);
+    }
   }
 
   async query(query: MemoriaQuery, options: QueryOptions = {}): Promise<NativeQueryResponse> {
     this.assertNotAborted(options.signal);
+    const store = this.store();
+    const operationId = this.startOperation();
     const request: NativeQueryRequest = {
       scope: query.scope,
       ...(query.text === undefined ? {} : { text: query.text }),
     };
-    const response = this.#binding.queryStart(this.store(), request);
-    this.assertNotAborted(options.signal);
-    return mapResponse(response);
+    try {
+      const response = await this.awaitOperation(
+        operationId,
+        Promise.resolve().then(() => this.#binding.queryStart(store, request)),
+        options,
+      );
+      this.assertNotAborted(options.signal);
+      return mapResponse(response);
+    } catch (error) {
+      throw toMemoriaError(error);
+    } finally {
+      this.#operations.delete(operationId);
+    }
   }
 
   async createSpace(spaceKey: string): Promise<string> {
@@ -137,6 +173,21 @@ export class Memoria {
     const mutation = this.#binding.authorityRevise(this.store(), request);
     this.#wakeProviderPump?.();
     return mutation;
+  }
+
+  async openReadSession(query: MemoriaQuery): Promise<string> {
+    const sessionId = this.#binding.readSessionOpen(this.store(), {
+      scope: query.scope,
+      ...(query.text === undefined ? {} : { text: query.text }),
+    });
+    this.#readSessions.add(sessionId);
+    return sessionId;
+  }
+
+  async closeReadSession(sessionId: string): Promise<void> {
+    const store = this.store();
+    this.#binding.readSessionClose(store, sessionId);
+    this.#readSessions.delete(sessionId);
   }
 
   private async runProviderPump(): Promise<void> {
@@ -169,14 +220,81 @@ export class Memoria {
 
   private store(): NativeStoreHandle {
     if (this.#closed || !this.#store) {
-      throw new Error("Memoria is closed");
+      throw new MemoriaError("STORE_CLOSED", "Memoria is closed");
     }
     return this.#store;
   }
 
   private assertNotAborted(signal: AbortSignal | undefined): void {
     if (signal?.aborted) {
-      throw new DOMException("The operation was aborted", "AbortError");
+      throw new MemoriaError("ABORTED", "The operation was aborted");
     }
+  }
+
+  private startOperation(): string {
+    this.#nextOperation += 1;
+    const operationId = `OP_${this.#nextOperation}`;
+    this.#operations.add(operationId);
+    return operationId;
+  }
+
+  private cancelNativeOperation(store: NativeStoreHandle, operationId: string): void {
+    try {
+      this.#binding.cancelOperation(store, operationId);
+    } catch {
+      // Cancellation is best effort after a terminal close boundary.
+    }
+  }
+
+  private awaitOperation<T>(
+    operationId: string,
+    operation: Promise<T>,
+    options: QueryOptions,
+  ): Promise<T> {
+    if (
+      options.timeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)
+    ) {
+      return Promise.reject(
+        new MemoriaError("QUERY_TIMEOUT", "timeoutMs must be a positive integer"),
+      );
+    }
+    const store = this.store();
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+        }
+        options.signal?.removeEventListener("abort", onAbort);
+        callback();
+      };
+      const onAbort = () => {
+        this.cancelNativeOperation(store, operationId);
+        finish(() => reject(new MemoriaError("ABORTED", "The operation was aborted")));
+      };
+      if (options.signal) {
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+      if (options.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          this.cancelNativeOperation(store, operationId);
+          finish(() => reject(new MemoriaError("QUERY_TIMEOUT", "The query timed out")));
+        }, options.timeoutMs);
+      }
+      operation.then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+    });
   }
 }

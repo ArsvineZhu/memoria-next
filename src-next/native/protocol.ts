@@ -68,8 +68,14 @@ export interface NativeBinding {
   authorityMutate(store: NativeStoreHandle, request: NativeCreateMemoryRequest): string;
   authorityCreateSpace(store: NativeStoreHandle, spaceKey: string): string;
   authorityRevise(store: NativeStoreHandle, request: NativeReviseMemoryRequest): NativeMemoryMutation;
-  queryStart(store: NativeStoreHandle, request: NativeQueryRequest): NativeQueryResponse;
-  queryResume(store: NativeStoreHandle, operationId: string): NativeQueryResponse;
+  queryStart(
+    store: NativeStoreHandle,
+    request: NativeQueryRequest,
+  ): NativeQueryResponse | Promise<NativeQueryResponse>;
+  queryResume(
+    store: NativeStoreHandle,
+    operationId: string,
+  ): NativeQueryResponse | Promise<NativeQueryResponse>;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
   providerSubmitResult(store: NativeStoreHandle, result: NativeProviderResult): void;
   readSessionOpen(store: NativeStoreHandle, request: NativeQueryRequest): string;

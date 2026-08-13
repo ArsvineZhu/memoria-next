@@ -46,6 +46,20 @@ pub enum RuntimeError {
     UnexpectedProviderWork { work_id: String },
 }
 
+impl RuntimeError {
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Closed => "STORE_CLOSED",
+            Self::Authority(error) => error.code(),
+            Self::AuthorityDatabase { .. } | Self::Derived(_) => "STORE_CORRUPT",
+            Self::Mdx(_) | Self::Utf8(_) => "INVALID_MDX",
+            Self::Query(_) | Self::Consolidation(_) => "QUERY_ERROR",
+            Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
+        }
+    }
+}
+
 pub struct MemoriaRuntime {
     _writer_lock: StoreWriterLock,
     layout: StoreLayout,

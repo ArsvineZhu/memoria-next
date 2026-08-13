@@ -38,3 +38,28 @@ test("authority mutation returns before provider completion and background pump 
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("engine close does not wait indefinitely for provider backlog", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-provider-close-"));
+  const provider = deferredEmbeddingProvider();
+  const memoria = await createMemoria({ dataDir, providers: { embedding: provider } });
+  try {
+    const spaceId = await memoria.createSpace("personal");
+    await memoria.createMemory({
+      spaceId,
+      documentKey: "career",
+      mdx: "# Career\nRust systems work",
+    });
+    await waitForPendingProvider(provider);
+
+    await Promise.race([
+      memoria.close(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("close waited for provider backlog")), 100),
+      ),
+    ]);
+  } finally {
+    await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

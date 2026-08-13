@@ -20,6 +20,8 @@ export type MemoriaErrorCode =
   | "UNSUPPORTED_STORE_FORMAT"
   | "ABORTED"
   | "QUERY_TIMEOUT"
+  | "STORE_CLOSED"
+  | "QUERY_ERROR"
   | "UNSUPPORTED_OPERATION"
   | "NATIVE_ERROR";
 
