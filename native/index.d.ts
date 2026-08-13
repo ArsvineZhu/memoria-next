@@ -5,6 +5,8 @@ export declare class NativeStore {
   status(): JsStatus
 }
 
+export declare function authorityCreateSpace(store: NativeStore, spaceKey: string): string
+
 export declare function authorityMutate(store: NativeStore, request: JsCreateMemoryRequest): string
 
 export declare function cancelOperation(store: NativeStore, operationId: string): void
@@ -17,9 +19,24 @@ export interface JsCreateMemoryRequest {
   mdx: string
 }
 
+export interface JsProviderItem {
+  key: string
+  text: string
+}
+
 export interface JsProviderResult {
   workId: string
   accepted: boolean
+}
+
+export interface JsProviderWork {
+  workId: string
+  workType: string
+  signature: string
+  items: Array<JsProviderItem>
+  query?: string
+  candidates: Array<string>
+  text?: string
 }
 
 export interface JsQueryRequest {
@@ -43,7 +60,7 @@ export interface JsStatus {
 
 export declare function openStore(dataDir: string): NativeStore
 
-export declare function providerPollWork(store: NativeStore): string | null
+export declare function providerPollWork(store: NativeStore): JsProviderWork | null
 
 export declare function providerSubmitResult(store: NativeStore, result: JsProviderResult): void
 

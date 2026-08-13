@@ -701,6 +701,7 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.NativeStore = nativeBinding.NativeStore
+module.exports.authorityCreateSpace = nativeBinding.authorityCreateSpace
 module.exports.authorityMutate = nativeBinding.authorityMutate
 module.exports.cancelOperation = nativeBinding.cancelOperation
 module.exports.closeStore = nativeBinding.closeStore

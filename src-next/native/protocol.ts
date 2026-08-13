@@ -28,6 +28,21 @@ export interface NativeProviderResult {
   accepted: boolean;
 }
 
+export interface NativeProviderItem {
+  key: string;
+  text: string;
+}
+
+export interface NativeProviderWork {
+  workId: string;
+  workType: "embedding" | "rerank" | "enrichment" | string;
+  signature: string;
+  items: NativeProviderItem[];
+  query?: string;
+  candidates: string[];
+  text?: string;
+}
+
 export interface NativeStoreHandle {
   close(): void;
   status(): NativeStatus;
@@ -37,9 +52,10 @@ export interface NativeBinding {
   openStore(dataDir: string): NativeStoreHandle;
   closeStore(store: NativeStoreHandle): void;
   authorityMutate(store: NativeStoreHandle, request: NativeCreateMemoryRequest): string;
+  authorityCreateSpace(store: NativeStoreHandle, spaceKey: string): string;
   queryStart(store: NativeStoreHandle, request: NativeQueryRequest): NativeQueryResponse;
   queryResume(store: NativeStoreHandle, operationId: string): NativeQueryResponse;
-  providerPollWork(store: NativeStoreHandle): string | null;
+  providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
   providerSubmitResult(store: NativeStoreHandle, result: NativeProviderResult): void;
   readSessionOpen(store: NativeStoreHandle, request: NativeQueryRequest): string;
   readSessionClose(store: NativeStoreHandle, sessionId: string): void;
@@ -58,14 +74,43 @@ export type NeedWork =
       workId: string;
       signature: string;
       query: string;
-      candidates: Array<{ key: string; text: string }>;
-    }
+      candidates: string[];
+  }
   | {
       type: "enrichment";
       workId: string;
       signature: string;
-      items: Array<{ key: string; text: string }>;
+      text: string;
     };
+
+export function toNeedWork(work: NativeProviderWork): NeedWork {
+  switch (work.workType) {
+    case "embedding":
+      return {
+        type: "embedding",
+        workId: work.workId,
+        signature: work.signature,
+        items: work.items,
+      };
+    case "rerank":
+      return {
+        type: "rerank",
+        workId: work.workId,
+        signature: work.signature,
+        query: work.query ?? "",
+        candidates: work.candidates,
+      };
+    case "enrichment":
+      return {
+        type: "enrichment",
+        workId: work.workId,
+        signature: work.signature,
+        text: work.text ?? "",
+      };
+    default:
+      throw new Error(`Unsupported native provider work type: ${work.workType}`);
+  }
+}
 
 export type QueryStartResult =
   | { type: "final"; response: NativeQueryResponse }

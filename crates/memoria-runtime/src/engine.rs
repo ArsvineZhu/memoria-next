@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::string::FromUtf8Error;
 
 use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, StoreWriterLock};
@@ -52,8 +53,17 @@ pub struct MemoriaRuntime {
     cas: SourceCas,
     derived: DerivedCatalog,
     compiler: DerivedCompiler,
+    pending_provider_work: VecDeque<PendingProviderWork>,
+    inflight_provider_work: BTreeMap<String, AuthorityGeneration>,
+    pending_by_generation: BTreeMap<AuthorityGeneration, usize>,
+    semantic_coverage: AuthorityGeneration,
     closed: bool,
     last_error: Option<String>,
+}
+
+struct PendingProviderWork {
+    generation: AuthorityGeneration,
+    work: NeedWork,
 }
 
 impl MemoriaRuntime {
@@ -73,6 +83,10 @@ impl MemoriaRuntime {
             authority,
             derived,
             compiler: DerivedCompiler::default(),
+            pending_provider_work: VecDeque::new(),
+            inflight_provider_work: BTreeMap::new(),
+            pending_by_generation: BTreeMap::new(),
+            semantic_coverage: AuthorityGeneration::initial(),
             closed: false,
             last_error: None,
         })
@@ -103,6 +117,7 @@ impl MemoriaRuntime {
             .authority
             .create_memory(&self.cas, space_id, document_key, source)?;
         let memory_id = result.value().memory_id;
+        self.enqueue_embedding_work(memory_id, result.generation(), source);
         self.rebuild_base_for_space(space_id, result.generation());
         Ok(memory_id)
     }
@@ -189,7 +204,7 @@ impl MemoriaRuntime {
         RuntimeStatus {
             authority_generation,
             base_coverage,
-            semantic_coverage: AuthorityGeneration::initial(),
+            semantic_coverage: self.semantic_coverage,
             active_read_leases: 0,
             closed: self.closed,
             last_error,
@@ -198,7 +213,13 @@ impl MemoriaRuntime {
 
     pub fn provider_poll_work(&mut self) -> Result<Option<NeedWork>, RuntimeError> {
         self.ensure_open()?;
-        Ok(None)
+        let Some(pending) = self.pending_provider_work.pop_front() else {
+            return Ok(None);
+        };
+        let work_id = work_id(&pending.work).to_owned();
+        self.inflight_provider_work
+            .insert(work_id, pending.generation);
+        Ok(Some(pending.work))
     }
 
     pub fn provider_submit_result(
@@ -206,18 +227,71 @@ impl MemoriaRuntime {
         result: ProviderWorkResult,
     ) -> Result<(), RuntimeError> {
         self.ensure_open()?;
+        let generation = self
+            .inflight_provider_work
+            .remove(&result.work_id)
+            .ok_or_else(|| RuntimeError::UnexpectedProviderWork {
+                work_id: result.work_id.clone(),
+            })?;
         if result.accepted {
-            return Ok(());
+            if let Some(count) = self.pending_by_generation.get_mut(&generation) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.pending_by_generation.remove(&generation);
+                }
+            }
+            self.advance_semantic_coverage();
+        } else {
+            self.last_error = Some(format!("provider work `{}` was rejected", result.work_id));
         }
-        Err(RuntimeError::UnexpectedProviderWork {
-            work_id: result.work_id,
-        })
+        Ok(())
     }
 
     fn rebuild_base_for_space(&mut self, space_id: SpaceId, generation: AuthorityGeneration) {
         if let Err(error) = self.try_rebuild_base_for_space(space_id, generation) {
             self.last_error = Some(error.to_string());
         }
+    }
+
+    fn enqueue_embedding_work(
+        &mut self,
+        memory_id: MemoryId,
+        generation: AuthorityGeneration,
+        source: &[u8],
+    ) {
+        let work_id = format!("EW_{memory_id}");
+        let work = NeedWork::Embeddings(crate::EmbeddingBatchRequest {
+            work_id,
+            signature: "memoria-embedding-v1".to_owned(),
+            items: vec![crate::EmbeddingItem {
+                key: memory_id.to_string(),
+                text: String::from_utf8_lossy(source).into_owned(),
+            }],
+        });
+        self.pending_provider_work
+            .push_back(PendingProviderWork { generation, work });
+        *self.pending_by_generation.entry(generation).or_default() += 1;
+    }
+
+    fn advance_semantic_coverage(&mut self) {
+        let mut candidate = self.semantic_coverage.next();
+        while candidate <= self.authority_generation_or_initial() {
+            if self
+                .pending_by_generation
+                .get(&candidate)
+                .is_some_and(|count| *count > 0)
+            {
+                break;
+            }
+            self.semantic_coverage = candidate;
+            candidate = candidate.next();
+        }
+    }
+
+    fn authority_generation_or_initial(&self) -> AuthorityGeneration {
+        self.authority
+            .current_generation()
+            .unwrap_or_else(|_| AuthorityGeneration::initial())
     }
 
     fn try_rebuild_base_for_space(
@@ -324,4 +398,12 @@ fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
                 .contains(&cue.to_ascii_lowercase())
         })
         .count() as f32
+}
+
+fn work_id(work: &NeedWork) -> &str {
+    match work {
+        NeedWork::Embeddings(request) => &request.work_id,
+        NeedWork::Rerank(request) => &request.work_id,
+        NeedWork::Enrichment(request) => &request.work_id,
+    }
 }

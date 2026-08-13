@@ -12,8 +12,8 @@ use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 
 use crate::convert::{
-    JsCreateMemoryRequest, JsProviderResult, JsQueryRequest, JsQueryResponse, JsStatus,
-    QueryRequest,
+    JsCreateMemoryRequest, JsProviderResult, JsProviderWork, JsQueryRequest, JsQueryResponse,
+    JsStatus, QueryRequest,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -74,6 +74,18 @@ pub fn open_store(data_dir: String) -> Result<NativeStore> {
 #[napi]
 pub fn close_store(store: &NativeStore) -> Result<()> {
     store.close()
+}
+
+#[napi]
+pub fn authority_create_space(store: &NativeStore, space_key: String) -> Result<String> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .create_space(space_key)
+        .map(|space_id| space_id.to_string())
+        .map_err(runtime_error)
 }
 
 #[napi]
@@ -151,8 +163,15 @@ pub fn read_session_close(store: &NativeStore, session_id: String) -> Result<()>
 }
 
 #[napi]
-pub fn provider_poll_work(_store: &NativeStore) -> Result<Option<String>> {
-    Ok(None)
+pub fn provider_poll_work(store: &NativeStore) -> Result<Option<JsProviderWork>> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .provider_poll_work()
+        .map(|work| work.map(JsProviderWork::from))
+        .map_err(runtime_error)
 }
 
 #[napi]

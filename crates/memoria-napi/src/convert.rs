@@ -1,4 +1,5 @@
 use memoria_query::MemoryQuery;
+use memoria_runtime::NeedWork;
 use memoria_types::SpaceId;
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -102,4 +103,64 @@ pub struct JsQueryResponse {
 pub struct JsProviderResult {
     pub work_id: String,
     pub accepted: bool,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsProviderItem {
+    pub key: String,
+    pub text: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsProviderWork {
+    pub work_id: String,
+    pub work_type: String,
+    pub signature: String,
+    pub items: Vec<JsProviderItem>,
+    pub query: Option<String>,
+    pub candidates: Vec<String>,
+    pub text: Option<String>,
+}
+
+impl From<NeedWork> for JsProviderWork {
+    fn from(work: NeedWork) -> Self {
+        match work {
+            NeedWork::Embeddings(request) => Self {
+                work_id: request.work_id,
+                work_type: "embedding".to_owned(),
+                signature: request.signature,
+                items: request
+                    .items
+                    .into_iter()
+                    .map(|item| JsProviderItem {
+                        key: item.key,
+                        text: item.text,
+                    })
+                    .collect(),
+                query: None,
+                candidates: Vec::new(),
+                text: None,
+            },
+            NeedWork::Rerank(request) => Self {
+                work_id: request.work_id,
+                work_type: "rerank".to_owned(),
+                signature: request.signature,
+                items: Vec::new(),
+                query: Some(request.query),
+                candidates: request.candidates,
+                text: None,
+            },
+            NeedWork::Enrichment(request) => Self {
+                work_id: request.work_id,
+                work_type: "enrichment".to_owned(),
+                signature: request.signature,
+                items: Vec::new(),
+                query: None,
+                candidates: Vec::new(),
+                text: Some(request.text),
+            },
+        }
+    }
 }
