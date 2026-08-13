@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,10 +12,13 @@ use crate::StoreLayout;
 
 static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
+type DirectorySync = fn(&Path) -> io::Result<()>;
+
 #[derive(Clone, Debug)]
 pub struct SourceCas {
     objects_dir: PathBuf,
     runtime_dir: PathBuf,
+    directory_sync: DirectorySync,
 }
 
 impl SourceCas {
@@ -24,6 +27,16 @@ impl SourceCas {
         Self {
             objects_dir: layout.objects_dir().to_path_buf(),
             runtime_dir: layout.runtime_dir().to_path_buf(),
+            directory_sync: sync_directory_if_supported,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_directory_sync(layout: &StoreLayout, directory_sync: DirectorySync) -> Self {
+        Self {
+            objects_dir: layout.objects_dir().to_path_buf(),
+            runtime_dir: layout.runtime_dir().to_path_buf(),
+            directory_sync,
         }
     }
 
@@ -31,6 +44,7 @@ impl SourceCas {
         let hash = SourceBlobHash::from_bytes(source);
         let object_path = self.object_path(hash);
         if object_is_file(&object_path)? {
+            self.sync_objects_directory()?;
             return Ok(hash);
         }
 
@@ -48,16 +62,18 @@ impl SourceCas {
         write_result?;
 
         if object_is_file(&object_path)? {
+            self.sync_objects_directory()?;
             return Ok(hash);
         }
 
         match fs::rename(&staging_path, &object_path) {
             Ok(()) => {
-                sync_directory_if_supported(&self.objects_dir)?;
+                self.sync_objects_directory()?;
                 Ok(hash)
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if object_is_file(&object_path)? {
+                    self.sync_objects_directory()?;
                     Ok(hash)
                 } else {
                     Err(error.into())
@@ -86,6 +102,10 @@ impl SourceCas {
             hash,
             std::process::id()
         ))
+    }
+
+    fn sync_objects_directory(&self) -> io::Result<()> {
+        (self.directory_sync)(&self.objects_dir)
     }
 }
 
@@ -122,4 +142,58 @@ fn sync_directory_if_supported(path: &Path) -> std::io::Result<()> {
 fn sync_directory_if_supported(path: &Path) -> std::io::Result<()> {
     let _ = path;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use memoria_types::MemoriaError;
+
+    use super::{SourceCas, StoreLayout};
+
+    static DIRECTORY_SYNC_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn recording_directory_sync(_: &std::path::Path) -> std::io::Result<()> {
+        DIRECTORY_SYNC_CALLS.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn failing_directory_sync(_: &std::path::Path) -> std::io::Result<()> {
+        Err(Error::other("test directory sync failure"))
+    }
+
+    #[test]
+    fn put_reuse_syncs_objects_directory_before_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let layout = StoreLayout::create(directory.path()).unwrap();
+        let cas = SourceCas::with_directory_sync(&layout, recording_directory_sync);
+        DIRECTORY_SYNC_CALLS.store(0, Ordering::SeqCst);
+
+        let hash = cas.put(b"reused source").unwrap();
+        assert_eq!(DIRECTORY_SYNC_CALLS.load(Ordering::SeqCst), 1);
+
+        assert_eq!(cas.put(b"reused source").unwrap(), hash);
+        assert_eq!(DIRECTORY_SYNC_CALLS.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn put_reuse_propagates_directory_sync_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let layout = StoreLayout::create(directory.path()).unwrap();
+        let hash = memoria_types::SourceBlobHash::from_bytes(b"reused source");
+        std::fs::write(
+            layout.objects_dir().join(hash.to_string()),
+            b"reused source",
+        )
+        .unwrap();
+        let cas = SourceCas::with_directory_sync(&layout, failing_directory_sync);
+
+        let error = cas.put(b"reused source").unwrap_err();
+        assert!(matches!(
+            error,
+            MemoriaError::Io(error) if error.kind() == ErrorKind::Other
+        ));
+    }
 }
