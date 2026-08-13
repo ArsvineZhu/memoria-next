@@ -109,6 +109,64 @@ impl AuthorityDb {
             source,
         })
     }
+
+    pub fn list_memories_at(
+        &self,
+        cas: &SourceCas,
+        space_id: SpaceId,
+        generation: AuthorityGeneration,
+    ) -> Result<Vec<MemoryRead>, MemoriaError> {
+        self.read(|connection| {
+            let generation_value = sqlite_generation(generation)?;
+            let mut statement = connection.prepare(
+                "SELECT memory_state_history.space_id,
+                        memory_state_history.document_key,
+                        memory_state_history.head_revision_id,
+                        memory_state_history.lifecycle,
+                        revisions.source_blob_hash,
+                        memory_state_history.memory_id
+                 FROM memory_state_history
+                 JOIN revisions
+                   ON revisions.revision_id = memory_state_history.head_revision_id
+                  AND revisions.memory_id = memory_state_history.memory_id
+                 WHERE memory_state_history.space_id = ?1
+                   AND memory_state_history.lifecycle = 'active'
+                   AND memory_state_history.valid_from_generation <= ?2
+                   AND (memory_state_history.valid_to_generation IS NULL
+                        OR ?2 < memory_state_history.valid_to_generation)
+                 ORDER BY memory_state_history.memory_id",
+            )?;
+            let rows = statement.query_map(
+                params![space_id.as_bytes().as_slice(), generation_value],
+                |row| {
+                    let memory_id = MemoryId::from_bytes(parse_fixed_bytes(
+                        row.get::<_, Vec<u8>>(5)?,
+                        "memory id",
+                    )?);
+                    memory_record_from_row(row, memory_id, generation_value)
+                },
+            )?;
+            rows.map(|row| {
+                let memory = row?;
+                let revision = match read_revision(connection, memory.head_revision_id)? {
+                    Ok(revision) => revision,
+                    Err(error) => {
+                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(error)));
+                    }
+                };
+                let source = cas
+                    .get(memory.source_blob_hash)
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+                Ok(MemoryRead {
+                    memory,
+                    revision,
+                    source,
+                })
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(database_error)
+    }
 }
 
 fn current_generation(connection: &Connection) -> rusqlite::Result<AuthorityGeneration> {

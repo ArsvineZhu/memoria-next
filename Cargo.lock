@@ -610,6 +610,15 @@ dependencies = [
 [[package]]
 name = "memoria-runtime"
 version = "0.1.0"
+dependencies = [
+ "memoria-authority",
+ "memoria-derived",
+ "memoria-mdx",
+ "memoria-query",
+ "memoria-types",
+ "tempfile",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "memoria-types"
