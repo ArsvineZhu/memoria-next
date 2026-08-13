@@ -3,6 +3,7 @@ mod catalog;
 mod compiler;
 mod dependency;
 mod embedding;
+mod enrichment;
 mod gc;
 mod lease;
 mod manifest;
@@ -25,6 +26,10 @@ pub use embedding::{
     EmbeddingCacheKey, EmbeddingNormalization, EmbeddingPayloadCache, EmbeddingResult,
     EmbeddingResultItem, EmbeddingSignature, EmbeddingVector, EmbeddingWork, EmbeddingWorkItem,
     default_content_signature, validate_embedding_result,
+};
+pub use enrichment::{
+    DEFAULT_MAX_GENERATED_TAGS, ENRICHMENT_PROJECTION_VERSION, EnrichmentProjection,
+    GeneratedTagArtifact, GeneratedTagCandidate, GeneratedTagRecord,
 };
 pub use gc::{DerivedGc, GcReport};
 pub use lease::ManifestLease;

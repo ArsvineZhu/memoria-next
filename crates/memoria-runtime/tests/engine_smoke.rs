@@ -54,6 +54,7 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
         .provider_submit_result(ProviderWorkResult {
             work_id,
             accepted: true,
+            tags: Vec::new(),
         })
         .unwrap();
 

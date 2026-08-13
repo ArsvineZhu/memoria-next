@@ -1,3 +1,5 @@
+use memoria_derived::EnrichmentProjection;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmbeddingItem {
     pub key: String,
@@ -24,7 +26,7 @@ pub struct RerankBatchRequest {
 pub struct EnrichmentBatchRequest {
     pub work_id: String,
     pub signature: String,
-    pub text: String,
+    pub projection: EnrichmentProjection,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,4 +40,5 @@ pub enum NeedWork {
 pub struct ProviderWorkResult {
     pub work_id: String,
     pub accepted: bool,
+    pub tags: Vec<String>,
 }

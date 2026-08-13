@@ -3,6 +3,7 @@ import {
   ProviderExecutionError,
   type EmbeddingPayload,
   type EmbeddingWork,
+  type EnrichmentWork,
   type ProviderHostOptions,
   type ProviderResult,
   type ProviderSet,
@@ -44,7 +45,11 @@ export class ProviderHost {
           egressWork.type === "embedding"
             ? validateEmbeddingPayload(egressWork, providerResult)
             : undefined;
-        return { workId: work.workId, accepted: true, embeddings };
+        const tags =
+          egressWork.type === "enrichment"
+            ? validateTagEnrichmentPayload(egressWork, providerResult)
+            : undefined;
+        return { workId: work.workId, accepted: true, embeddings, tags };
       } catch (error) {
         lastError = error;
         if (signal.aborted || attempt === this.#maxAttempts) {
@@ -119,5 +124,27 @@ function validateEmbeddingPayload(
       );
     }
     return { key: work.items[index].key, values: [...values] };
+  });
+}
+
+function validateTagEnrichmentPayload(
+  work: EnrichmentWork,
+  result: unknown,
+): string[] {
+  const tags = Array.isArray(result)
+    ? result
+    : result && typeof result === "object" && "tags" in result
+      ? (result as { tags: unknown }).tags
+      : undefined;
+  if (!Array.isArray(tags) || tags.length > work.projection.maxTags) {
+    throw new Error("tag enrichment provider returned too many candidates");
+  }
+  return tags.map((tag, index) => {
+    if (typeof tag !== "string" || tag.trim().length === 0) {
+      throw new Error(
+        `tag enrichment candidate ${index} must be a non-empty string`,
+      );
+    }
+    return tag.trim();
   });
 }

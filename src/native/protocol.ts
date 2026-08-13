@@ -40,11 +40,23 @@ export interface NativeMemoryMutation {
 export interface NativeProviderResult {
   workId: string;
   accepted: boolean;
+  tags?: string[];
 }
 
 export interface NativeProviderItem {
   key: string;
   text: string;
+}
+
+export interface NativeEnrichmentProjection {
+  version: number;
+  inputHash: string;
+  spaceId: string;
+  memoryId: string;
+  revisionId: string;
+  semanticNodeId?: string;
+  content: string;
+  maxTags: number;
 }
 
 export interface NativeProviderWork {
@@ -55,7 +67,7 @@ export interface NativeProviderWork {
   items: NativeProviderItem[];
   query?: string;
   candidates: string[];
-  text?: string;
+  projection?: NativeEnrichmentProjection;
 }
 
 export interface NativeStoreHandle {
@@ -103,7 +115,7 @@ export type NeedWork =
       type: "enrichment";
       workId: string;
       signature: string;
-      text: string;
+      projection: NativeEnrichmentProjection;
     };
 
 export function toNeedWork(work: NativeProviderWork): NeedWork {
@@ -125,11 +137,14 @@ export function toNeedWork(work: NativeProviderWork): NeedWork {
         candidates: work.candidates,
       };
     case "enrichment":
+      if (!work.projection) {
+        throw new Error("Enrichment provider work is missing its projection");
+      }
       return {
         type: "enrichment",
         workId: work.workId,
         signature: work.signature,
-        text: work.text ?? "",
+        projection: work.projection,
       };
     default:
       throw new Error(`Unsupported native provider work type: ${work.workType}`);

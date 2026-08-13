@@ -3,7 +3,9 @@ use std::string::FromUtf8Error;
 
 use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, StoreWriterLock};
 use memoria_derived::{
-    DerivedCatalog, DerivedCompiler, EntityObservationBuilder, ExplicitTagBuilder, LexicalDocument,
+    BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
+    EntityObservationBuilder, ExplicitTagBuilder, GeneratedTagArtifact, LexicalDocument,
+    ProjectionInputHash, TagDictionary,
 };
 use memoria_mdx::compile_ir;
 use memoria_query::{
@@ -68,9 +70,11 @@ pub struct MemoriaRuntime {
     derived: DerivedCatalog,
     compiler: DerivedCompiler,
     pending_provider_work: VecDeque<PendingProviderWork>,
-    inflight_provider_work: BTreeMap<String, AuthorityGeneration>,
+    inflight_provider_work: BTreeMap<String, InflightProviderWork>,
     pending_by_generation: BTreeMap<AuthorityGeneration, usize>,
     semantic_coverage: AuthorityGeneration,
+    tag_dictionary: TagDictionary,
+    generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
     closed: bool,
     last_error: Option<String>,
 }
@@ -78,6 +82,12 @@ pub struct MemoriaRuntime {
 struct PendingProviderWork {
     generation: AuthorityGeneration,
     work: NeedWork,
+}
+
+struct InflightProviderWork {
+    generation: AuthorityGeneration,
+    advances_semantic: bool,
+    enrichment_projection: Option<EnrichmentProjection>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,6 +119,8 @@ impl MemoriaRuntime {
             inflight_provider_work: BTreeMap::new(),
             pending_by_generation: BTreeMap::new(),
             semantic_coverage: AuthorityGeneration::initial(),
+            tag_dictionary: TagDictionary::new(),
+            generated_tag_artifacts: BTreeMap::new(),
             closed: false,
             last_error: None,
         })
@@ -288,8 +300,24 @@ impl MemoriaRuntime {
             return Ok(None);
         };
         let work_id = work_id(&pending.work).to_owned();
-        self.inflight_provider_work
-            .insert(work_id, pending.generation);
+        let metadata = match &pending.work {
+            NeedWork::Embeddings(_) => InflightProviderWork {
+                generation: pending.generation,
+                advances_semantic: true,
+                enrichment_projection: None,
+            },
+            NeedWork::Enrichment(request) => InflightProviderWork {
+                generation: pending.generation,
+                advances_semantic: false,
+                enrichment_projection: Some(request.projection.clone()),
+            },
+            NeedWork::Rerank(_) => InflightProviderWork {
+                generation: pending.generation,
+                advances_semantic: false,
+                enrichment_projection: None,
+            },
+        };
+        self.inflight_provider_work.insert(work_id, metadata);
         Ok(Some(pending.work))
     }
 
@@ -298,20 +326,31 @@ impl MemoriaRuntime {
         result: ProviderWorkResult,
     ) -> Result<(), RuntimeError> {
         self.ensure_open()?;
-        let generation = self
+        let pending = self
             .inflight_provider_work
             .remove(&result.work_id)
             .ok_or_else(|| RuntimeError::UnexpectedProviderWork {
                 work_id: result.work_id.clone(),
             })?;
         if result.accepted {
-            if let Some(count) = self.pending_by_generation.get_mut(&generation) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    self.pending_by_generation.remove(&generation);
-                }
+            if let Some(projection) = pending.enrichment_projection {
+                let artifact = GeneratedTagArtifact::from_candidates(
+                    projection,
+                    &mut self.tag_dictionary,
+                    result.tags,
+                )?;
+                self.generated_tag_artifacts
+                    .insert(artifact.projection_input_hash().clone(), artifact);
             }
-            self.advance_semantic_coverage();
+            if pending.advances_semantic {
+                if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.pending_by_generation.remove(&pending.generation);
+                    }
+                }
+                self.advance_semantic_coverage();
+            }
         } else {
             self.last_error = Some(format!("provider work `{}` was rejected", result.work_id));
         }
@@ -319,8 +358,29 @@ impl MemoriaRuntime {
     }
 
     fn rebuild_base_for_space(&mut self, space_id: SpaceId, generation: AuthorityGeneration) {
-        if let Err(error) = self.try_rebuild_base_for_space(space_id, generation) {
-            self.last_error = Some(error.to_string());
+        match self.try_rebuild_base_for_space(space_id, generation) {
+            Ok(report) => {
+                self.enqueue_enrichment_work(generation, report.enrichment_projections());
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn enqueue_enrichment_work(
+        &mut self,
+        generation: AuthorityGeneration,
+        projections: &[EnrichmentProjection],
+    ) {
+        for (index, projection) in projections.iter().enumerate() {
+            let work = NeedWork::Enrichment(crate::EnrichmentBatchRequest {
+                work_id: format!("TG_{}_{}_{}", projection.memory_id(), generation, index),
+                signature: projection.producer_signature().to_owned(),
+                projection: projection.clone(),
+            });
+            self.pending_provider_work
+                .push_back(PendingProviderWork { generation, work });
         }
     }
 
@@ -377,7 +437,7 @@ impl MemoriaRuntime {
         &mut self,
         space_id: SpaceId,
         generation: AuthorityGeneration,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<BaseReadyReport, RuntimeError> {
         let reads = self
             .authority
             .list_memories_at(&self.cas, space_id, generation)?;
@@ -391,9 +451,9 @@ impl MemoriaRuntime {
                 compile_ir(&source)?,
             ));
         }
-        self.compiler
-            .compile_base(&mut self.derived, generation, documents)?;
-        Ok(())
+        Ok(self
+            .compiler
+            .compile_base(&mut self.derived, generation, documents)?)
     }
 
     fn records_for_query(
@@ -410,7 +470,7 @@ impl MemoriaRuntime {
                 manifest.authority_generation() < generation
                     || !manifest.capability("base-search").is_ready()
             }) {
-                self.try_rebuild_base_for_space(*space_id, generation)?;
+                let _ = self.try_rebuild_base_for_space(*space_id, generation)?;
             }
             for read in reads {
                 let source = String::from_utf8(read.source)?;

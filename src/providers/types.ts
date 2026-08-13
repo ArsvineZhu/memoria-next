@@ -43,6 +43,7 @@ export interface ProviderResult {
   workId: string;
   accepted: boolean;
   embeddings?: EmbeddingPayload[];
+  tags?: string[];
 }
 
 export class ProviderExecutionError extends Error {

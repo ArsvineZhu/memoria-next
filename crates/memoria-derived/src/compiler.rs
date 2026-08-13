@@ -2,6 +2,7 @@ use memoria_mdx::SemanticDiff;
 use memoria_types::AuthorityGeneration;
 
 use crate::dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
+use crate::enrichment::{ENRICHMENT_PROJECTION_VERSION, EnrichmentProjection};
 use crate::projection::ProjectionTarget;
 use crate::{
     DerivedCatalog, DerivedError, DerivedManifest, EntityObservationBuilder, ExplicitTagBuilder,
@@ -23,6 +24,7 @@ pub struct BaseReadyReport {
     pub provider_work_items: usize,
     pub coverage: AuthorityGeneration,
     pub manifest: DerivedManifest,
+    enrichment_projections: Vec<EnrichmentProjection>,
 }
 
 impl BaseReadyReport {
@@ -34,6 +36,11 @@ impl BaseReadyReport {
     #[must_use]
     pub const fn coverage(&self) -> AuthorityGeneration {
         self.coverage
+    }
+
+    #[must_use]
+    pub fn enrichment_projections(&self) -> &[EnrichmentProjection] {
+        &self.enrichment_projections
     }
 
     #[must_use]
@@ -84,6 +91,14 @@ impl DerivedCompiler {
         I: IntoIterator<Item = LexicalDocument>,
     {
         let documents = documents.into_iter().collect::<Vec<_>>();
+        let enrichment_signature = format!(
+            "{}:generated-tags-v{}",
+            self.producer_signature, ENRICHMENT_PROJECTION_VERSION
+        );
+        let enrichment_projections = documents
+            .iter()
+            .map(|document| EnrichmentProjection::from_document(document, &enrichment_signature))
+            .collect::<Result<Vec<_>, DerivedError>>()?;
 
         for document in &documents {
             let target = ProjectionTarget {
@@ -112,6 +127,7 @@ impl DerivedCompiler {
             provider_work_items: 0,
             coverage: generation,
             manifest,
+            enrichment_projections,
         })
     }
 }

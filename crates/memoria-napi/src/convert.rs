@@ -121,6 +121,7 @@ pub struct JsQueryResponse {
 pub struct JsProviderResult {
     pub work_id: String,
     pub accepted: bool,
+    pub tags: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -128,6 +129,19 @@ pub struct JsProviderResult {
 pub struct JsProviderItem {
     pub key: String,
     pub text: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsEnrichmentProjection {
+    pub version: u32,
+    pub input_hash: String,
+    pub space_id: String,
+    pub memory_id: String,
+    pub revision_id: String,
+    pub semantic_node_id: Option<String>,
+    pub content: String,
+    pub max_tags: u32,
 }
 
 #[napi(object)]
@@ -140,7 +154,7 @@ pub struct JsProviderWork {
     pub items: Vec<JsProviderItem>,
     pub query: Option<String>,
     pub candidates: Vec<String>,
-    pub text: Option<String>,
+    pub projection: Option<JsEnrichmentProjection>,
 }
 
 impl From<NeedWork> for JsProviderWork {
@@ -161,7 +175,7 @@ impl From<NeedWork> for JsProviderWork {
                     .collect(),
                 query: None,
                 candidates: Vec::new(),
-                text: None,
+                projection: None,
             },
             NeedWork::Rerank(request) => Self {
                 work_id: request.work_id,
@@ -171,7 +185,7 @@ impl From<NeedWork> for JsProviderWork {
                 items: Vec::new(),
                 query: Some(request.query),
                 candidates: request.candidates,
-                text: None,
+                projection: None,
             },
             NeedWork::Enrichment(request) => Self {
                 work_id: request.work_id,
@@ -181,8 +195,25 @@ impl From<NeedWork> for JsProviderWork {
                 items: Vec::new(),
                 query: None,
                 candidates: Vec::new(),
-                text: Some(request.text),
+                projection: Some(JsEnrichmentProjection {
+                    version: request.projection.version(),
+                    input_hash: digest_hex(request.projection.input_hash().as_bytes()),
+                    space_id: request.projection.space_id().to_string(),
+                    memory_id: request.projection.memory_id().to_string(),
+                    revision_id: request.projection.revision_id().to_string(),
+                    semantic_node_id: request.projection.semantic_node_id().map(ToOwned::to_owned),
+                    content: request.projection.content().to_owned(),
+                    max_tags: u32::try_from(request.projection.max_tags()).unwrap_or(u32::MAX),
+                }),
             },
         }
     }
+}
+
+fn digest_hex(value: &[u8; 32]) -> String {
+    let mut output = String::with_capacity(value.len() * 2);
+    for byte in value {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
 }

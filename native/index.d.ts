@@ -22,6 +22,17 @@ export interface JsCreateMemoryRequest {
   mdx: string
 }
 
+export interface JsEnrichmentProjection {
+  version: number
+  inputHash: string
+  spaceId: string
+  memoryId: string
+  revisionId: string
+  semanticNodeId?: string
+  content: string
+  maxTags: number
+}
+
 export interface JsMemoryMutation {
   memoryId: string
   spaceId: string
@@ -37,6 +48,7 @@ export interface JsProviderItem {
 export interface JsProviderResult {
   workId: string
   accepted: boolean
+  tags?: Array<string>
 }
 
 export interface JsProviderWork {
@@ -47,7 +59,7 @@ export interface JsProviderWork {
   items: Array<JsProviderItem>
   query?: string
   candidates: Array<string>
-  text?: string
+  projection?: JsEnrichmentProjection
 }
 
 export interface JsQueryRequest {

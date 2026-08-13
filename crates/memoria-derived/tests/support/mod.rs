@@ -1,6 +1,10 @@
+#![allow(dead_code)]
+
 use memoria_derived::{
-    TagDictionary, TagGraph, TagId, TagMembershipInput, TagProvenance, TagSpaceGraph,
+    LexicalDocument, TagDictionary, TagGraph, TagId, TagMembershipInput, TagProvenance,
+    TagSpaceGraph,
 };
+use memoria_mdx::compile_ir;
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 
 pub struct TagFixture {
@@ -47,4 +51,13 @@ impl TagFixture {
     pub fn graph(&self, space: u8) -> TagSpaceGraph<'_> {
         self.tag_graph.for_space(SpaceId::from_bytes([space; 16]))
     }
+}
+
+pub fn enrichment_document(source: &str) -> LexicalDocument {
+    LexicalDocument::new(
+        SpaceId::from_bytes([9; 16]),
+        MemoryId::from_bytes([8; 16]),
+        RevisionId::from_bytes([7; 32]),
+        compile_ir(source).unwrap(),
+    )
 }

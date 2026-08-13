@@ -222,6 +222,7 @@ pub fn provider_submit_result(store: &NativeStore, result: JsProviderResult) -> 
         .provider_submit_result(ProviderWorkResult {
             work_id: result.work_id,
             accepted: result.accepted,
+            tags: result.tags.unwrap_or_default(),
         })
         .map_err(runtime_error)
 }
