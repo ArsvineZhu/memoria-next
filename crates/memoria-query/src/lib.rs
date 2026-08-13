@@ -1,5 +1,6 @@
 pub mod algorithms;
 mod assessment;
+mod association;
 mod compile;
 mod consolidate;
 mod continuation;
@@ -17,10 +18,15 @@ mod tags;
 mod validate;
 
 pub use algorithms::{
-    MAX_TAG_BASIS_DIMENSIONS, MAX_TAG_BASIS_VECTORS, TagBasisError, TagBasisResult, l2_norm,
-    project_tag_basis,
+    MAX_TAG_BASIS_DIMENSIONS, MAX_TAG_BASIS_VECTORS, PropagatedTag, PropagationBudget,
+    PropagationError, PropagationTrace, StructureEvidence, SupportEvidence, TagBasisError,
+    TagBasisResult, activation_propagate, collect_structure, collect_support, diffusion_propagate,
+    l2_norm, project_tag_basis,
 };
 pub use assessment::{RecallAssessment, assess};
+pub use association::{
+    AssociationEdge, AssociationError, AssociationGraph, AssociationView, MAX_ASSOCIATION_EDGES,
+};
 pub use compile::{CompiledQuery, QueryCompiler};
 pub use consolidate::{
     ConsolidationCandidate, ConsolidationError, MemoryMatch, MemoryResult, consolidate,

@@ -149,6 +149,10 @@ impl CompositeTagView {
         self.edges.get(&key)
     }
 
+    pub fn associations(&self) -> impl Iterator<Item = &CompositeTagAssociation> {
+        self.edges.values()
+    }
+
     #[must_use]
     pub fn fingerprint(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
