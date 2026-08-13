@@ -1,23 +1,27 @@
-use std::path::Path;
-use std::{collections::BTreeSet, fs};
+use std::path::{Path, PathBuf};
+use std::{collections::BTreeSet, fs, time::Duration};
 
 use memoria_types::AuthorityGeneration;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
+use crate::gc::DerivedGc;
+use crate::lease::{ManifestLease, unix_now};
 use crate::manifest::{DerivedManifest, ManifestId};
 use crate::{DerivedError, generation_to_sql};
 
 pub struct DerivedCatalog {
     connection: Connection,
+    database_path: PathBuf,
 }
 
 impl DerivedCatalog {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, DerivedError> {
-        if let Some(parent) = path.as_ref().parent() {
+        let database_path = path.as_ref().to_path_buf();
+        if let Some(parent) = database_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let connection = Connection::open(path)?;
+        let connection = Connection::open(&database_path)?;
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.execute_batch(
             "
@@ -69,7 +73,10 @@ impl DerivedCatalog {
                 VALUES (1, NULL);
             ",
         )?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            database_path,
+        })
     }
 
     pub fn stage_artifact(
@@ -329,6 +336,61 @@ impl DerivedCatalog {
         )?;
         id.map(|id| self.manifest(ManifestId::from_raw(id)))
             .transpose()
+    }
+
+    pub fn acquire_lease(
+        &mut self,
+        manifest_id: ManifestId,
+        ttl: Duration,
+    ) -> Result<ManifestLease, DerivedError> {
+        self.manifest(manifest_id)?;
+        let ttl_seconds =
+            i64::try_from(ttl.as_secs()).map_err(|_| DerivedError::LeaseDuration {
+                seconds: ttl.as_secs(),
+            })?;
+        let expires_at =
+            unix_now()
+                .checked_add(ttl_seconds)
+                .ok_or(DerivedError::LeaseDuration {
+                    seconds: ttl.as_secs(),
+                })?;
+        self.connection.execute(
+            "INSERT INTO leases(manifest_id, expires_at) VALUES (?1, ?2)",
+            params![manifest_id.value(), expires_at],
+        )?;
+        let id = self.connection.last_insert_rowid();
+        Ok(ManifestLease::new(
+            id,
+            manifest_id,
+            self.database_path.clone(),
+            expires_at,
+        ))
+    }
+
+    pub fn gc(&mut self) -> DerivedGc<'_> {
+        DerivedGc::new(self)
+    }
+
+    pub fn delete_all_derived(&mut self) -> Result<(), DerivedError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute_batch(
+            "
+            DELETE FROM manifest_capabilities;
+            DELETE FROM manifest_artifacts;
+            DELETE FROM leases;
+            UPDATE serving_pointer SET manifest_id = NULL WHERE singleton = 1;
+            DELETE FROM manifests;
+            DELETE FROM artifact_dependencies;
+            DELETE FROM build_jobs;
+            DELETE FROM artifacts;
+            ",
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 }
 

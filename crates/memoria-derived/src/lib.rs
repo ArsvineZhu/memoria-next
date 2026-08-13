@@ -2,6 +2,8 @@ mod artifact;
 mod catalog;
 mod compiler;
 mod dependency;
+mod gc;
+mod lease;
 mod manifest;
 mod projection;
 mod scheduler;
@@ -15,6 +17,8 @@ pub use artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
 pub use catalog::DerivedCatalog;
 pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
+pub use gc::{DerivedGc, GcReport};
+pub use lease::ManifestLease;
 pub use manifest::{CapabilityStatus, DerivedManifest, ManifestId};
 pub use memoria_types::AuthorityGeneration;
 pub use projection::PROJECTION_SCHEMA_VERSION;
@@ -107,6 +111,9 @@ pub enum DerivedError {
         capability: String,
         generation: AuthorityGeneration,
     },
+
+    #[error("lease duration cannot be represented or added: {seconds} seconds")]
+    LeaseDuration { seconds: u64 },
 }
 
 fn generation_to_sql(generation: AuthorityGeneration) -> Result<i64, DerivedError> {
