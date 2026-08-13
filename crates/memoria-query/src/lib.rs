@@ -1,6 +1,7 @@
 mod assessment;
 mod compile;
 mod consolidate;
+mod continuation;
 mod evidence;
 mod exact;
 mod fusion;
@@ -17,6 +18,7 @@ pub use compile::{CompiledQuery, QueryCompiler};
 pub use consolidate::{
     ConsolidationCandidate, ConsolidationError, MemoryMatch, MemoryResult, consolidate,
 };
+pub use continuation::{Continuation, ReadSession, SessionError};
 pub use evidence::{
     CandidateEvidence, CandidateResponse, CandidateTarget, ExactEvidence, HistoryEvidence,
     LexicalEvidence, PropagationEvidence, RelationEvidence, SemanticEvidence, TagEvidence,
