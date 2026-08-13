@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{MemoryId, RevisionId};
+use crate::{AuthorityGeneration, MemoryId, RevisionId};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -43,8 +43,31 @@ pub enum MemoriaError {
     #[error("memory is retired: {memory_id}")]
     MemoryRetired { memory_id: MemoryId },
 
+    #[error("memory is already active: {memory_id}")]
+    MemoryAlreadyActive { memory_id: MemoryId },
+
+    #[error("space is already active: {space_id}")]
+    SpaceAlreadyActive { space_id: crate::SpaceId },
+
     #[error("KEY_CONFLICT: {scope} key `{key}` is already in use")]
     KeyConflict { scope: &'static str, key: String },
+
+    #[error(
+        "IDEMPOTENCY_CONFLICT: request key `{idempotency_key}` was already used for a different request"
+    )]
+    IdempotencyConflict { idempotency_key: String },
+
+    #[error("GENERATION_CONFLICT: expected {expected}, actual {actual}")]
+    GenerationConflict {
+        expected: AuthorityGeneration,
+        actual: AuthorityGeneration,
+    },
+
+    #[error("unsupported authority operation: {operation}")]
+    UnsupportedOperation { operation: &'static str },
+
+    #[error("invalid authority mutation batch: {message}")]
+    InvalidMutationBatch { message: String },
 
     #[error("authority database error: {message}")]
     Database { message: String },
@@ -70,7 +93,13 @@ impl MemoriaError {
             Self::NotFound { .. } => "NOT_FOUND",
             Self::SpaceRetired { .. } => "SPACE_RETIRED",
             Self::MemoryRetired { .. } => "MEMORY_RETIRED",
+            Self::MemoryAlreadyActive { .. } => "MEMORY_ALREADY_ACTIVE",
+            Self::SpaceAlreadyActive { .. } => "SPACE_ALREADY_ACTIVE",
             Self::KeyConflict { .. } => "KEY_CONFLICT",
+            Self::IdempotencyConflict { .. } => "IDEMPOTENCY_CONFLICT",
+            Self::GenerationConflict { .. } => "GENERATION_CONFLICT",
+            Self::UnsupportedOperation { .. } => "UNSUPPORTED_OPERATION",
+            Self::InvalidMutationBatch { .. } => "INVALID_MUTATION_BATCH",
             Self::Database { .. } => "DATABASE_ERROR",
             Self::Io(_) => "IO_ERROR",
             Self::Serialization(_) => "SERIALIZATION_ERROR",

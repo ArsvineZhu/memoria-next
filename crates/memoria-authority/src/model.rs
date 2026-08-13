@@ -4,7 +4,7 @@ use memoria_types::{
     AuthorityGeneration, MemoriaError, MemoryId, RevisionId, RevisionSemanticIntent,
     SourceBlobHash, SpaceId, Timestamp,
 };
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpaceLifecycle {
@@ -19,6 +19,15 @@ pub enum MemoryLifecycle {
 }
 
 impl MemoryLifecycle {
+    pub(crate) const fn as_sql(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+impl SpaceLifecycle {
     pub(crate) const fn as_sql(self) -> &'static str {
         match self {
             Self::Active => "active",
@@ -135,6 +144,11 @@ impl<T> AuthorityWriteResult<T> {
     }
 }
 
+pub(crate) enum AuthorityWriteAction<T> {
+    Commit(T),
+    Noop(AuthorityWriteResult<T>),
+}
+
 pub struct AuthorityTransaction<'tx> {
     pub(crate) transaction: Transaction<'tx>,
     base_generation: AuthorityGeneration,
@@ -173,17 +187,119 @@ impl<'tx> AuthorityTransaction<'tx> {
             "INSERT INTO spaces (space_id, created_generation) VALUES (?1, ?2)",
             params![space_id.as_bytes().as_slice(), generation],
         )?;
+        self.insert_space_state(
+            space_id,
+            space_key,
+            None,
+            None,
+            SpaceLifecycle::Active,
+            generation,
+        )?;
+
+        Ok(space_id)
+    }
+
+    pub(crate) fn insert_space_state(
+        &mut self,
+        space_id: SpaceId,
+        space_key: &str,
+        display_name: Option<&str>,
+        description: Option<&str>,
+        lifecycle: SpaceLifecycle,
+        valid_from_generation: i64,
+    ) -> rusqlite::Result<()> {
         self.transaction.execute(
             "INSERT INTO space_state_history (
                  space_id,
                  space_key,
+                 display_name,
+                 description,
                  lifecycle,
                  valid_from_generation
-             ) VALUES (?1, ?2, 'active', ?3)",
-            params![space_id.as_bytes().as_slice(), space_key, generation],
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                space_id.as_bytes().as_slice(),
+                space_key,
+                display_name,
+                description,
+                lifecycle.as_sql(),
+                valid_from_generation,
+            ],
         )?;
+        Ok(())
+    }
 
-        Ok(space_id)
+    pub(crate) fn close_current_space_state(
+        &mut self,
+        space_id: SpaceId,
+        valid_to_generation: i64,
+    ) -> rusqlite::Result<()> {
+        let updated = self.transaction.execute(
+            "UPDATE space_state_history
+             SET valid_to_generation = ?1
+             WHERE space_id = ?2 AND valid_to_generation IS NULL",
+            params![valid_to_generation, space_id.as_bytes().as_slice()],
+        )?;
+        if updated != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn replace_space_state(
+        &mut self,
+        space_id: SpaceId,
+        space_key: &str,
+        display_name: Option<&str>,
+        description: Option<&str>,
+        lifecycle: SpaceLifecycle,
+        valid_from_generation: i64,
+    ) -> rusqlite::Result<()> {
+        let current_generation = self
+            .transaction
+            .query_row(
+                "SELECT valid_from_generation
+                 FROM space_state_history
+                 WHERE space_id = ?1 AND valid_to_generation IS NULL
+                 LIMIT 1",
+                params![space_id.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+
+        if current_generation == Some(valid_from_generation) {
+            let updated = self.transaction.execute(
+                "UPDATE space_state_history
+                 SET space_key = ?1,
+                     display_name = ?2,
+                     description = ?3,
+                     lifecycle = ?4
+                 WHERE space_id = ?5 AND valid_from_generation = ?6
+                   AND valid_to_generation IS NULL",
+                params![
+                    space_key,
+                    display_name,
+                    description,
+                    lifecycle.as_sql(),
+                    space_id.as_bytes().as_slice(),
+                    valid_from_generation,
+                ],
+            )?;
+            if updated != 1 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            return Ok(());
+        }
+
+        self.close_current_space_state(space_id, valid_from_generation)?;
+        self.insert_space_state(
+            space_id,
+            space_key,
+            display_name,
+            description,
+            lifecycle,
+            valid_from_generation,
+        )
     }
 
     pub(crate) fn insert_memory_record(
@@ -308,6 +424,88 @@ impl<'tx> AuthorityTransaction<'tx> {
         if updated != 1 {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         }
+        Ok(())
+    }
+
+    pub(crate) fn replace_memory_state(
+        &mut self,
+        memory_id: MemoryId,
+        space_id: SpaceId,
+        document_key: Option<&str>,
+        head_revision_id: RevisionId,
+        lifecycle: MemoryLifecycle,
+        valid_from_generation: i64,
+    ) -> rusqlite::Result<()> {
+        let current_generation = self
+            .transaction
+            .query_row(
+                "SELECT valid_from_generation
+                 FROM memory_state_history
+                 WHERE memory_id = ?1 AND valid_to_generation IS NULL
+                 LIMIT 1",
+                params![memory_id.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+
+        if current_generation == Some(valid_from_generation) {
+            let updated = self.transaction.execute(
+                "UPDATE memory_state_history
+                 SET space_id = ?1,
+                     document_key = ?2,
+                     head_revision_id = ?3,
+                     lifecycle = ?4
+                 WHERE memory_id = ?5 AND valid_from_generation = ?6
+                   AND valid_to_generation IS NULL",
+                params![
+                    space_id.as_bytes().as_slice(),
+                    document_key,
+                    head_revision_id.as_bytes().as_slice(),
+                    lifecycle.as_sql(),
+                    memory_id.as_bytes().as_slice(),
+                    valid_from_generation,
+                ],
+            )?;
+            if updated != 1 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            return Ok(());
+        }
+
+        self.close_current_memory_state(memory_id, valid_from_generation)?;
+        self.insert_memory_state(
+            memory_id,
+            space_id,
+            document_key,
+            head_revision_id,
+            lifecycle,
+            valid_from_generation,
+        )
+    }
+
+    pub(crate) fn insert_idempotency_record(
+        &mut self,
+        idempotency_key: &str,
+        request_fingerprint: &str,
+        result_kind: &str,
+        result_id: &[u8],
+    ) -> rusqlite::Result<()> {
+        self.transaction.execute(
+            "INSERT INTO idempotency_records (
+                 idempotency_key,
+                 request_fingerprint,
+                 result_kind,
+                 result_id,
+                 committed_generation
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                idempotency_key,
+                request_fingerprint,
+                result_kind,
+                result_id,
+                sqlite_generation(self.generation)?,
+            ],
+        )?;
         Ok(())
     }
 }

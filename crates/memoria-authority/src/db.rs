@@ -7,8 +7,8 @@ use memoria_types::{AuthorityGeneration, MemoriaError};
 use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::model::{
-    AuthorityTransaction, AuthorityWriteResult, authority_generation, database_error, schema_error,
-    sqlite_conversion_error, sqlite_generation,
+    AuthorityTransaction, AuthorityWriteAction, AuthorityWriteResult, authority_generation,
+    database_error, schema_error, sqlite_conversion_error, sqlite_generation,
 };
 use crate::schema::{
     SCHEMA_V1, SCHEMA_V1_COLUMNS, SCHEMA_V1_TABLES, SCHEMA_V1_TRIGGERS, SCHEMA_V1_VERSION,
@@ -85,6 +85,20 @@ impl AuthorityDb {
     where
         F: for<'tx> FnOnce(&mut AuthorityTransaction<'tx>) -> Result<T, MemoriaError>,
     {
+        self.write_memoria_action(|transaction| {
+            operation(transaction).map(AuthorityWriteAction::Commit)
+        })
+    }
+
+    pub(crate) fn write_memoria_action<F, T>(
+        &self,
+        operation: F,
+    ) -> Result<AuthorityWriteResult<T>, MemoriaError>
+    where
+        F: for<'tx> FnOnce(
+            &mut AuthorityTransaction<'tx>,
+        ) -> Result<AuthorityWriteAction<T>, MemoriaError>,
+    {
         let mut connection = self.open_connection().map_err(database_error)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -106,7 +120,14 @@ impl AuthorityDb {
         let mut transaction =
             AuthorityTransaction::new(transaction, base_generation, next_generation);
 
-        let value = operation(&mut transaction)?;
+        let action = operation(&mut transaction)?;
+        let value = match action {
+            AuthorityWriteAction::Commit(value) => value,
+            AuthorityWriteAction::Noop(result) => {
+                drop(transaction);
+                return Ok(result);
+            }
+        };
         let base_generation_value = sqlite_generation(base_generation).map_err(database_error)?;
         let next_generation_value = sqlite_generation(next_generation).map_err(database_error)?;
         let updated = transaction

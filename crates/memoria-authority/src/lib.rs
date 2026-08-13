@@ -16,4 +16,5 @@ pub use model::{
     AuthorityTransaction, AuthorityWriteResult, MemoryLifecycle, MemoryRecord, RevisionRecord,
     SpaceLifecycle, SpaceRecord,
 };
+pub use mutation::{AuthorityMutationBatch, AuthorityOperation};
 pub use read::MemoryRead;
