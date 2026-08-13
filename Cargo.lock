@@ -598,6 +598,12 @@ version = "0.1.0"
 [[package]]
 name = "memoria-query"
 version = "0.1.0"
+dependencies = [
+ "memoria-derived",
+ "memoria-mdx",
+ "memoria-types",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "memoria-runtime"
