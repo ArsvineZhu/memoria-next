@@ -91,6 +91,12 @@ fn matches_query(compiled: &CompiledQuery, candidate: &LexicalCandidate) -> bool
     query.scope.spaces.contains(&candidate.target.space_id)
         && candidate.current
         && !candidate.retired
+        && query.cue.text.iter().any(|cue| {
+            candidate
+                .text
+                .to_ascii_lowercase()
+                .contains(&cue.to_ascii_lowercase())
+        })
         && query
             .constraints
             .memories

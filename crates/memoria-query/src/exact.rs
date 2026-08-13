@@ -270,7 +270,7 @@ fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
             .all(|tag| record.tags.iter().any(|candidate| candidate == tag))
 }
 
-fn visible_at(record: &ExactRecord, generation: AuthorityGeneration) -> bool {
+pub(crate) fn visible_at(record: &ExactRecord, generation: AuthorityGeneration) -> bool {
     record.authority_generation <= generation
         && record
             .valid_until

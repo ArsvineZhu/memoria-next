@@ -2,6 +2,7 @@ mod compile;
 mod evidence;
 mod exact;
 mod fusion;
+mod history;
 mod lexical;
 mod model;
 mod planner;
@@ -17,6 +18,7 @@ pub use exact::{
     ExactIndex, ExactRecord, MemoryReference, ReferenceStatus, ResolvedReference, execute_exact,
 };
 pub use fusion::{FusedCandidate, fuse_channels, rrf};
+pub use history::execute_history;
 pub use lexical::{LexicalCandidate, LexicalCandidateIndex, execute_lexical};
 pub use model::{
     AuthorityConsistency, EntityRef, EntityRefParseError, MemoryQuery, MemoryQueryBuilder,
