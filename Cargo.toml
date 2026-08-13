@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/memoria-types",
+  "crates/memoria-authority",
+  "crates/memoria-mdx",
+  "crates/memoria-derived",
+  "crates/memoria-query",
+  "crates/memoria-adaptive",
+  "crates/memoria-runtime",
+  "crates/memoria-napi",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
