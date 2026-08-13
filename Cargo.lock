@@ -794,6 +794,11 @@ dependencies = [
 [[package]]
 name = "memoria-adaptive"
 version = "0.1.0"
+dependencies = [
+ "memoria-types",
+ "serde",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "memoria-authority"
