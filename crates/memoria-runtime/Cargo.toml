@@ -7,11 +7,13 @@ license.workspace = true
 
 [dependencies]
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
+memoria-adaptive = { version = "0.1.0", path = "../memoria-adaptive" }
 memoria-authority = { version = "0.1.0", path = "../memoria-authority" }
 memoria-mdx = { version = "0.1.0", path = "../memoria-mdx" }
 memoria-derived = { version = "0.1.0", path = "../memoria-derived" }
 memoria-query = { version = "0.1.0", path = "../memoria-query" }
 thiserror = "2.0.20"
+sha2 = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"

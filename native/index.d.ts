@@ -15,6 +15,8 @@ export declare function cancelOperation(store: NativeStore, operationId: string)
 
 export declare function closeStore(store: NativeStore): void
 
+export declare function feedbackSubmit(store: NativeStore, request: JsFeedbackSubmission): JsFeedbackCommit
+
 export interface JsCreateMemoryRequest {
   spaceId: string
   documentKey?: string
@@ -31,6 +33,34 @@ export interface JsEnrichmentProjection {
   semanticNodeId?: string
   content: string
   maxTags: number
+}
+
+export interface JsFeedbackCommit {
+  generation: string
+  events: Array<JsFeedbackEventResult>
+}
+
+export interface JsFeedbackEvent {
+  resultId: string
+  outcome: string
+}
+
+export interface JsFeedbackEventResult {
+  eventId: string
+  generation: string
+  retrievalId: string
+  spaceId: string
+  memoryId: string
+  revisionId: string
+  semanticNodeId?: string
+  outcome: string
+  occurredAtSeconds: number
+}
+
+export interface JsFeedbackSubmission {
+  retrievalId: string
+  idempotencyKey: string
+  events: Array<JsFeedbackEvent>
 }
 
 export interface JsMemoryMutation {
@@ -72,6 +102,15 @@ export interface JsQueryResponse {
   resultCount: number
   authorityGeneration: string
   degraded: boolean
+  retrievalId: string
+  results: Array<JsQueryResult>
+}
+
+export interface JsQueryResult {
+  resultId: string
+  spaceId: string
+  memoryId: string
+  revisionId: string
 }
 
 export interface JsRerankScore {

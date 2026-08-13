@@ -23,6 +23,8 @@ export type MemoriaErrorCode =
   | "STORE_CLOSED"
   | "QUERY_ERROR"
   | "UNSUPPORTED_OPERATION"
+  | "ADAPTIVE_ERROR"
+  | "FEEDBACK_RECEIPT_EXPIRED"
   | "NATIVE_ERROR";
 
 const knownCodes: readonly MemoriaErrorCode[] = [
@@ -48,6 +50,8 @@ const knownCodes: readonly MemoriaErrorCode[] = [
   "ABORTED",
   "QUERY_TIMEOUT",
   "UNSUPPORTED_OPERATION",
+  "ADAPTIVE_ERROR",
+  "FEEDBACK_RECEIPT_EXPIRED",
   "NATIVE_ERROR",
 ];
 

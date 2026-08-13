@@ -63,7 +63,13 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
     },
     queryStart,
     queryResume() {
-      return { resultCount: 0, authorityGeneration: "0", degraded: false };
+      return {
+        resultCount: 0,
+        authorityGeneration: "0",
+        degraded: false,
+        retrievalId: "RET_fake",
+        results: [],
+      };
     },
     providerPollWork() {
       return null;
@@ -72,6 +78,9 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
       _value: NativeStoreHandle,
       _result: NativeProviderResult,
     ) {},
+    feedbackSubmit() {
+      return { generation: "0", events: [] };
+    },
     readSessionOpen() {
       return "RS_fake";
     },

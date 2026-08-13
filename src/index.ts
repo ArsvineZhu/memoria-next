@@ -16,6 +16,13 @@ export {
   type MemoriaErrorCode,
 } from "./domain/errors.js";
 export {
+  type FeedbackApi,
+  type FeedbackCommit,
+  type FeedbackEvent,
+  type FeedbackInput,
+  type FeedbackOutcome,
+} from "./domain/feedback.js";
+export {
   asMemoryId,
   asRevisionId,
   asSpaceId,

@@ -12,8 +12,9 @@ use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 
 use crate::convert::{
-    JsCreateMemoryRequest, JsMemoryMutation, JsProviderResult, JsProviderWork, JsQueryRequest,
-    JsQueryResponse, JsReviseMemoryRequest, JsStatus, QueryRequest,
+    JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission, JsMemoryMutation,
+    JsProviderResult, JsProviderWork, JsQueryRequest, JsQueryResponse, JsQueryResult,
+    JsReviseMemoryRequest, JsStatus, QueryRequest,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -156,7 +157,30 @@ pub fn query_start(store: &NativeStore, request: JsQueryRequest) -> Result<JsQue
         result_count: u32::try_from(response.results.len()).map_err(to_napi_error)?,
         authority_generation: response.snapshot.authority_generation.to_string(),
         degraded: response.execution.degraded,
+        retrieval_id: response.retrieval_id,
+        results: response
+            .results
+            .into_iter()
+            .map(JsQueryResult::from)
+            .collect(),
     })
+}
+
+#[napi]
+pub fn feedback_submit(
+    store: &NativeStore,
+    request: JsFeedbackSubmission,
+) -> Result<JsFeedbackCommit> {
+    let submission =
+        memoria_runtime::FeedbackSubmission::try_from(request).map_err(to_napi_error)?;
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .submit_feedback(submission)
+        .map(JsFeedbackCommit::from)
+        .map_err(runtime_error)
 }
 
 #[napi]

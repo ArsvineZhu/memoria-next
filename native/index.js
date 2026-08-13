@@ -706,6 +706,7 @@ module.exports.authorityMutate = nativeBinding.authorityMutate
 module.exports.authorityRevise = nativeBinding.authorityRevise
 module.exports.cancelOperation = nativeBinding.cancelOperation
 module.exports.closeStore = nativeBinding.closeStore
+module.exports.feedbackSubmit = nativeBinding.feedbackSubmit
 module.exports.openStore = nativeBinding.openStore
 module.exports.providerPollWork = nativeBinding.providerPollWork
 module.exports.providerSubmitResult = nativeBinding.providerSubmitResult

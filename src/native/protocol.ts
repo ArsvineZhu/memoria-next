@@ -7,6 +7,15 @@ export interface NativeQueryResponse {
   resultCount: number;
   authorityGeneration: string;
   degraded: boolean;
+  retrievalId: string;
+  results: NativeQueryResult[];
+}
+
+export interface NativeQueryResult {
+  resultId: string;
+  spaceId: string;
+  memoryId: string;
+  revisionId: string;
 }
 
 export interface NativeStatus {
@@ -42,6 +51,27 @@ export interface NativeProviderResult {
   accepted: boolean;
   scores?: Array<{ handle: string; score: number }>;
   tags?: string[];
+}
+
+export interface NativeFeedbackSubmission {
+  retrievalId: string;
+  idempotencyKey: string;
+  events: Array<{ resultId: string; outcome: string }>;
+}
+
+export interface NativeFeedbackCommit {
+  generation: string;
+  events: Array<{
+    eventId: string;
+    generation: string;
+    retrievalId: string;
+    spaceId: string;
+    memoryId: string;
+    revisionId: string;
+    semanticNodeId?: string;
+    outcome: string;
+    occurredAtSeconds: number;
+  }>;
 }
 
 export interface NativeProviderItem {
@@ -92,6 +122,10 @@ export interface NativeBinding {
   ): NativeQueryResponse | Promise<NativeQueryResponse>;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
   providerSubmitResult(store: NativeStoreHandle, result: NativeProviderResult): void;
+  feedbackSubmit(
+    store: NativeStoreHandle,
+    request: NativeFeedbackSubmission,
+  ): NativeFeedbackCommit;
   readSessionOpen(store: NativeStoreHandle, request: NativeQueryRequest): string;
   readSessionClose(store: NativeStoreHandle, sessionId: string): void;
   cancelOperation(store: NativeStoreHandle, operationId: string): void;

@@ -1,5 +1,5 @@
 use memoria_query::MemoryQuery;
-use memoria_runtime::NeedWork;
+use memoria_runtime::{FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork};
 use memoria_types::SpaceId;
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -114,6 +114,113 @@ pub struct JsQueryResponse {
     pub result_count: u32,
     pub authority_generation: String,
     pub degraded: bool,
+    pub retrieval_id: String,
+    pub results: Vec<JsQueryResult>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsQueryResult {
+    pub result_id: String,
+    pub space_id: String,
+    pub memory_id: String,
+    pub revision_id: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsFeedbackEvent {
+    pub result_id: String,
+    pub outcome: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsFeedbackSubmission {
+    pub retrieval_id: String,
+    pub idempotency_key: String,
+    pub events: Vec<JsFeedbackEvent>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsFeedbackCommit {
+    pub generation: String,
+    pub events: Vec<JsFeedbackEventResult>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsFeedbackEventResult {
+    pub event_id: String,
+    pub generation: String,
+    pub retrieval_id: String,
+    pub space_id: String,
+    pub memory_id: String,
+    pub revision_id: String,
+    pub semantic_node_id: Option<String>,
+    pub outcome: String,
+    pub occurred_at_seconds: i64,
+}
+
+impl TryFrom<JsFeedbackSubmission> for FeedbackSubmission {
+    type Error = napi::Error;
+
+    fn try_from(value: JsFeedbackSubmission) -> Result<Self> {
+        let events = value
+            .events
+            .into_iter()
+            .map(|event| {
+                Ok(FeedbackSubmissionEvent {
+                    result_id: event.result_id,
+                    outcome: event.outcome.parse().map_err(
+                        |error: memoria_adaptive::AdaptiveError| {
+                            napi::Error::from_reason(error.to_string())
+                        },
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(FeedbackSubmission {
+            retrieval_id: value.retrieval_id,
+            idempotency_key: value.idempotency_key,
+            events,
+        })
+    }
+}
+
+impl From<FeedbackCommit> for JsFeedbackCommit {
+    fn from(value: FeedbackCommit) -> Self {
+        Self {
+            generation: value.generation.to_string(),
+            events: value
+                .events
+                .into_iter()
+                .map(|event| JsFeedbackEventResult {
+                    event_id: event.event_id,
+                    generation: event.generation.to_string(),
+                    retrieval_id: event.retrieval_id,
+                    space_id: event.space_id.to_string(),
+                    memory_id: event.memory_id.to_string(),
+                    revision_id: event.revision_id.to_string(),
+                    semantic_node_id: event.semantic_node_id,
+                    outcome: event.outcome.to_string(),
+                    occurred_at_seconds: event.occurred_at.unix_seconds(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<memoria_query::MemoryResult> for JsQueryResult {
+    fn from(value: memoria_query::MemoryResult) -> Self {
+        Self {
+            result_id: value.result_id,
+            space_id: value.space_id.to_string(),
+            memory_id: value.memory_id.to_string(),
+            revision_id: value.revision_id.to_string(),
+        }
+    }
 }
 
 #[napi(object)]

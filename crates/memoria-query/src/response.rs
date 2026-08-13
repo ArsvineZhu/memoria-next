@@ -20,10 +20,14 @@ where
     I: IntoIterator<Item = C>,
     C: Into<ConsolidationCandidate>,
 {
-    let results = consolidate(candidates, compiled.query.budget)?;
+    let retrieval_id = retrieval_id.into();
+    let mut results = consolidate(candidates, compiled.query.budget)?;
+    for (index, result) in results.iter_mut().enumerate() {
+        result.result_id = format!("{retrieval_id}:result:{index}");
+    }
     let assessment = assess(&results);
     Ok(RetrievalResponse {
-        retrieval_id: retrieval_id.into(),
+        retrieval_id,
         snapshot: compiled.snapshot.clone(),
         execution: compiled.execution.clone(),
         results,

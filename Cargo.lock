@@ -839,6 +839,7 @@ dependencies = [
 name = "memoria-napi"
 version = "0.1.0"
 dependencies = [
+ "memoria-adaptive",
  "memoria-query",
  "memoria-runtime",
  "memoria-types",
@@ -864,11 +865,13 @@ dependencies = [
 name = "memoria-runtime"
 version = "0.1.0"
 dependencies = [
+ "memoria-adaptive",
  "memoria-authority",
  "memoria-derived",
  "memoria-mdx",
  "memoria-query",
  "memoria-types",
+ "sha2",
  "tempfile",
  "thiserror 2.0.20",
 ]

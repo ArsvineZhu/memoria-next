@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::string::FromUtf8Error;
 
+use memoria_adaptive::{AdaptiveEventLog, QueryAdaptiveSignature};
 use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, StoreWriterLock};
 use memoria_derived::{
     BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
@@ -9,13 +10,16 @@ use memoria_derived::{
 };
 use memoria_mdx::compile_ir;
 use memoria_query::{
-    ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex, MemoryQuery, QueryCompiler,
-    ReadSession, RetrievalResponse, build_response, execute_exact, execute_lexical,
+    AdaptiveSnapshotIdentity, ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex,
+    MemoryQuery, QueryCompiler, ReadSession, RetrievalResponse, build_response, execute_exact,
+    execute_lexical,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::provider::{NeedWork, ProviderWorkResult};
+use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
 
 #[derive(Debug, Error)]
@@ -46,6 +50,12 @@ pub enum RuntimeError {
 
     #[error("provider result `{work_id}` was not expected")]
     UnexpectedProviderWork { work_id: String },
+
+    #[error("adaptive error: {0}")]
+    Adaptive(#[from] memoria_adaptive::AdaptiveError),
+
+    #[error("feedback receipt error: {0}")]
+    Receipt(#[from] ReceiptError),
 }
 
 impl RuntimeError {
@@ -58,6 +68,10 @@ impl RuntimeError {
             Self::Mdx(_) | Self::Utf8(_) => "INVALID_MDX",
             Self::Query(_) | Self::Consolidation(_) => "QUERY_ERROR",
             Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
+            Self::Adaptive(_) => "ADAPTIVE_ERROR",
+            Self::Receipt(ReceiptError::NotFound { .. }) => "NOT_FOUND",
+            Self::Receipt(ReceiptError::Expired { .. }) => "FEEDBACK_RECEIPT_EXPIRED",
+            Self::Receipt(_) => "ADAPTIVE_ERROR",
         }
     }
 }
@@ -75,6 +89,9 @@ pub struct MemoriaRuntime {
     semantic_coverage: AuthorityGeneration,
     tag_dictionary: TagDictionary,
     generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
+    adaptive_log: AdaptiveEventLog,
+    receipts: BTreeMap<String, RetrievalReceipt>,
+    next_retrieval_id: u64,
     closed: bool,
     last_error: Option<String>,
 }
@@ -121,6 +138,9 @@ impl MemoriaRuntime {
             semantic_coverage: AuthorityGeneration::initial(),
             tag_dictionary: TagDictionary::new(),
             generated_tag_artifacts: BTreeMap::new(),
+            adaptive_log: AdaptiveEventLog::new(),
+            receipts: BTreeMap::new(),
+            next_retrieval_id: 0,
             closed: false,
             last_error: None,
         })
@@ -204,6 +224,7 @@ impl MemoriaRuntime {
     pub fn query(&mut self, query: MemoryQuery) -> Result<RetrievalResponse, RuntimeError> {
         self.ensure_open()?;
         query.validate()?;
+        let query_signature = adaptive_signature(&query);
         let generation = self.authority.current_generation().map_err(|error| {
             RuntimeError::AuthorityDatabase {
                 message: error.to_string(),
@@ -217,6 +238,10 @@ impl MemoriaRuntime {
                 message: "no Derived Manifest is serving".to_owned(),
             })?;
         let compiled = QueryCompiler::new(generation, Some(manifest))
+            .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Enabled {
+                generation: self.adaptive_log.current_generation(),
+                model_version: "adaptive-v1".to_owned(),
+            })
             .with_semantic_coverage(self.semantic_coverage)
             .compile(query)?;
         let candidates = if compiled.query.cue.text.is_empty() {
@@ -236,7 +261,42 @@ impl MemoriaRuntime {
                 .collect();
             execute_lexical(&compiled, &LexicalCandidateIndex::new(lexical)).results
         };
-        Ok(build_response("runtime-query", &compiled, candidates)?)
+        self.next_retrieval_id = self.next_retrieval_id.saturating_add(1);
+        let response = build_response(
+            format!("RET_{}", self.next_retrieval_id),
+            &compiled,
+            candidates,
+        )?;
+        let now = memoria_types::Timestamp::now()?;
+        let receipt = RetrievalReceipt::from_results(
+            response.retrieval_id.clone(),
+            response.snapshot.clone(),
+            query_signature,
+            &response.results,
+            now,
+        )?;
+        self.receipts.insert(response.retrieval_id.clone(), receipt);
+        Ok(response)
+    }
+
+    pub fn submit_feedback(
+        &mut self,
+        submission: FeedbackSubmission,
+    ) -> Result<FeedbackCommit, RuntimeError> {
+        self.ensure_open()?;
+        let now = memoria_types::Timestamp::now()?;
+        let receipt =
+            self.receipts
+                .get(&submission.retrieval_id)
+                .ok_or_else(|| ReceiptError::NotFound {
+                    retrieval_id: submission.retrieval_id.clone(),
+                })?;
+        let inputs = receipt.resolve_feedback(&submission, now)?;
+        let committed = self.adaptive_log.append_batch(inputs)?;
+        Ok(FeedbackCommit {
+            generation: committed.generation,
+            events: committed.events,
+        })
     }
 
     pub fn open_read_session(
@@ -537,6 +597,34 @@ fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
                 .contains(&cue.to_ascii_lowercase())
         })
         .count() as f32
+}
+
+fn adaptive_signature(query: &MemoryQuery) -> QueryAdaptiveSignature {
+    let mut hasher = Sha256::new();
+    for cue in &query.cue.text {
+        hasher.update(cue.as_bytes());
+        hasher.update([0]);
+    }
+    QueryAdaptiveSignature {
+        scope: query.scope.spaces.clone(),
+        entity_refs: query.cue.entities.iter().map(ToString::to_string).collect(),
+        explicit_tags: query.cue.tags.clone(),
+        query_class: if query.constraints.valid_at.is_some() {
+            Some("historical".to_owned())
+        } else {
+            Some("current".to_owned())
+        },
+        text_projection_hash: Some(format!("sha256:{}", hex_lower(&hasher.finalize()))),
+        vector_identity: None,
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
 }
 
 fn work_id(work: &NeedWork) -> &str {

@@ -1,4 +1,6 @@
 import type {
+  NativeFeedbackCommit,
+  NativeFeedbackSubmission,
   NativeBinding,
   NativeCreateMemoryRequest,
   NativeMemoryMutation,
@@ -12,7 +14,11 @@ import { ProviderHost } from "../providers/host.js";
 import { createAdminApi, type AdminApi } from "../admin/index.js";
 import { createDocumentsApi, type DocumentsApi } from "../domain/documents.js";
 import { MemoriaError, toMemoriaError } from "../domain/errors.js";
-import { createFeedbackApi, type FeedbackApi } from "../domain/feedback.js";
+import {
+  createFeedbackApi,
+  type FeedbackApi,
+  type FeedbackInput,
+} from "../domain/feedback.js";
 import { createSpacesApi, type SpacesApi } from "../domain/spaces.js";
 
 export interface MemoriaQuery {
@@ -84,7 +90,7 @@ export class Memoria {
     this.#providerHost = providerHost;
     this.spaces = createSpacesApi(this);
     this.documents = createDocumentsApi(this);
-    this.feedback = createFeedbackApi();
+    this.feedback = createFeedbackApi(this);
     this.admin = createAdminApi(this);
     if (providerHost) {
       void this.runProviderPump();
@@ -158,6 +164,19 @@ export class Memoria {
       throw toMemoriaError(error);
     } finally {
       this.#operations.delete(operationId);
+    }
+  }
+
+  async submitFeedback(input: FeedbackInput): Promise<NativeFeedbackCommit> {
+    const request: NativeFeedbackSubmission = {
+      retrievalId: input.retrievalId,
+      idempotencyKey: input.idempotencyKey,
+      events: input.events,
+    };
+    try {
+      return this.#binding.feedbackSubmit(this.store(), request);
+    } catch (error) {
+      throw toMemoriaError(error);
     }
   }
 
