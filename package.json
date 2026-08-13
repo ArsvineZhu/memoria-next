@@ -24,7 +24,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "oxlint src tests scripts --type-aware --deny-warnings",
-    "build:native": "napi build --manifest-path ./crates/memoria-napi/Cargo.toml --platform --output-dir ./native -- --locked",
+    "build:native": "napi build --manifest-path ./crates/memoria-napi/Cargo.toml --features native-link --platform --output-dir ./native -- --locked",
     "build:ts": "tsc -p tsconfig.build.json",
     "build:test": "tsc -p tsconfig.test.json",
     "build": "corepack pnpm build:native && corepack pnpm build:ts",

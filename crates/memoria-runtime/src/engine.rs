@@ -204,7 +204,9 @@ impl MemoriaRuntime {
             .ok_or(RuntimeError::AuthorityDatabase {
                 message: "no Derived Manifest is serving".to_owned(),
             })?;
-        let compiled = QueryCompiler::new(generation, Some(manifest)).compile(query)?;
+        let compiled = QueryCompiler::new(generation, Some(manifest))
+            .with_semantic_coverage(self.semantic_coverage)
+            .compile(query)?;
         let candidates = if compiled.query.cue.text.is_empty() {
             execute_exact(&compiled, &ExactIndex::new(records)).results
         } else {
@@ -242,7 +244,9 @@ impl MemoriaRuntime {
                 message: "no Derived Manifest is serving".to_owned(),
             },
         )?;
-        let compiled = QueryCompiler::new(generation, Some(manifest)).compile(query)?;
+        let compiled = QueryCompiler::new(generation, Some(manifest))
+            .with_semantic_coverage(self.semantic_coverage)
+            .compile(query)?;
         ReadSession::open(&mut self.derived, &compiled, ttl).map_err(|error| {
             RuntimeError::AuthorityDatabase {
                 message: error.to_string(),

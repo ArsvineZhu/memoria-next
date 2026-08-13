@@ -1,6 +1,7 @@
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 
 use crate::EntityRef;
+use crate::semantic::SemanticResolution;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CandidateTarget {
@@ -24,6 +25,7 @@ pub struct LexicalEvidence {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SemanticEvidence {
     pub score: f32,
+    pub resolution: SemanticResolution,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

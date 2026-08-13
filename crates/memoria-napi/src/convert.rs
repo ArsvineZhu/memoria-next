@@ -31,7 +31,7 @@ impl QueryRequest {
     pub fn into_core(self) -> Result<MemoryQuery> {
         let mut builder = MemoryQuery::builder().spaces(self.scope);
         if let Some(text) = self.text {
-            builder = builder.text_cue(text);
+            builder = builder.text_cue(text).prefer_capability("semantic");
         }
         builder
             .build()

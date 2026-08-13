@@ -10,6 +10,7 @@ mod lexical;
 mod model;
 mod planner;
 mod response;
+mod semantic;
 mod snapshot;
 mod validate;
 
@@ -36,5 +37,8 @@ pub use model::{
 };
 pub use planner::{CapabilityExecution, CapabilityPlanner, CapabilityTarget};
 pub use response::{RetrievalResponse, build_response};
+pub use semantic::{
+    SemanticCandidate, SemanticCandidateIndex, SemanticResolution, execute_semantic,
+};
 pub use snapshot::{AdaptiveSnapshotIdentity, QuerySnapshot};
 pub use validate::QueryError;
