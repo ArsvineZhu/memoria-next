@@ -20,6 +20,9 @@ pub use projection::ProjectionTarget;
 pub use projection::entities::{
     EntityObservation, EntityObservationArtifact, EntityObservationBuilder, EntityRef,
 };
+pub use projection::lexical::{
+    LexicalDocument, LexicalHit, LexicalIndex, build_lexical, lexical_projection_hash,
+};
 pub use projection::relations::{RelationArtifact, RelationBuilder, RelationRecord};
 pub use projection::structural::{StructuralArtifact, StructuralBuilder, StructuralEntry};
 pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembership, TagProvenance};
@@ -35,6 +38,15 @@ pub enum DerivedError {
 
     #[error("MDX projection error: {0}")]
     Mdx(#[from] memoria_mdx::MdxError),
+
+    #[error("memoria type conversion error: {0}")]
+    Types(#[from] memoria_types::MemoriaError),
+
+    #[error("lexical index error: {0}")]
+    Tantivy(#[from] tantivy::TantivyError),
+
+    #[error("lexical query error: {0}")]
+    TantivyQuery(#[from] tantivy::query::QueryParserError),
 
     #[error("artifact {id} is not validated (state: {state:?})")]
     ArtifactNotValidated {

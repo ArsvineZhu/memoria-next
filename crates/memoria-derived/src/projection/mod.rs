@@ -1,4 +1,5 @@
 pub mod entities;
+pub mod lexical;
 pub mod relations;
 pub mod structural;
 pub mod tags;

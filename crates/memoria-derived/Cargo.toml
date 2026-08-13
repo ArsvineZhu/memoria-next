@@ -10,6 +10,7 @@ memoria-types = { version = "0.1.0", path = "../memoria-types" }
 memoria-mdx = { version = "0.1.0", path = "../memoria-mdx" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 sha2 = "0.11.0"
+tantivy = "0.22.0"
 thiserror = "2.0.20"
 
 [dev-dependencies]
