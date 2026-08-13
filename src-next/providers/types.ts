@@ -22,7 +22,29 @@ export interface ProviderSet {
   enrichment?: TagEnrichmentProvider;
 }
 
+export type ProviderType = "embedding" | "rerank" | "enrichment";
+
+export type ProviderEgressHook = (work: NeedWork) => NeedWork | Promise<NeedWork>;
+
+export interface ProviderHostOptions {
+  providers: ProviderSet;
+  maxAttempts?: number;
+  onDataEgress?: ProviderEgressHook;
+}
+
 export interface ProviderResult {
   workId: string;
   accepted: boolean;
+}
+
+export class ProviderExecutionError extends Error {
+  readonly providerType: ProviderType;
+  readonly attempts: number;
+
+  constructor(providerType: ProviderType, attempts: number, cause: unknown) {
+    super(`${providerType} provider failed after ${attempts} attempt(s)`, { cause });
+    this.name = "ProviderExecutionError";
+    this.providerType = providerType;
+    this.attempts = attempts;
+  }
 }
