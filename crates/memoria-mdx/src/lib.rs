@@ -1,6 +1,7 @@
 mod canonical;
 mod diff;
 mod ir;
+mod lint;
 mod patch;
 mod profile;
 mod semantic_lexer;
@@ -16,6 +17,9 @@ use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 pub use canonical::{compile_ir, compile_validated};
 pub use diff::{InvalidationCategory, SemanticDiff, SemanticDiffCategory};
 pub use ir::{IrNode, MEMORY_IR_VERSION, MemoryIr, SemanticHash, SourceMapping};
+pub use lint::{
+    LintResult, MdxDiagnostic, REFERENTIAL_CLOSURE_RISK, lint_document, parse_validate_and_lint,
+};
 pub use memoria_types::RevisionSemanticIntent;
 pub use patch::{
     CorrectionPatch, PatchOp, SupersessionPatch, TransitionState, apply_correction_patch,

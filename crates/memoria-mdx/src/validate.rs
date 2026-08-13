@@ -153,7 +153,7 @@ fn validate_required_attributes(
         SemanticKind::Event => &["occurredAt"][..],
         SemanticKind::Relation => &["from", "to"][..],
         SemanticKind::Source => &["ref"][..],
-        SemanticKind::Quote => &["source"][..],
+        SemanticKind::Quote => &[][..],
         SemanticKind::Extension => &["namespace", "type", "version"][..],
         SemanticKind::MemoryMeta | SemanticKind::Section | SemanticKind::MemoryRef => &[][..],
     };
@@ -232,14 +232,14 @@ fn validate_references(
             }
         }
     }
-    if kind == SemanticKind::Quote {
-        let value = attributes.get("source").expect("required above");
-        if local_reference_id(value).is_none() {
-            return Err(MdxError::InvalidReference {
-                value: value.clone(),
-                span: element.span(),
-            });
-        }
+    if kind == SemanticKind::Quote
+        && let Some(value) = attributes.get("source")
+        && local_reference_id(value).is_none()
+    {
+        return Err(MdxError::InvalidReference {
+            value: value.clone(),
+            span: element.span(),
+        });
     }
     Ok(())
 }
