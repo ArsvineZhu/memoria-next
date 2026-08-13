@@ -11,7 +11,9 @@ pub use evidence::{
     CandidateEvidence, CandidateResponse, CandidateTarget, ExactEvidence, HistoryEvidence,
     LexicalEvidence, PropagationEvidence, RelationEvidence, SemanticEvidence, TagEvidence,
 };
-pub use exact::{ExactIndex, ExactRecord, execute_exact};
+pub use exact::{
+    ExactIndex, ExactRecord, MemoryReference, ReferenceStatus, ResolvedReference, execute_exact,
+};
 pub use model::{
     AuthorityConsistency, EntityRef, EntityRefParseError, MemoryQuery, MemoryQueryBuilder,
     QueryBudget, QueryConsistency, QueryConstraints, QueryCue, QueryQuality, QueryScope,

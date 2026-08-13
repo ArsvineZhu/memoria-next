@@ -1,4 +1,4 @@
-use memoria_types::{MemoryId, RevisionId, SpaceId};
+use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 
 use crate::EntityRef;
 use crate::compile::CompiledQuery;
@@ -15,6 +15,10 @@ pub struct ExactRecord {
     pub tags: Vec<String>,
     pub current: bool,
     pub retired: bool,
+    pub purged: bool,
+    pub authority_generation: AuthorityGeneration,
+    pub valid_until: Option<AuthorityGeneration>,
+    pub node_ids: Vec<String>,
     pub relations: Vec<String>,
 }
 
@@ -37,6 +41,10 @@ impl ExactRecord {
             tags: Vec::new(),
             current: true,
             retired: false,
+            purged: false,
+            authority_generation: AuthorityGeneration::initial(),
+            valid_until: None,
+            node_ids: Vec::new(),
             relations: Vec::new(),
         }
     }
@@ -66,6 +74,30 @@ impl ExactRecord {
     }
 
     #[must_use]
+    pub fn with_purged(mut self, purged: bool) -> Self {
+        self.purged = purged;
+        self
+    }
+
+    #[must_use]
+    pub fn with_authority_generation(mut self, generation: AuthorityGeneration) -> Self {
+        self.authority_generation = generation;
+        self
+    }
+
+    #[must_use]
+    pub fn with_valid_until(mut self, generation: AuthorityGeneration) -> Self {
+        self.valid_until = Some(generation);
+        self
+    }
+
+    #[must_use]
+    pub fn with_node_ids(mut self, node_ids: Vec<String>) -> Self {
+        self.node_ids = node_ids;
+        self
+    }
+
+    #[must_use]
     pub fn with_relations(mut self, relations: Vec<String>) -> Self {
         self.relations = relations;
         self
@@ -77,6 +109,54 @@ pub struct ExactIndex {
     records: Vec<ExactRecord>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryReference {
+    pub memory_id: MemoryId,
+    pub revision_id: Option<RevisionId>,
+    pub node_id: Option<String>,
+}
+
+impl MemoryReference {
+    #[must_use]
+    pub const fn logical(memory_id: MemoryId) -> Self {
+        Self {
+            memory_id,
+            revision_id: None,
+            node_id: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn revision(memory_id: MemoryId, revision_id: RevisionId) -> Self {
+        Self {
+            memory_id,
+            revision_id: Some(revision_id),
+            node_id: None,
+        }
+    }
+
+    #[must_use]
+    pub fn node(mut self, node_id: impl Into<String>) -> Self {
+        self.node_id = Some(node_id.into());
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceStatus {
+    Resolved,
+    Retired,
+    Purged,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedReference {
+    pub target: Option<CandidateTarget>,
+    pub node_id: Option<String>,
+    pub status: ReferenceStatus,
+}
+
 impl ExactIndex {
     #[must_use]
     pub fn new(records: Vec<ExactRecord>) -> Self {
@@ -86,6 +166,62 @@ impl ExactIndex {
     #[must_use]
     pub fn records(&self) -> &[ExactRecord] {
         &self.records
+    }
+
+    #[must_use]
+    pub fn resolve(
+        &self,
+        reference: &MemoryReference,
+        authority_generation: AuthorityGeneration,
+    ) -> ResolvedReference {
+        match reference.revision_id {
+            Some(revision_id) => self.resolve_revision(
+                reference.memory_id,
+                revision_id,
+                reference.node_id.as_deref(),
+                authority_generation,
+            ),
+            None => self.resolve_logical(
+                reference.memory_id,
+                reference.node_id.as_deref(),
+                authority_generation,
+            ),
+        }
+    }
+
+    #[must_use]
+    pub fn resolve_logical(
+        &self,
+        memory_id: MemoryId,
+        node_id: Option<&str>,
+        authority_generation: AuthorityGeneration,
+    ) -> ResolvedReference {
+        let record = self
+            .records
+            .iter()
+            .filter(|record| {
+                record.target.memory_id == memory_id
+                    && record.current
+                    && visible_at(record, authority_generation)
+            })
+            .max_by_key(|record| record.authority_generation);
+        resolve_record(record, node_id, false)
+    }
+
+    #[must_use]
+    pub fn resolve_revision(
+        &self,
+        memory_id: MemoryId,
+        revision_id: RevisionId,
+        node_id: Option<&str>,
+        authority_generation: AuthorityGeneration,
+    ) -> ResolvedReference {
+        let record = self.records.iter().find(|record| {
+            record.target.memory_id == memory_id
+                && record.target.revision_id == revision_id
+                && visible_at(record, authority_generation)
+        });
+        resolve_record(record, node_id, true)
     }
 }
 
@@ -110,6 +246,8 @@ fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
     query.scope.spaces.contains(&record.target.space_id)
         && record.current
         && !record.retired
+        && !record.purged
+        && visible_at(record, compiled.snapshot.authority_generation)
         && query
             .constraints
             .memories
@@ -125,6 +263,52 @@ fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
             .tags
             .iter()
             .all(|tag| record.tags.iter().any(|candidate| candidate == tag))
+}
+
+fn visible_at(record: &ExactRecord, generation: AuthorityGeneration) -> bool {
+    record.authority_generation <= generation
+        && record
+            .valid_until
+            .is_none_or(|valid_until| generation < valid_until)
+}
+
+fn resolve_record(
+    record: Option<&ExactRecord>,
+    node_id: Option<&str>,
+    historical: bool,
+) -> ResolvedReference {
+    let Some(record) = record else {
+        return ResolvedReference {
+            target: None,
+            node_id: node_id.map(str::to_owned),
+            status: ReferenceStatus::Unresolved,
+        };
+    };
+    if record.purged {
+        return ResolvedReference {
+            target: Some(record.target),
+            node_id: node_id.map(str::to_owned),
+            status: ReferenceStatus::Purged,
+        };
+    }
+    if let Some(node_id) = node_id
+        && !record.node_ids.iter().any(|candidate| candidate == node_id)
+    {
+        return ResolvedReference {
+            target: None,
+            node_id: Some(node_id.to_owned()),
+            status: ReferenceStatus::Unresolved,
+        };
+    }
+    ResolvedReference {
+        target: Some(record.target),
+        node_id: node_id.map(str::to_owned),
+        status: if historical && record.retired {
+            ReferenceStatus::Retired
+        } else {
+            ReferenceStatus::Resolved
+        },
+    }
 }
 
 fn to_evidence(record: &ExactRecord) -> CandidateEvidence {
