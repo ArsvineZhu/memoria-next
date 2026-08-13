@@ -25,4 +25,39 @@ pub enum MdxError {
 
     #[error("forbidden MDX directive at byte span {span:?}")]
     ForbiddenDirective { span: Range<usize> },
+
+    #[error("semantic node id `{id}` is declared more than once")]
+    DuplicateSemanticNodeId {
+        id: String,
+        first_span: Range<usize>,
+        duplicate_span: Range<usize>,
+    },
+
+    #[error("invalid semantic node id `{value}`")]
+    InvalidNodeId { value: String, span: Range<usize> },
+
+    #[error("missing attribute `{attribute}` on `{element}`")]
+    MissingAttribute {
+        element: String,
+        attribute: String,
+        span: Range<usize>,
+    },
+
+    #[error("invalid temporal value `{value}`")]
+    InvalidTemporalValue { value: String, span: Range<usize> },
+
+    #[error("invalid EntityRef `{value}`")]
+    InvalidEntityRef { value: String, span: Range<usize> },
+
+    #[error("invalid semantic reference `{value}`")]
+    InvalidReference { value: String, span: Range<usize> },
+
+    #[error("unknown Core kind `{value}`")]
+    UnknownKind { value: String, span: Range<usize> },
+
+    #[error("invalid Extension metadata: {message}")]
+    InvalidExtension { message: String, span: Range<usize> },
+
+    #[error("MDX resource limit exceeded: {resource}")]
+    ResourceLimit { resource: &'static str },
 }
