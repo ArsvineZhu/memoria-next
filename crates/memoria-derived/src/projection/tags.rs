@@ -6,6 +6,7 @@ use crate::projection::ProjectionTarget;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TagProvenance {
     Explicit,
+    Generated,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

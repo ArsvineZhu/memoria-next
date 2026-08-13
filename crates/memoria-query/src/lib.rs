@@ -12,6 +12,7 @@ mod planner;
 mod response;
 mod semantic;
 mod snapshot;
+mod tags;
 mod validate;
 
 pub use assessment::{RecallAssessment, assess};
@@ -41,4 +42,8 @@ pub use semantic::{
     SemanticCandidate, SemanticCandidateIndex, SemanticResolution, execute_semantic,
 };
 pub use snapshot::{AdaptiveSnapshotIdentity, QuerySnapshot};
+pub use tags::{
+    CompositeTagAssociation, CompositeTagView, TagSeed, TagSeedProvenance,
+    resolve_explicit_tag_seeds,
+};
 pub use validate::QueryError;

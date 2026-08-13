@@ -9,6 +9,8 @@ mod manifest;
 mod projection;
 mod scheduler;
 mod status;
+mod tag_dictionary;
+mod tag_graph;
 mod vector;
 
 use std::num::TryFromIntError;
@@ -42,6 +44,10 @@ pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembershi
 pub use projection::temporal::{TemporalArtifact, TemporalAssertion, TemporalBuilder};
 pub use scheduler::DerivedScheduler;
 pub use status::DerivedStatus;
+pub use tag_dictionary::{TagDictionary, TagId, normalize_tag};
+pub use tag_graph::{
+    TagAssociationEvidence, TagGraph, TagMembershipEvidence, TagMembershipInput, TagSpaceGraph,
+};
 pub use vector::{
     VectorArtifact, VectorFilter, VectorHit, VectorIndex, VectorMembership, VectorSearch,
 };

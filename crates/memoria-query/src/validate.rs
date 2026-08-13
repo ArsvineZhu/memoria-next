@@ -23,6 +23,9 @@ pub enum QueryError {
     #[error("tag cue or constraint cannot be empty")]
     EmptyTag,
 
+    #[error("invalid Tag cue: {value}")]
+    InvalidTagCue { value: String },
+
     #[error("capability name cannot be empty")]
     EmptyCapability,
 
