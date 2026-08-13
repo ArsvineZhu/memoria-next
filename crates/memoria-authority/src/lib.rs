@@ -1,9 +1,11 @@
+mod cas;
 mod db;
 mod layout;
 mod lock;
 mod model;
 mod schema;
 
+pub use cas::SourceCas;
 pub use db::AuthorityDb;
 pub use layout::StoreLayout;
 pub use lock::StoreWriterLock;
