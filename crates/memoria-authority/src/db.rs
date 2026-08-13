@@ -1,13 +1,18 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use memoria_types::AuthorityGeneration;
 use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::model::{
-    AuthorityTransaction, AuthorityWriteResult, authority_generation, sqlite_conversion_error,
-    sqlite_generation,
+    AuthorityTransaction, AuthorityWriteResult, authority_generation, schema_error,
+    sqlite_conversion_error, sqlite_generation,
 };
-use crate::schema::SCHEMA_V1;
+use crate::schema::{
+    SCHEMA_V1, SCHEMA_V1_COLUMNS, SCHEMA_V1_TABLES, SCHEMA_V1_TRIGGERS, SCHEMA_V1_VERSION,
+};
 
 #[derive(Clone, Debug)]
 pub struct AuthorityDb {
@@ -17,9 +22,9 @@ pub struct AuthorityDb {
 impl AuthorityDb {
     pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let connection = Connection::open(&path)?;
+        let mut connection = Connection::open(&path)?;
         configure_connection(&connection)?;
-        connection.execute_batch(SCHEMA_V1)?;
+        initialize_schema(&mut connection)?;
         Ok(Self { path })
     }
 
@@ -82,4 +87,122 @@ impl AuthorityDb {
 
 fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch("PRAGMA foreign_keys = ON;")
+}
+
+fn initialize_schema(connection: &mut Connection) -> rusqlite::Result<()> {
+    match read_user_version(connection)? {
+        0 if !has_user_objects(connection)? => {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(SCHEMA_V1)?;
+            transaction.pragma_update(None, "user_version", SCHEMA_V1_VERSION)?;
+            validate_schema_v1(&transaction)?;
+            transaction.commit()
+        }
+        0 => Err(schema_error(
+            "cannot initialize Authority schema over an existing unversioned database",
+        )),
+        SCHEMA_V1_VERSION => validate_schema_v1(connection),
+        version => Err(schema_error(format!(
+            "unsupported Authority schema user_version {version}; expected {SCHEMA_V1_VERSION}"
+        ))),
+    }
+}
+
+fn read_user_version(connection: &Connection) -> rusqlite::Result<i64> {
+    connection.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+fn has_user_objects(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM sqlite_master
+             WHERE type IN ('table', 'index', 'trigger', 'view')
+               AND name NOT LIKE 'sqlite_%'
+         )",
+        [],
+        |row| row.get(0),
+    )
+}
+
+fn validate_schema_v1(connection: &Connection) -> rusqlite::Result<()> {
+    let actual_tables = schema_object_names(connection, "table")?;
+    let expected_tables = SCHEMA_V1_TABLES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<BTreeSet<_>>();
+    if actual_tables != expected_tables {
+        return Err(schema_error(format!(
+            "Authority schema tables do not match V1: expected {expected_tables:?}, found {actual_tables:?}"
+        )));
+    }
+
+    for (table, expected_columns) in SCHEMA_V1_COLUMNS {
+        let sql = format!("PRAGMA table_info(\"{table}\")");
+        let mut statement = connection.prepare(&sql)?;
+        let actual_columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let expected_columns = expected_columns
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>();
+        if actual_columns != expected_columns {
+            return Err(schema_error(format!(
+                "Authority table {table} columns do not match V1: expected {expected_columns:?}, found {actual_columns:?}"
+            )));
+        }
+    }
+
+    let actual_triggers = schema_object_names(connection, "trigger")?;
+    let expected_triggers = SCHEMA_V1_TRIGGERS
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<BTreeSet<_>>();
+    if actual_triggers != expected_triggers {
+        return Err(schema_error(format!(
+            "Authority schema triggers do not match V1: expected {expected_triggers:?}, found {actual_triggers:?}"
+        )));
+    }
+
+    let schema_version = connection.query_row(
+        "SELECT meta_value FROM store_meta WHERE meta_key = 'schema_version'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    if schema_version != SCHEMA_V1_VERSION.to_string() {
+        return Err(schema_error(format!(
+            "store_meta schema_version is {schema_version:?}, expected {:?}",
+            SCHEMA_V1_VERSION.to_string()
+        )));
+    }
+
+    let generation = connection.query_row(
+        "SELECT generation FROM authority_generation WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if generation < 0 {
+        return Err(schema_error(
+            "authority_generation contains a negative generation",
+        ));
+    }
+
+    Ok(())
+}
+
+fn schema_object_names(
+    connection: &Connection,
+    object_type: &str,
+) -> rusqlite::Result<BTreeSet<String>> {
+    let mut statement = connection.prepare(
+        "SELECT name
+         FROM sqlite_master
+         WHERE type = ?1 AND name NOT LIKE 'sqlite_%'
+         ORDER BY name",
+    )?;
+    statement
+        .query_map([object_type], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()
 }

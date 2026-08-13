@@ -1,3 +1,5 @@
+use std::fmt;
+
 use memoria_types::{AuthorityGeneration, SpaceId};
 use rusqlite::{Transaction, params};
 
@@ -104,4 +106,19 @@ pub(crate) fn sqlite_conversion_error(
     error: impl std::error::Error + Send + Sync + 'static,
 ) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+#[derive(Debug)]
+struct SchemaError(String);
+
+impl fmt::Display for SchemaError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SchemaError {}
+
+pub(crate) fn schema_error(message: impl Into<String>) -> rusqlite::Error {
+    sqlite_conversion_error(SchemaError(message.into()))
 }

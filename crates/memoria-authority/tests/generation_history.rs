@@ -109,6 +109,289 @@ fn schema_v1_creates_all_authority_tables() {
 }
 
 #[test]
+fn first_schema_initialization_persists_version_across_reopen() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    drop(db);
+
+    let connection = Connection::open(database).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    drop(connection);
+
+    let reopened = AuthorityDb::open(database).unwrap();
+    assert_eq!(
+        reopened.current_generation().unwrap(),
+        AuthorityGeneration::new(0)
+    );
+}
+
+#[test]
+fn future_schema_version_is_rejected_without_resetting_version() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute_batch("PRAGMA user_version = 2;")
+        .unwrap();
+    drop(connection);
+
+    let result = AuthorityDb::open(database);
+    assert!(result.is_err(), "future schema versions must be rejected");
+
+    let connection = Connection::open(database).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn incompatible_existing_schema_is_rejected_without_bootstrap_mutation() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute("CREATE TABLE legacy_marker (value TEXT NOT NULL)", [])
+        .unwrap();
+    drop(connection);
+
+    let result = AuthorityDb::open(database);
+    assert!(
+        result.is_err(),
+        "unversioned existing schemas must be rejected"
+    );
+
+    let connection = Connection::open(database).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'authority_generation'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn space_history_rejects_overlapping_intervals_and_duplicate_current_rows() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO spaces (space_id, created_generation) VALUES (?1, 1)",
+            params![&[3_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO space_state_history (
+                 space_id, space_key, lifecycle, valid_from_generation, valid_to_generation
+             ) VALUES (?1, 'first', 'active', 1, 4)",
+            params![&[3_u8; 16][..]],
+        )
+        .unwrap();
+
+    let overlapping = connection.execute(
+        "INSERT INTO space_state_history (
+             space_id, space_key, lifecycle, valid_from_generation, valid_to_generation
+         ) VALUES (?1, 'overlap', 'active', 3, 5)",
+        params![&[3_u8; 16][..]],
+    );
+    assert!(
+        overlapping.is_err(),
+        "overlapping space history must be rejected"
+    );
+
+    connection
+        .execute(
+            "INSERT INTO space_state_history (
+                 space_id, space_key, lifecycle, valid_from_generation
+             ) VALUES (?1, 'current-a', 'active', 4)",
+            params![&[3_u8; 16][..]],
+        )
+        .unwrap();
+    let duplicate_current = connection.execute(
+        "INSERT INTO space_state_history (
+             space_id, space_key, lifecycle, valid_from_generation
+         ) VALUES (?1, 'current-b', 'active', 4)",
+        params![&[3_u8; 16][..]],
+    );
+    assert!(
+        duplicate_current.is_err(),
+        "a space must have at most one open current row"
+    );
+    drop(db);
+}
+
+#[test]
+fn memory_history_rejects_overlapping_intervals_and_duplicate_current_rows() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO spaces (space_id, created_generation) VALUES (?1, 1)",
+            params![&[4_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO memories (memory_id, created_generation) VALUES (?1, 1)",
+            params![&[5_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO memory_state_history (
+                 memory_id, space_id, lifecycle, valid_from_generation, valid_to_generation
+             ) VALUES (?1, ?2, 'active', 1, 4)",
+            params![&[5_u8; 16][..], &[4_u8; 16][..]],
+        )
+        .unwrap();
+
+    let overlapping = connection.execute(
+        "INSERT INTO memory_state_history (
+             memory_id, space_id, lifecycle, valid_from_generation, valid_to_generation
+         ) VALUES (?1, ?2, 'active', 3, 5)",
+        params![&[5_u8; 16][..], &[4_u8; 16][..]],
+    );
+    assert!(
+        overlapping.is_err(),
+        "overlapping memory history must be rejected"
+    );
+
+    connection
+        .execute(
+            "INSERT INTO memory_state_history (
+                 memory_id, space_id, lifecycle, valid_from_generation
+             ) VALUES (?1, ?2, 'active', 4)",
+            params![&[5_u8; 16][..], &[4_u8; 16][..]],
+        )
+        .unwrap();
+    let duplicate_current = connection.execute(
+        "INSERT INTO memory_state_history (
+             memory_id, space_id, lifecycle, valid_from_generation
+         ) VALUES (?1, ?2, 'retired', 4)",
+        params![&[5_u8; 16][..], &[4_u8; 16][..]],
+    );
+    assert!(
+        duplicate_current.is_err(),
+        "a memory must have at most one open current row"
+    );
+    drop(db);
+}
+
+#[test]
+fn space_history_update_rejects_cross_row_overlap() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO spaces (space_id, created_generation) VALUES (?1, 1)",
+            params![&[6_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO space_state_history (
+                 space_id, space_key, lifecycle, valid_from_generation, valid_to_generation
+             ) VALUES (?1, 'first', 'active', 1, 4)",
+            params![&[6_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO space_state_history (
+                 space_id, space_key, lifecycle, valid_from_generation, valid_to_generation
+             ) VALUES (?1, 'second', 'active', 4, 8)",
+            params![&[6_u8; 16][..]],
+        )
+        .unwrap();
+
+    let result = connection.execute(
+        "UPDATE space_state_history
+         SET valid_from_generation = 3, valid_to_generation = 5
+         WHERE space_key = 'second'",
+        [],
+    );
+    assert!(
+        result.is_err(),
+        "space history updates must preserve disjoint intervals"
+    );
+    drop(db);
+}
+
+#[test]
+fn memory_history_update_rejects_cross_row_overlap() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO spaces (space_id, created_generation) VALUES (?1, 1)",
+            params![&[7_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO memories (memory_id, created_generation) VALUES (?1, 1)",
+            params![&[8_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO memory_state_history (
+                 memory_id, space_id, lifecycle, valid_from_generation, valid_to_generation
+             ) VALUES (?1, ?2, 'active', 1, 4)",
+            params![&[8_u8; 16][..], &[7_u8; 16][..]],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO memory_state_history (
+                 memory_id, space_id, lifecycle, valid_from_generation, valid_to_generation
+             ) VALUES (?1, ?2, 'active', 4, 8)",
+            params![&[8_u8; 16][..], &[7_u8; 16][..]],
+        )
+        .unwrap();
+
+    let result = connection.execute(
+        "UPDATE memory_state_history
+         SET valid_from_generation = 3, valid_to_generation = 5
+         WHERE valid_from_generation = 4",
+        [],
+    );
+    assert!(
+        result.is_err(),
+        "memory history updates must preserve disjoint intervals"
+    );
+    drop(db);
+}
+
+#[test]
 fn new_space_history_starts_at_committed_generation() {
     let fixture = TestStore::new();
     let database = fixture.layout().authority_database();
@@ -239,5 +522,35 @@ fn revision_semantic_intent_constraint_accepts_only_v1_values() {
         params![&[99_u8; 16][..], &[0_u8; 16][..]],
     );
     assert!(invalid.is_err());
+    drop(db);
+}
+
+#[test]
+fn revision_timestamp_rejects_negative_nanoseconds() {
+    let fixture = TestStore::new();
+    let database = fixture.layout().authority_database();
+    let db = AuthorityDb::open(database).unwrap();
+    let connection = Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO memories (memory_id, created_generation) VALUES (?1, 0)",
+            params![&[1_u8; 16][..]],
+        )
+        .unwrap();
+
+    let result = connection.execute(
+        "INSERT INTO revisions (
+             revision_id,
+             memory_id,
+             source_blob_hash,
+             semantic_intent,
+             committed_generation,
+             committed_at_unix_seconds,
+             committed_at_subsec_nanos
+         ) VALUES (?1, ?2, '00', 'edit', 0, 0, -1)",
+        params![&[2_u8; 16][..], &[1_u8; 16][..]],
+    );
+
+    assert!(result.is_err(), "negative nanoseconds must be rejected");
     drop(db);
 }
