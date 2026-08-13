@@ -1,3 +1,5 @@
+mod canonical;
+mod ir;
 mod profile;
 mod semantic_lexer;
 mod source;
@@ -9,6 +11,8 @@ use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
+pub use canonical::{compile_ir, compile_validated};
+pub use ir::{IrNode, MEMORY_IR_VERSION, MemoryIr, SemanticHash, SourceMapping};
 pub use profile::{NodeId, SemanticKind, SemanticNodeId, ValidatedDocument, ValidatedNode};
 pub use source::{ParsedSource, SemanticAttribute, SemanticElement};
 pub use syntax::MdxError;
