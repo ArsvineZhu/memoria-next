@@ -9,6 +9,7 @@ mod manifest;
 mod projection;
 mod scheduler;
 mod status;
+mod vector;
 
 use std::num::TryFromIntError;
 
@@ -41,6 +42,9 @@ pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembershi
 pub use projection::temporal::{TemporalArtifact, TemporalAssertion, TemporalBuilder};
 pub use scheduler::DerivedScheduler;
 pub use status::DerivedStatus;
+pub use vector::{
+    VectorArtifact, VectorFilter, VectorHit, VectorIndex, VectorMembership, VectorSearch,
+};
 
 #[derive(Debug, Error)]
 pub enum DerivedError {
@@ -61,6 +65,9 @@ pub enum DerivedError {
 
     #[error("lexical query error: {0}")]
     TantivyQuery(#[from] tantivy::query::QueryParserError),
+
+    #[error("vector index error: {value}")]
+    VectorIndex { value: String },
 
     #[error("artifact {id} is not validated (state: {state:?})")]
     ArtifactNotValidated {
