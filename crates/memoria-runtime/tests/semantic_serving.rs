@@ -2,6 +2,12 @@ use memoria_query::{EntityRef, MemoryQuery};
 use memoria_runtime::{EmbeddingVector, MemoriaRuntime, NeedWork, ProviderWorkResult, QueryStep};
 use tempfile::tempdir;
 
+fn embedding_vector(prefix: &[f32]) -> Vec<f32> {
+    let mut values = prefix.to_vec();
+    values.resize(64, 0.0);
+    values
+}
+
 fn submit_content_embedding(runtime: &mut MemoriaRuntime, values: Vec<f32>) {
     let request = loop {
         let work = runtime.provider_poll_work().unwrap().unwrap();
@@ -50,7 +56,7 @@ fn explicit_semantic_query_uses_query_vector_and_ann_candidates() {
     runtime
         .create_memory(space, Some("one"), b"# One\nRust systems")
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
 
     let (operation_id, work_id) = query_embedding_work_id(
         runtime
@@ -71,7 +77,7 @@ fn explicit_semantic_query_uses_query_vector_and_ann_candidates() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 }],
             },
         )
@@ -113,11 +119,11 @@ fn semantic_candidate_is_revision_pinned_and_space_filtered() {
     runtime
         .create_memory(first_space, Some("one"), b"# One\nfirst")
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
     runtime
         .create_memory(second_space, Some("two"), b"# Two\nsecond")
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
 
     let (operation_id, work_id) = query_embedding_work_id(
         runtime
@@ -137,7 +143,7 @@ fn semantic_candidate_is_revision_pinned_and_space_filtered() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 }],
             },
         )
@@ -161,11 +167,11 @@ fn semantic_serving_accumulates_completed_memory_vectors() {
     runtime
         .create_memory(space, Some("one"), b"# One\nshared semantic cue")
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
     runtime
         .create_memory(space, Some("two"), b"# Two\nshared semantic cue")
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
 
     let (operation_id, work_id) = query_embedding_work_id(
         runtime
@@ -186,7 +192,7 @@ fn semantic_serving_accumulates_completed_memory_vectors() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 }],
             },
         )
@@ -205,7 +211,7 @@ fn tag_only_revision_rebases_existing_semantic_membership() {
     let memory = runtime
         .create_memory(space, Some("one"), b"# One\nstable semantic cue")
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
     let head = runtime
         .query(
             MemoryQuery::builder()
@@ -250,7 +256,7 @@ fn tag_only_revision_rebases_existing_semantic_membership() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 }],
             },
         )
@@ -274,7 +280,7 @@ fn tag_only_rebase_uses_latest_content_vector_after_content_revision() {
             b"# One\n<State id=\"s\">first semantic cue</State>",
         )
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
 
     let first_head = runtime
         .query(
@@ -294,7 +300,7 @@ fn tag_only_rebase_uses_latest_content_vector_after_content_revision() {
             b"# One\n<State id=\"s\">second semantic cue</State>",
         )
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![0.0, 1.0, 0.0]);
+    submit_content_embedding(&mut runtime, embedding_vector(&[0.0, 1.0, 0.0]));
 
     let second_head = runtime
         .query(
@@ -334,7 +340,7 @@ fn tag_only_rebase_uses_latest_content_vector_after_content_revision() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![0.0, 1.0, 0.0],
+                    values: embedding_vector(&[0.0, 1.0, 0.0]),
                 }],
             },
         )
@@ -360,7 +366,7 @@ fn hard_entity_constraint_filters_ann_candidates_before_public_response() {
 "#,
         )
         .unwrap();
-    submit_content_embedding(&mut runtime, vec![1.0, 0.0, 0.0]);
+    submit_content_embedding(&mut runtime, vec![1.0; 64]);
     let (operation_id, work_id) = query_embedding_work_id(
         runtime
             .query_start(
@@ -380,7 +386,7 @@ fn hard_entity_constraint_filters_ann_candidates_before_public_response() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 }],
             },
         )

@@ -59,7 +59,7 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_build_coverage() {
             work_id,
             vectors: vec![EmbeddingVector {
                 key: memory_id.to_string(),
-                values: vec![0.0, 0.0, 0.0],
+                values: vec![0.0; 64],
             }],
         })
         .unwrap();
@@ -95,7 +95,7 @@ fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
             work_id: embedding_work_id,
             vectors: vec![EmbeddingVector {
                 key: memory_id.to_string(),
-                values: vec![0.0, 0.0, 0.0],
+                values: vec![0.0; 64],
             }],
         })
         .unwrap();
@@ -113,7 +113,7 @@ fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
                     .iter()
                     .map(|item| EmbeddingVector {
                         key: item.key.clone(),
-                        values: vec![0.0, 0.0, 0.0],
+                        values: vec![0.0; 64],
                     })
                     .collect(),
             },

@@ -18,7 +18,7 @@ fn submit_embedding(runtime: &mut MemoriaRuntime, work: memoria_runtime::Embeddi
                 .into_iter()
                 .map(|item| EmbeddingVector {
                     key: item.key,
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 })
                 .collect(),
         })

@@ -424,7 +424,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
         type: "embedding",
         workId: work.workId,
         signature: work.signature,
-        dimensions: 3,
+        dimensions: 64,
         items: [work.input],
         spacePolicy: work.spacePolicy,
         route: work.route,

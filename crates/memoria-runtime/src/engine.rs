@@ -43,8 +43,8 @@ use crate::privacy::{
     resolve_provider_route,
 };
 use crate::provider::{
-    EmbeddingBatchRequest, EmbeddingItem, NeedWork, ProviderWorkResult, RerankBatchRequest,
-    validate_provider_result,
+    DEFAULT_EMBEDDING_DIMENSIONS, EmbeddingBatchRequest, EmbeddingItem, NeedWork,
+    ProviderWorkResult, RerankBatchRequest, validate_provider_result,
 };
 use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
 use crate::query_operation::{QueryOperationStage, QueryOperationTable, QueryStep, QueryWork};
@@ -2224,7 +2224,7 @@ impl MemoriaRuntime {
             work_id,
             signature: projection.producer_signature().to_owned(),
             route,
-            dimensions: 3,
+            dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
             items: vec![crate::EmbeddingItem {
                 key: memory_id.to_string(),
                 text: projection.content().to_owned(),
@@ -2860,7 +2860,7 @@ fn query_embedding_work(
         work_id: format!("QW_{}", MemoryId::new()),
         signature: "query-embedding-v1".to_owned(),
         route,
-        dimensions: 3,
+        dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
         items: vec![EmbeddingItem {
             key: "query".to_owned(),
             text: projection.content().to_owned(),

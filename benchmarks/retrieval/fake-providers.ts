@@ -14,7 +14,7 @@ export interface DeterministicProviderOptions {
   generatedTagsByMemoryId?: ReadonlyMap<string, readonly string[]>;
 }
 
-const FIXED_EMBEDDING_DIMENSIONS = 64;
+export const FIXED_EMBEDDING_DIMENSIONS = 64;
 
 export function createDeterministicProviders(
   counts: ProviderCounts,
@@ -71,10 +71,18 @@ function embeddingForWork(
   const norm = Math.sqrt(values.reduce((sum, value) => sum + value * value, 0));
   const normalized = values.map((value) => value / (norm || 1));
 
-  // The current native work contract is dimension-pinned by the store. The
-  // fixture's generator remains 64-dimensional and deterministically adapts
-  // only at this boundary until the store-wide dimension is promoted.
-  return normalized.slice(0, work.dimensions);
+  if (work.dimensions !== FIXED_EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `benchmark embedding contract expected ${FIXED_EMBEDDING_DIMENSIONS} dimensions, got ${work.dimensions}`,
+    );
+  }
+  const finalNorm = Math.sqrt(
+    normalized.reduce((sum, value) => sum + value * value, 0),
+  );
+  if (Math.abs(finalNorm - 1) > 1e-6) {
+    throw new Error("benchmark embedding vector is not L2-normalized");
+  }
+  return normalized;
 }
 
 function rerankScore(query: string, handle: string, index: number): number {

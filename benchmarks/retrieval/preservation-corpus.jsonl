@@ -3,3 +3,4 @@
 {"scenario":"multi-hop-tag-association","operator":"activation","queryId":"q-relation-support","expectedChannels":["activation"],"maxHops":3}
 {"scenario":"relation-supported-recall","operator":"relation","queryId":"q-relation-support","expectedChannels":["relation"],"maxRelationExpansions":32}
 {"scenario":"overlapping-resolution-evidence","operator":"consolidation","queryId":"q-current-career","expectedChannels":["semantic-direct"],"correlationSuppression":true}
+{"scenario":"runtime-serving-path","operator":"tag-association","queryId":"q-tag-rust","expectedChannels":["tag-readout","activation"]}

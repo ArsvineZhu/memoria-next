@@ -68,7 +68,7 @@ fn readiness_continue_completes_after_new_manifest_is_published() {
         QueryStep::ReadinessPending { operation_id, .. } => operation_id,
         other => panic!("expected readiness pending, got {other:?}"),
     };
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
 
     let continued = runtime.query_continue(&operation_id).unwrap();
     assert!(matches!(

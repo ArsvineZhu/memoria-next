@@ -6,6 +6,9 @@ use thiserror::Error;
 
 use crate::privacy::{ProviderCapability, ProviderRoute};
 
+/// The store-wide embedding dimension used by native provider work.
+pub const DEFAULT_EMBEDDING_DIMENSIONS: usize = 64;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmbeddingItem {
     pub key: String,

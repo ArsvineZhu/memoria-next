@@ -14,7 +14,7 @@ fn semantic_does_not_replace_lexical_channel() {
     let memory_id = runtime
         .create_memory(space, Some("lexical"), b"# Lexical\nunique-lexical-token")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
 
     let query = MemoryQuery::builder()
         .spaces(vec![space])
@@ -37,7 +37,7 @@ fn semantic_does_not_replace_lexical_channel() {
                 work_id: request.work_id,
                 vectors: vec![memoria_runtime::EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 }],
             },
         )
@@ -90,7 +90,7 @@ fn required_semantic_wait_never_degrades_to_lexical() {
                         work_id: request.work_id,
                         vectors: vec![memoria_runtime::EmbeddingVector {
                             key: "query".to_owned(),
-                            values: vec![1.0, 0.0, 0.0],
+                            values: vec![1.0; 64],
                         }],
                     },
                 )

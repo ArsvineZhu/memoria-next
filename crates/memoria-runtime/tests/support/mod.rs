@@ -2,6 +2,13 @@ use memoria_derived::DerivedCatalog;
 use memoria_runtime::{EmbeddingVector, MemoriaRuntime, NeedWork, ProviderWorkResult};
 
 #[allow(dead_code)]
+pub fn embedding_vector(prefix: &[f32]) -> Vec<f32> {
+    let mut values = prefix.to_vec();
+    values.resize(64, 0.0);
+    values
+}
+
+#[allow(dead_code)]
 pub fn drain_background_work<F>(runtime: &mut MemoriaRuntime, mut vector_for: F)
 where
     F: FnMut(&str) -> Vec<f32>,

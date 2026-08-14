@@ -3,3 +3,4 @@
 {"id":"preserve-multihop","scenario":"multi-hop-tag-association","text":"support graph retrieval","scope":["personal"],"tags":["graph"],"profile":"activation"}
 {"id":"preserve-relation","scenario":"relation-supported-recall","text":"support graph retrieval","scope":["personal"],"tags":["graph"],"relationKinds":["supports"],"profile":"relation"}
 {"id":"preserve-overlap","scenario":"overlapping-resolution-evidence","text":"career Rust systems","scope":["personal"],"profile":"lexical+semantic"}
+{"id":"preserve-runtime-path","scenario":"runtime-serving-path","text":"Rust systems","scope":["personal"],"tags":["rust"],"profile":"tag-association"}

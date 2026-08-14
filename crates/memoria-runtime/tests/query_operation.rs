@@ -10,6 +10,12 @@ use memoria_runtime::{
 };
 use tempfile::tempdir;
 
+fn embedding_vector(prefix: &[f32]) -> Vec<f32> {
+    let mut values = prefix.to_vec();
+    values.resize(64, 0.0);
+    values
+}
+
 fn semantic_query(space: memoria_types::SpaceId) -> MemoryQuery {
     MemoryQuery::builder()
         .spaces(vec![space])
@@ -24,7 +30,7 @@ fn pending_embedding(
     runtime: &mut MemoriaRuntime,
     space: memoria_types::SpaceId,
 ) -> (String, String) {
-    support::drain_background_work(runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(runtime, |_| vec![1.0; 64]);
     let step = runtime.query_start(semantic_query(space)).unwrap();
     match step {
         QueryStep::ProviderPending {
@@ -71,7 +77,7 @@ fn semantic_work_uses_one_effective_policy_for_the_whole_scope() {
     runtime
         .create_memory(external, Some("career"), b"# Career\nRust systems work")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
     let query = MemoryQuery::builder()
         .spaces(vec![external, local_only])
         .text_cue("career")
@@ -107,7 +113,7 @@ fn wrong_work_id_cannot_resume_operation() {
                 work_id: "wrong-work-id".to_owned(),
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![0.0, 0.0, 0.0],
+                    values: vec![0.0; 64],
                 }],
             },
         )
@@ -148,7 +154,7 @@ fn invalid_embedding_payload_is_rejected_before_operation_resume() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![0.0, 0.0, 0.0],
+                    values: vec![0.0; 64],
                 }],
             },
         )
@@ -195,7 +201,7 @@ fn rust_embedding_validation_uses_keys_and_reconstructs_request_order() {
         work_id: "EW_test".to_owned(),
         signature: "embedding-v1".to_owned(),
         route: memoria_runtime::ProviderRouteConfig::default().embedding,
-        dimensions: 3,
+        dimensions: 64,
         items: vec![
             EmbeddingItem {
                 key: "u1".to_owned(),
@@ -215,11 +221,11 @@ fn rust_embedding_validation_uses_keys_and_reconstructs_request_order() {
             vectors: vec![
                 EmbeddingVector {
                     key: "u2".to_owned(),
-                    values: vec![0.0, 1.0, 0.0],
+                    values: embedding_vector(&[0.0, 1.0, 0.0]),
                 },
                 EmbeddingVector {
                     key: "u1".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 },
             ],
         },
@@ -238,11 +244,11 @@ fn rust_embedding_validation_uses_keys_and_reconstructs_request_order() {
             vectors: vec![
                 EmbeddingVector {
                     key: "u1".to_owned(),
-                    values: vec![1.0, 0.0, 0.0],
+                    values: vec![1.0; 64],
                 },
                 EmbeddingVector {
                     key: "u1".to_owned(),
-                    values: vec![0.0, 1.0, 0.0],
+                    values: embedding_vector(&[0.0, 1.0, 0.0]),
                 },
             ],
         },
@@ -272,7 +278,7 @@ fn cancelled_operation_cannot_resume() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![0.0, 0.0, 0.0],
+                    values: vec![0.0; 64],
                 }],
             },
         )
@@ -302,7 +308,7 @@ fn expired_operation_returns_query_operation_expired() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![0.0, 0.0, 0.0],
+                    values: vec![0.0; 64],
                 }],
             },
         )
@@ -330,7 +336,7 @@ fn status_cleanup_removes_expired_operation() {
                 work_id,
                 vectors: vec![EmbeddingVector {
                     key: "query".to_owned(),
-                    values: vec![0.0, 0.0, 0.0],
+                    values: vec![0.0; 64],
                 }],
             },
         )

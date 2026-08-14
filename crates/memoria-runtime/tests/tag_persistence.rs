@@ -16,7 +16,7 @@ fn drain_to_enrichment(runtime: &mut MemoriaRuntime) -> memoria_runtime::Enrichm
                             .into_iter()
                             .map(|item| EmbeddingVector {
                                 key: item.key,
-                                values: vec![1.0, 0.0, 0.0],
+                                values: vec![1.0; 64],
                             })
                             .collect(),
                     })

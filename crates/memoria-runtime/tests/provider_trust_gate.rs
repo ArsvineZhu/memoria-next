@@ -38,7 +38,7 @@ fn runtime_with_ready_local_only_semantic()
     runtime
         .create_memory(space, Some("private"), b"# Private\nlocal retrieval cue")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
     drop(runtime);
     let runtime = MemoriaRuntime::open(directory.path()).unwrap();
     (directory, runtime, space)

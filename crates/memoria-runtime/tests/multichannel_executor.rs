@@ -46,7 +46,7 @@ fn semantic_query_also_executes_lexical() {
             b"# Career\nunique lexical and semantic token",
         )
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
 
     let response = query_embedding_step(
         &mut runtime,
@@ -56,7 +56,7 @@ fn semantic_query_also_executes_lexical() {
             .require_capability("semantic")
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 0.0],
+        vec![1.0; 64],
     );
 
     let evidence = &response.results[0].matches[0].evidence;
@@ -72,7 +72,7 @@ fn same_target_from_lexical_and_semantic_merges_evidence_not_target_count() {
     let memory_id = runtime
         .create_memory(space, Some("one"), b"# One\nshared retrieval cue")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
 
     let response = query_embedding_step(
         &mut runtime,
@@ -82,7 +82,7 @@ fn same_target_from_lexical_and_semantic_merges_evidence_not_target_count() {
             .require_capability("semantic")
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 0.0],
+        vec![1.0; 64],
     );
 
     assert_eq!(
@@ -118,7 +118,7 @@ fn hard_entity_constraint_filters_all_channels() {
     runtime
         .create_memory(space, Some("other"), b"# Other\nshared cue")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
 
     let response = query_embedding_step(
         &mut runtime,
@@ -129,7 +129,7 @@ fn hard_entity_constraint_filters_all_channels() {
             .require_entity(EntityRef::new("person:alice").unwrap())
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 0.0],
+        vec![1.0; 64],
     );
 
     assert_eq!(response.results.len(), 1);
@@ -151,7 +151,9 @@ fn exact_candidate_survives_even_if_semantic_rank_is_low() {
     runtime
         .create_memory(space, Some("semantic"), b"# Semantic\nshared retrieval cue")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![0.0, 1.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| {
+        support::embedding_vector(&[0.0, 1.0, 0.0])
+    });
 
     let response = query_embedding_step(
         &mut runtime,
@@ -162,7 +164,7 @@ fn exact_candidate_survives_even_if_semantic_rank_is_low() {
             .require_capability("semantic")
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 0.0],
+        vec![1.0; 64],
     );
 
     assert!(
@@ -185,7 +187,7 @@ fn runtime_trace_contains_production_associative_channels() {
             b"# Career\n<Tag value=\"systems\"/> Rust systems work",
         )
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
     support::publish_manifest_with_capabilities(&runtime, &["associative"]);
 
     let response = query_embedding_step(
@@ -197,7 +199,7 @@ fn runtime_trace_contains_production_associative_channels() {
             .require_capability("associative")
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 0.0],
+        vec![1.0; 64],
     );
 
     assert!(response.trace.channel_executed("semantic-direct"));

@@ -123,7 +123,7 @@ fn physical_executor_keeps_lexical_with_semantic_direct() {
     runtime
         .create_memory(space, Some("semantic"), b"# Semantic\nshared retrieval cue")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::drain_background_work(&mut runtime, |_| vec![1.0; 64]);
 
     let response = complete_with_embedding(
         &mut runtime,
@@ -133,7 +133,7 @@ fn physical_executor_keeps_lexical_with_semantic_direct() {
             .require_capability("semantic")
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 0.0],
+        vec![1.0; 64],
     );
 
     assert!(response.trace.channel_executed("lexical"));
@@ -152,17 +152,17 @@ fn physical_executor_serves_tag_basis_and_semantic_residual() {
     let first = add_tagged_memory(&mut runtime, space, "first", "systems", "systems cue");
     support::drain_background_work(&mut runtime, |key| {
         if key.contains(&first.to_string()) {
-            vec![1.0, 0.0, 0.0]
+            vec![1.0; 64]
         } else {
-            vec![0.0, 1.0, 0.0]
+            support::embedding_vector(&[0.0, 1.0, 0.0])
         }
     });
     let second = add_tagged_memory(&mut runtime, space, "second", "career", "career cue");
     support::drain_background_work(&mut runtime, |key| {
         if key.contains(&second.to_string()) {
-            vec![0.0, 1.0, 0.0]
+            support::embedding_vector(&[0.0, 1.0, 0.0])
         } else {
-            vec![1.0, 0.0, 0.0]
+            vec![1.0; 64]
         }
     });
 
@@ -174,7 +174,7 @@ fn physical_executor_serves_tag_basis_and_semantic_residual() {
             .require_capability("semantic")
             .build()
             .unwrap(),
-        vec![1.0, 1.0, 1.0],
+        support::embedding_vector(&[1.0, 1.0, 1.0]),
     );
 
     assert!(response.trace.channel_executed("semantic-direct"));
@@ -398,11 +398,11 @@ shared constrained cue
     );
     support::drain_background_work(&mut runtime, |key| {
         if key.contains(&included.to_string()) {
-            vec![1.0, 0.0, 0.0]
+            vec![1.0; 64]
         } else if key.contains(&excluded.to_string()) {
-            vec![0.0, 1.0, 0.0]
+            support::embedding_vector(&[0.0, 1.0, 0.0])
         } else {
-            vec![1.0, 0.0, 0.0]
+            vec![1.0; 64]
         }
     });
     support::publish_manifest_with_capabilities(&runtime, &["associative"]);
@@ -419,7 +419,7 @@ shared constrained cue
             .quality(QueryQualityLevel::Thorough)
             .build()
             .unwrap(),
-        vec![1.0, 0.0, 1.0],
+        support::embedding_vector(&[1.0, 0.0, 1.0]),
     );
 
     assert!(response.results.iter().all(|result| {

@@ -26,9 +26,9 @@ pub use privacy::{
     resolve_provider_route, space_provider_mode,
 };
 pub use provider::{
-    EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector, EnrichmentBatchRequest, NeedWork,
-    ProviderResultValidationError, ProviderWorkResult, RerankBatchRequest, RerankScore,
-    validate_provider_result,
+    DEFAULT_EMBEDDING_DIMENSIONS, EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector,
+    EnrichmentBatchRequest, NeedWork, ProviderResultValidationError, ProviderWorkResult,
+    RerankBatchRequest, RerankScore, validate_provider_result,
 };
 pub use purge::{PurgeCoordinator, PurgePlan, PurgeState, PurgeTransitionError};
 pub use query_operation::{QueryOperationStage, QueryStep, QueryWork, READINESS_RETRY_AFTER_MS};

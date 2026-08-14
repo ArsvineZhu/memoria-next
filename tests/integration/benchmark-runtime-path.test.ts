@@ -32,27 +32,68 @@ test("retrieval benchmark calls the public Memoria runtime path", async () => {
     );
   }
 
+  const preservationCases = (
+    await readFile(
+      join(
+        repositoryRoot,
+        "benchmarks",
+        "retrieval",
+        "preservation-corpus.jsonl",
+      ),
+      "utf8",
+    )
+  )
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          scenario: string;
+          queryId: string;
+          expectedChannels: string[];
+        },
+    );
+  const preservationQueries = (
+    await readFile(
+      join(
+        repositoryRoot,
+        "benchmarks",
+        "retrieval",
+        "preservation-queries.jsonl",
+      ),
+      "utf8",
+    )
+  )
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { id: string; scenario: string });
+  const preservationCase = preservationCases.find(
+    (item) => item.scenario === "runtime-serving-path",
+  );
+  assert(preservationCase);
+  assert(
+    preservationQueries.some(
+      (item) => item.scenario === preservationCase.scenario,
+    ),
+  );
+
+  const evalScript =
+    "import { runSingleBenchmarkQuery } from './benchmarks/retrieval/run.ts'; " +
+    "const result = await runSingleBenchmarkQuery({ fixture: 'tag-association-01' }); " +
+    "console.log(JSON.stringify(result));";
   const { stdout } = await execFileAsync(
     process.execPath,
-    [
-      join(repositoryRoot, "node_modules", "tsx", "dist", "cli.mjs"),
-      "benchmarks/retrieval/run.ts",
-      "--profile",
-      "tag-association",
-      "--limit",
-      "1",
-    ],
+    ["--import", "tsx", "--input-type=module", "--eval", evalScript],
     { cwd: repositoryRoot, maxBuffer: 8 * 1024 * 1024 },
   );
   const result = JSON.parse(stdout) as {
-    runtimeBacked?: boolean;
-    runtimePath?: string;
-    observedChannels?: string[];
+    source?: string;
+    trace?: { channelsExecuted: string[] };
   };
-  assert.equal(result.runtimeBacked, true);
-  assert.equal(
-    result.runtimePath,
-    "createMemoria -> NativeBinding -> MemoriaRuntime::query -> QueryOperatorTrace",
-  );
-  assert(result.observedChannels?.includes("tag-readout"));
+  assert.equal(result.source, "runtime");
+  assert(result.trace);
+  assert(result.trace.channelsExecuted.length > 0);
+  for (const expectedChannel of preservationCase.expectedChannels) {
+    assert(result.trace.channelsExecuted.includes(expectedChannel));
+  }
 });

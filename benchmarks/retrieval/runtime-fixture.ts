@@ -44,17 +44,22 @@ export async function createRuntimeFixture(
 ): Promise<Fixture> {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-retrieval-"));
   const counts: ProviderCounts = { embedding: 0, rerank: 0, enrichment: 0 };
-  const memoria = await createMemoria({
-    dataDir,
-    providers: createDeterministicProviders(counts),
-  });
-  const spaceIds = new Map<string, SpaceId>();
-  const externalIdByMemoryId = new Map<string, string>();
-  const documentByExternalId = new Map(
-    corpus.map((document) => [document.id, document]),
-  );
+  const generatedTagsByMemoryId = new Map<string, readonly string[]>();
+  let memoria: Memoria | undefined;
 
   try {
+    memoria = await createMemoria({
+      dataDir,
+      providers: createDeterministicProviders(counts, {
+        generatedTagsByMemoryId,
+      }),
+    });
+    const spaceIds = new Map<string, SpaceId>();
+    const externalIdByMemoryId = new Map<string, string>();
+    const documentByExternalId = new Map(
+      corpus.map((document) => [document.id, document]),
+    );
+
     for (const spaceKey of [
       ...new Set(corpus.map((document) => document.spaceId)),
     ]) {
@@ -75,6 +80,10 @@ export async function createRuntimeFixture(
       });
       generation = created.authorityGeneration;
       externalIdByMemoryId.set(created.memoryId, document.id);
+      generatedTagsByMemoryId.set(
+        created.memoryId,
+        document.tags.slice(0, 1).map((tag) => `generated-${tag}`),
+      );
     }
     await waitForCoverage(memoria, generation);
 
@@ -136,7 +145,7 @@ export async function createRuntimeFixture(
       counts,
     };
   } catch (error) {
-    await memoria.close();
+    await memoria?.close();
     await rm(dataDir, { recursive: true, force: true });
     throw error;
   }
