@@ -14,8 +14,7 @@ test("legacy Store layout is rejected instead of initialized as Next", async () 
 
     await assert.rejects(
       () => createMemoria({ dataDir }),
-      (error: unknown) =>
-        isMemoriaError(error, "UNSUPPORTED_STORE_FORMAT"),
+      (error: unknown) => isMemoriaError(error, "UNSUPPORTED_STORE_FORMAT"),
     );
   } finally {
     await rm(dataDir, { recursive: true, force: true });

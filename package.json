@@ -1,5 +1,5 @@
 {
-  "name": "memoria-next",
+  "name": "@arsvinezhu/memoria",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./authoring": {
+      "types": "./dist/authoring/index.d.ts",
+      "import": "./dist/authoring/index.js",
+      "default": "./dist/authoring/index.js"
     }
   },
   "files": [
@@ -33,6 +38,7 @@
     "test:ts": "corepack pnpm build:test && node scripts/run-tests.mjs",
     "test": "corepack pnpm test:rust && corepack pnpm test:ts",
     "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
+    "verify:public": "corepack pnpm typecheck:public",
     "verify:pack": "node scripts/verify-packed-consumer.mjs"
   },
   "devDependencies": {

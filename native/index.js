@@ -75,8 +75,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-android-arm64')
-        const bindingPackageVersion = require('memoria-next-android-arm64/package.json').version
+        const binding = require('@arsvinezhu/memoria-android-arm64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-android-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -91,8 +91,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-android-arm-eabi')
-        const bindingPackageVersion = require('memoria-next-android-arm-eabi/package.json').version
+        const binding = require('@arsvinezhu/memoria-android-arm-eabi')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-android-arm-eabi/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -112,8 +112,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-win32-x64-gnu')
-        const bindingPackageVersion = require('memoria-next-win32-x64-gnu/package.json').version
+        const binding = require('@arsvinezhu/memoria-win32-x64-gnu')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-win32-x64-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -128,8 +128,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-win32-x64-msvc')
-        const bindingPackageVersion = require('memoria-next-win32-x64-msvc/package.json').version
+        const binding = require('@arsvinezhu/memoria-win32-x64-msvc')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-win32-x64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -145,8 +145,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-win32-ia32-msvc')
-        const bindingPackageVersion = require('memoria-next-win32-ia32-msvc/package.json').version
+        const binding = require('@arsvinezhu/memoria-win32-ia32-msvc')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-win32-ia32-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -161,8 +161,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-win32-arm64-msvc')
-        const bindingPackageVersion = require('memoria-next-win32-arm64-msvc/package.json').version
+        const binding = require('@arsvinezhu/memoria-win32-arm64-msvc')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-win32-arm64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -180,8 +180,8 @@ function requireNative() {
       loadErrors.push(e)
     }
     try {
-      const binding = require('memoria-next-darwin-universal')
-      const bindingPackageVersion = require('memoria-next-darwin-universal/package.json').version
+      const binding = require('@arsvinezhu/memoria-darwin-universal')
+      const bindingPackageVersion = require('@arsvinezhu/memoria-darwin-universal/package.json').version
       if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
         throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
@@ -196,8 +196,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-darwin-x64')
-        const bindingPackageVersion = require('memoria-next-darwin-x64/package.json').version
+        const binding = require('@arsvinezhu/memoria-darwin-x64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-darwin-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -212,8 +212,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-darwin-arm64')
-        const bindingPackageVersion = require('memoria-next-darwin-arm64/package.json').version
+        const binding = require('@arsvinezhu/memoria-darwin-arm64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-darwin-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -232,8 +232,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-freebsd-x64')
-        const bindingPackageVersion = require('memoria-next-freebsd-x64/package.json').version
+        const binding = require('@arsvinezhu/memoria-freebsd-x64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-freebsd-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -248,8 +248,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-freebsd-arm64')
-        const bindingPackageVersion = require('memoria-next-freebsd-arm64/package.json').version
+        const binding = require('@arsvinezhu/memoria-freebsd-arm64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-freebsd-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -269,8 +269,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-x64-musl')
-          const bindingPackageVersion = require('memoria-next-linux-x64-musl/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-x64-musl')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-x64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -285,8 +285,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-x64-gnu')
-          const bindingPackageVersion = require('memoria-next-linux-x64-gnu/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-x64-gnu')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-x64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -303,8 +303,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-arm64-musl')
-          const bindingPackageVersion = require('memoria-next-linux-arm64-musl/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-arm64-musl')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-arm64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -319,8 +319,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-arm64-gnu')
-          const bindingPackageVersion = require('memoria-next-linux-arm64-gnu/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-arm64-gnu')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-arm64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -337,8 +337,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-arm-musleabihf')
-          const bindingPackageVersion = require('memoria-next-linux-arm-musleabihf/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-arm-musleabihf')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-arm-musleabihf/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -353,8 +353,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-arm-gnueabihf')
-          const bindingPackageVersion = require('memoria-next-linux-arm-gnueabihf/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-arm-gnueabihf')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-arm-gnueabihf/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -371,8 +371,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-loong64-musl')
-          const bindingPackageVersion = require('memoria-next-linux-loong64-musl/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-loong64-musl')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-loong64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -387,8 +387,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-loong64-gnu')
-          const bindingPackageVersion = require('memoria-next-linux-loong64-gnu/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-loong64-gnu')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-loong64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -405,8 +405,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-riscv64-musl')
-          const bindingPackageVersion = require('memoria-next-linux-riscv64-musl/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-riscv64-musl')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-riscv64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -421,8 +421,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('memoria-next-linux-riscv64-gnu')
-          const bindingPackageVersion = require('memoria-next-linux-riscv64-gnu/package.json').version
+          const binding = require('@arsvinezhu/memoria-linux-riscv64-gnu')
+          const bindingPackageVersion = require('@arsvinezhu/memoria-linux-riscv64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -438,8 +438,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-linux-ppc64-gnu')
-        const bindingPackageVersion = require('memoria-next-linux-ppc64-gnu/package.json').version
+        const binding = require('@arsvinezhu/memoria-linux-ppc64-gnu')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-linux-ppc64-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -454,8 +454,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-linux-s390x-gnu')
-        const bindingPackageVersion = require('memoria-next-linux-s390x-gnu/package.json').version
+        const binding = require('@arsvinezhu/memoria-linux-s390x-gnu')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-linux-s390x-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -474,8 +474,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-openharmony-arm64')
-        const bindingPackageVersion = require('memoria-next-openharmony-arm64/package.json').version
+        const binding = require('@arsvinezhu/memoria-openharmony-arm64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-openharmony-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -490,8 +490,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-openharmony-x64')
-        const bindingPackageVersion = require('memoria-next-openharmony-x64/package.json').version
+        const binding = require('@arsvinezhu/memoria-openharmony-x64')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-openharmony-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -506,8 +506,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('memoria-next-openharmony-arm')
-        const bindingPackageVersion = require('memoria-next-openharmony-arm/package.json').version
+        const binding = require('@arsvinezhu/memoria-openharmony-arm')
+        const bindingPackageVersion = require('@arsvinezhu/memoria-openharmony-arm/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -643,16 +643,16 @@ if (!nativeBinding || forceWasi) {
     let candidateError = null
     let candidateFailed = false
     try {
-      candidateError = __napiWasiResolveCandidate('memoria-next-wasm32-wasi', true, undefined)
+      candidateError = __napiWasiResolveCandidate('@arsvinezhu/memoria-wasm32-wasi', true, undefined)
       candidateFailed = candidateError !== null
       if (!candidateFailed) {
         if (process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          const bindingPackageVersion = require('memoria-next-wasm32-wasi/package.json').version
+          const bindingPackageVersion = require('@arsvinezhu/memoria-wasm32-wasi/package.json').version
           if (bindingPackageVersion !== '0.1.0') {
             throw new Error(`WASI binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
         }
-        wasiBinding = require('memoria-next-wasm32-wasi')
+        wasiBinding = require('@arsvinezhu/memoria-wasm32-wasi')
         nativeBinding = wasiBinding
         wasiBindingLoaded = true
       }
