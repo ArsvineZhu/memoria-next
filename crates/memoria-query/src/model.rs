@@ -1,67 +1,12 @@
-use std::fmt;
-use std::str::FromStr;
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use memoria_mdx::TemporalValue;
 use memoria_types::{AuthorityGeneration, MemoryId, SpaceId};
 
+pub use memoria_types::{EntityRef, EntityRefError as EntityRefParseError};
+
 use crate::exact::MemoryReference;
 use crate::validate::QueryError;
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct EntityRef(String);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EntityRefParseError {
-    value: String,
-}
-
-impl fmt::Display for EntityRefParseError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invalid entity reference `{}`", self.value)
-    }
-}
-
-impl std::error::Error for EntityRefParseError {}
-
-impl EntityRef {
-    pub fn new(value: impl Into<String>) -> Result<Self, QueryError> {
-        let value = value.into();
-        validate_entity_ref(&value).map_err(|_| QueryError::InvalidEntityRef {
-            value: value.clone(),
-        })?;
-        Ok(Self(value))
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for EntityRef {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl FromStr for EntityRef {
-    type Err = EntityRefParseError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        validate_entity_ref(value).map_err(|_| EntityRefParseError {
-            value: value.to_owned(),
-        })?;
-        Ok(Self(value.to_owned()))
-    }
-}
-
-fn validate_entity_ref(value: &str) -> Result<(), ()> {
-    if value.is_empty() || !value.contains(':') || value.chars().any(char::is_whitespace) {
-        return Err(());
-    }
-    Ok(())
-}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueryScope {

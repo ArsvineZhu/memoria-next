@@ -2,14 +2,13 @@ import type { MemoriaStatus } from "../engine/memoria.js";
 import {
   createPortableExport,
   importPortablePackage,
-  createStoreBackup,
-  restoreStoreBackup,
   type PortableExportOptions,
   type PortableImportInput,
   type PortableImportResult,
   type StoreBackupOptions,
   type StoreBackupResult,
 } from "./governance.js";
+import type { NativeBackupResult } from "../native/protocol.js";
 
 interface StatusEngine {
   status(): Promise<MemoriaStatus>;
@@ -26,6 +25,14 @@ interface TransferEngine {
   }): Promise<{ memoryId: string; authorityGeneration: string }>;
   planPurge(memoryId: string): Promise<NativePurgePlan>;
   executePurge(planId: string): Promise<NativePurgePlan>;
+}
+
+interface BackupEngine {
+  createBackup(options?: StoreBackupOptions): Promise<NativeBackupResult>;
+  restoreBackup(input: {
+    backupPath: string;
+    targetDir: string;
+  }): Promise<NativeBackupResult>;
 }
 
 export interface PortableExportMemory {
@@ -57,26 +64,15 @@ export interface AdminApi {
 }
 
 export function createAdminApi(
-  engine: StatusEngine & TransferEngine,
+  engine: StatusEngine & TransferEngine & BackupEngine,
   dataDir: string,
 ): AdminApi {
-  const imports = new Map<string, PortableImportResult>();
   return {
     status: () => engine.status(),
-    createBackup: (options) => createStoreBackup(dataDir, options),
-    restoreBackup: (input) =>
-      restoreStoreBackup(input.backupPath, input.targetDir),
+    createBackup: (options) => engine.createBackup(options),
+    restoreBackup: (input) => engine.restoreBackup(input),
     export: (input) => createPortableExport(dataDir, engine, input),
-    import: (input) => {
-      const existing = imports.get(input.idempotencyKey);
-      if (existing) {
-        return Promise.resolve(existing);
-      }
-      return importPortablePackage(engine, input).then((result) => {
-        imports.set(input.idempotencyKey, result);
-        return result;
-      });
-    },
+    import: (input) => importPortablePackage(engine, input),
     planPurge: (input) => engine.planPurge(input.memory.id),
     executePurge: (input) => engine.executePurge(input.planId),
   };

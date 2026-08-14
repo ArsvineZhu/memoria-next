@@ -75,6 +75,9 @@ pub enum MemoriaError {
     #[error("authority database error: {message}")]
     Database { message: String },
 
+    #[error("authority corruption detected: {message}")]
+    Corruption { message: String },
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -105,6 +108,7 @@ impl MemoriaError {
             Self::UnsupportedOperation { .. } => "UNSUPPORTED_OPERATION",
             Self::InvalidMutationBatch { .. } => "INVALID_MUTATION_BATCH",
             Self::Database { .. } => "DATABASE_ERROR",
+            Self::Corruption { .. } => "CORRUPTION",
             Self::Io(_) => "IO_ERROR",
             Self::Serialization(_) => "SERIALIZATION_ERROR",
         }

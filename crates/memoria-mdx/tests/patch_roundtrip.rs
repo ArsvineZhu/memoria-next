@@ -59,7 +59,7 @@ fn tags_and_relations_round_trip_through_validation() {
                 node_id: "r".parse().unwrap(),
                 from: "a".parse().unwrap(),
                 to: "b".parse().unwrap(),
-                kind: "association".to_owned(),
+                kind: "associated-with".to_owned(),
             },
         ],
     )

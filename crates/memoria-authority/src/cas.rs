@@ -44,6 +44,7 @@ impl SourceCas {
         let hash = SourceBlobHash::from_bytes(source);
         let object_path = self.object_path(hash);
         if object_is_file(&object_path)? {
+            self.verify_existing_object(&object_path, hash)?;
             self.sync_objects_directory()?;
             return Ok(hash);
         }
@@ -62,6 +63,7 @@ impl SourceCas {
         write_result?;
 
         if object_is_file(&object_path)? {
+            self.verify_existing_object(&object_path, hash)?;
             self.sync_objects_directory()?;
             return Ok(hash);
         }
@@ -73,6 +75,7 @@ impl SourceCas {
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if object_is_file(&object_path)? {
+                    self.verify_existing_object(&object_path, hash)?;
                     self.sync_objects_directory()?;
                     Ok(hash)
                 } else {
@@ -105,6 +108,26 @@ impl SourceCas {
 
     fn object_path(&self, hash: SourceBlobHash) -> PathBuf {
         self.objects_dir.join(hash.to_string())
+    }
+
+    fn verify_existing_object(
+        &self,
+        object_path: &Path,
+        expected_hash: SourceBlobHash,
+    ) -> Result<(), MemoriaError> {
+        let bytes = fs::read(object_path)?;
+        let actual_hash = SourceBlobHash::from_bytes(&bytes);
+        if actual_hash != expected_hash {
+            return Err(MemoriaError::Corruption {
+                message: format!(
+                    "source CAS object {} has hash {}, expected {}",
+                    object_path.display(),
+                    actual_hash,
+                    expected_hash
+                ),
+            });
+        }
+        Ok(())
     }
 
     fn staging_path(&self, hash: SourceBlobHash) -> PathBuf {
@@ -207,5 +230,32 @@ mod tests {
             error,
             MemoriaError::Io(error) if error.kind() == ErrorKind::Other
         ));
+    }
+
+    #[test]
+    fn existing_corrupt_object_is_never_silently_reused() {
+        let directory = tempfile::tempdir().unwrap();
+        let layout = StoreLayout::create(directory.path()).unwrap();
+        let source = b"expected source";
+        let hash = memoria_types::SourceBlobHash::from_bytes(source);
+        std::fs::write(layout.objects_dir().join(hash.to_string()), b"tampered").unwrap();
+        let cas = SourceCas::new(&layout);
+
+        assert!(matches!(
+            cas.put(source),
+            Err(MemoriaError::Corruption { .. })
+        ));
+    }
+
+    #[test]
+    fn existing_valid_object_is_reused_after_hash_verification() {
+        let directory = tempfile::tempdir().unwrap();
+        let layout = StoreLayout::create(directory.path()).unwrap();
+        let source = b"already durable";
+        let hash = memoria_types::SourceBlobHash::from_bytes(source);
+        std::fs::write(layout.objects_dir().join(hash.to_string()), source).unwrap();
+        let cas = SourceCas::new(&layout);
+
+        assert_eq!(cas.put(source).unwrap(), hash);
     }
 }

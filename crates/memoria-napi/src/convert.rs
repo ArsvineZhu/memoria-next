@@ -8,12 +8,15 @@ use memoria_query::{
     QueryQualityLevel, ReadinessBehavior,
 };
 use memoria_runtime::{
-    EmbeddingVector, FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork,
-    PortableMemory, ProviderWorkResult, PurgePlan, PurgeState, QueryStep, QueryWork, RerankScore,
+    BackupManifest, EmbeddingVector, FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent,
+    NeedWork, PortableImportRequest, PortableImportResult, PortableMemory, ProviderWorkResult,
+    PurgePlan, PurgeState, QueryStep, QueryWork, RerankScore,
 };
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
+
+use crate::error::to_napi_error;
 
 #[napi(object)]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -255,9 +258,14 @@ fn parse_cue(value: JsQueryCue) -> Result<QueryCue> {
         .entities
         .unwrap_or_default()
         .into_iter()
-        .map(EntityRef::new)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(query_error)?;
+        .map(|value| {
+            EntityRef::new(value).map_err(|error| {
+                query_error(QueryError::InvalidEntityRef {
+                    value: error.value().to_owned(),
+                })
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let memories = value
         .memories
         .unwrap_or_default()
@@ -277,9 +285,14 @@ fn parse_constraints(value: JsQueryConstraints) -> Result<QueryConstraints> {
         .entities
         .unwrap_or_default()
         .into_iter()
-        .map(EntityRef::new)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(query_error)?;
+        .map(|value| {
+            EntityRef::new(value).map_err(|error| {
+                query_error(QueryError::InvalidEntityRef {
+                    value: error.value().to_owned(),
+                })
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let memories = value
         .memories
         .unwrap_or_default()
@@ -607,10 +620,108 @@ impl From<PortableMemory> for JsPortableMemory {
 
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq)]
+pub struct JsPortableImportRequest {
+    pub target_space_key: String,
+    pub idempotency_key: String,
+    pub request_fingerprint: String,
+    pub origin_store_id: Option<String>,
+    pub memories: Vec<JsPortableMemory>,
+}
+
+impl TryFrom<JsPortableImportRequest> for PortableImportRequest {
+    type Error = napi::Error;
+
+    fn try_from(value: JsPortableImportRequest) -> std::result::Result<Self, Self::Error> {
+        let memories = value
+            .memories
+            .into_iter()
+            .map(|memory| {
+                Ok(PortableMemory {
+                    source_id: memory.source_id.parse().map_err(to_napi_error)?,
+                    space_id: memory.space_id.parse().map_err(to_napi_error)?,
+                    revision_id: memory.revision_id.parse().map_err(to_napi_error)?,
+                    mdx: memory.mdx,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, napi::Error>>()?;
+        Ok(PortableImportRequest {
+            target_space_key: value.target_space_key,
+            idempotency_key: value.idempotency_key,
+            request_fingerprint: value.request_fingerprint,
+            origin_store_id: value.origin_store_id,
+            memories,
+        })
+    }
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsPortableImportMapping {
+    pub source_id: String,
+    pub target_id: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsPortableImportResult {
+    pub target_space_id: String,
+    pub mappings: Vec<JsPortableImportMapping>,
+    pub unresolved_external_references: Vec<String>,
+}
+
+impl From<PortableImportResult> for JsPortableImportResult {
+    fn from(value: PortableImportResult) -> Self {
+        Self {
+            target_space_id: value.target_space_id.to_string(),
+            mappings: value
+                .mappings
+                .into_iter()
+                .map(|mapping| JsPortableImportMapping {
+                    source_id: mapping.source_id.to_string(),
+                    target_id: mapping.target_id.to_string(),
+                })
+                .collect(),
+            unresolved_external_references: value.unresolved_external_references,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct JsPurgePlan {
     pub id: String,
     pub memory_id: String,
     pub state: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsBackupResult {
+    pub path: String,
+    pub store_id: String,
+    pub authority_generation: String,
+    pub include_adaptive: bool,
+    pub file_count: u32,
+    pub source_object_count: u32,
+    pub manifest_hash: String,
+}
+
+impl TryFrom<BackupManifest> for JsBackupResult {
+    type Error = napi::Error;
+
+    fn try_from(value: BackupManifest) -> std::result::Result<Self, Self::Error> {
+        Ok(Self {
+            path: value.path.to_string_lossy().into_owned(),
+            store_id: value.store_id.to_string(),
+            authority_generation: value.authority_generation.to_string(),
+            include_adaptive: value.includes_adaptive,
+            file_count: u32::try_from(value.file_count)
+                .map_err(|error| napi::Error::from_reason(error.to_string()))?,
+            source_object_count: u32::try_from(value.source_objects.len())
+                .map_err(|error| napi::Error::from_reason(error.to_string()))?,
+            manifest_hash: value.manifest_hash,
+        })
+    }
 }
 
 impl From<PurgePlan> for JsPurgePlan {

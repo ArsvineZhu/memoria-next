@@ -5,13 +5,13 @@ use crate::profile::{SemanticKind, SemanticNodeId, ValidatedDocument, ValidatedN
 use crate::source::{ParsedSource, SemanticElement};
 use crate::syntax::MdxError;
 use crate::time::TemporalValue;
+use memoria_types::EntityRef;
 
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SEMANTIC_ELEMENTS: usize = 4096;
 const MAX_ATTRIBUTES_PER_ELEMENT: usize = 64;
 const MAX_ELEMENT_TEXT_BYTES: usize = 1024 * 1024;
 const MAX_NODE_ID_BYTES: usize = 256;
-const MAX_ENTITY_REF_BYTES: usize = 512;
 const MAX_SOURCE_LOCATOR_BYTES: usize = 2048;
 
 pub fn parse_and_validate(source: &str) -> Result<ValidatedDocument, MdxError> {
@@ -100,14 +100,6 @@ fn collect_attributes(element: &SemanticElement) -> Result<BTreeMap<String, Stri
             });
         }
     }
-    if let Some(kind) = attributes.get("kind")
-        && !known_kind(kind)
-    {
-        return Err(MdxError::UnknownKind {
-            value: kind.clone(),
-            span: element.span(),
-        });
-    }
     Ok(attributes)
 }
 
@@ -189,6 +181,53 @@ fn validate_required_attributes(
             });
         }
     }
+    validate_core_kind(element, kind, attributes)?;
+    Ok(())
+}
+
+fn validate_core_kind(
+    element: &SemanticElement,
+    kind: SemanticKind,
+    attributes: &BTreeMap<String, String>,
+) -> Result<(), MdxError> {
+    let Some(value) = attributes.get("kind") else {
+        return Ok(());
+    };
+    let allowed = match kind {
+        SemanticKind::Entity => &[
+            "person",
+            "place",
+            "organization",
+            "project",
+            "object",
+            "concept",
+        ][..],
+        SemanticKind::State => &[
+            "status",
+            "preference",
+            "role",
+            "possession",
+            "membership",
+            "location",
+        ][..],
+        SemanticKind::Event => &["occurrence", "transition", "decision", "interaction"][..],
+        SemanticKind::Relation => &[
+            "causal",
+            "supports",
+            "contradicts",
+            "part-of",
+            "member-of",
+            "located-in",
+            "associated-with",
+        ][..],
+        _ => &[][..],
+    };
+    if !allowed.contains(&value.as_str()) {
+        return Err(MdxError::UnknownKind {
+            value: value.clone(),
+            span: element.span(),
+        });
+    }
     Ok(())
 }
 
@@ -199,14 +238,14 @@ fn validate_references(
 ) -> Result<(), MdxError> {
     if matches!(kind, SemanticKind::Entity) {
         let value = attributes.get("ref").expect("required above");
-        validate_entity_ref(value).map_err(|_| MdxError::InvalidEntityRef {
+        EntityRef::new(value).map_err(|_| MdxError::InvalidEntityRef {
             value: value.clone(),
             span: element.span(),
         })?;
     }
     for attribute in ["about", "speaker"] {
         if let Some(value) = attributes.get(attribute) {
-            validate_entity_ref(value).map_err(|_| MdxError::InvalidEntityRef {
+            EntityRef::new(value).map_err(|_| MdxError::InvalidEntityRef {
                 value: value.clone(),
                 span: element.span(),
             })?;
@@ -314,29 +353,6 @@ fn element_text(source: &str, element: &SemanticElement) -> Result<String, MdxEr
     Ok(source[open_end..open_end + close_start_relative].to_owned())
 }
 
-fn validate_entity_ref(value: &str) -> Result<(), ()> {
-    if value.is_empty() || value.len() > MAX_ENTITY_REF_BYTES {
-        return Err(());
-    }
-    let Some((namespace, opaque)) = value.split_once(':') else {
-        return Err(());
-    };
-    if namespace.is_empty()
-        || opaque.is_empty()
-        || !namespace
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_lowercase)
-        || !namespace.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
-        })
-        || opaque.chars().any(char::is_whitespace)
-    {
-        return Err(());
-    }
-    Ok(())
-}
-
 fn valid_source_locator(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_SOURCE_LOCATOR_BYTES
@@ -363,28 +379,6 @@ fn valid_extension_token(value: &str) -> bool {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
         })
         && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-}
-
-fn known_kind(value: &str) -> bool {
-    matches!(
-        value,
-        "association"
-            | "causal"
-            | "contradiction"
-            | "supports"
-            | "part_of"
-            | "related"
-            | "person"
-            | "place"
-            | "organization"
-            | "project"
-            | "thing"
-            | "decision"
-            | "status"
-            | "fact"
-            | "note"
-            | "reference"
-    )
 }
 
 fn temporal_key(value: &TemporalValue) -> (i32, u8, u8, u8) {

@@ -82,6 +82,16 @@ export interface NativeStatus {
   closed: boolean;
 }
 
+export interface NativeBackupResult {
+  path: string;
+  storeId: string;
+  authorityGeneration: string;
+  includeAdaptive: boolean;
+  fileCount: number;
+  sourceObjectCount: number;
+  manifestHash: string;
+}
+
 export interface NativeCreateMemoryRequest {
   spaceId: string;
   documentKey?: string;
@@ -165,6 +175,20 @@ export interface NativePortableMemory {
   mdx: string;
 }
 
+export interface NativePortableImportRequest {
+  targetSpaceKey: string;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  originStoreId?: string;
+  memories: NativePortableMemory[];
+}
+
+export interface NativePortableImportResult {
+  targetSpaceId: string;
+  mappings: Array<{ sourceId: string; targetId: string }>;
+  unresolvedExternalReferences: string[];
+}
+
 export interface NativePurgePlan {
   id: string;
   memoryId: string;
@@ -236,6 +260,16 @@ export interface NativeBinding {
   ): string;
   authorityRevise(store: NativeStoreHandle, request: NativeReviseMemoryRequest): NativeMemoryMutation;
   exportMemories(store: NativeStoreHandle, scope: string[]): NativePortableMemory[];
+  importPortable?(
+    store: NativeStoreHandle,
+    request: NativePortableImportRequest,
+  ): NativePortableImportResult;
+  backupCreate?(
+    store: NativeStoreHandle,
+    outputPath: string | undefined,
+    includeAdaptive: boolean,
+  ): NativeBackupResult;
+  backupRestore?(backupPath: string, targetPath: string): NativeBackupResult;
   purgePlan(store: NativeStoreHandle, memoryId: string): NativePurgePlan;
   purgeExecute(store: NativeStoreHandle, planId: string): NativePurgePlan;
   queryStart(

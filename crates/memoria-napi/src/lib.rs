@@ -13,8 +13,9 @@ use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 
 use crate::convert::{
-    JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission, JsMemoryMutation,
-    JsPortableMemory, JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest, JsQueryStep,
+    JsBackupResult, JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission,
+    JsMemoryMutation, JsPortableImportRequest, JsPortableImportResult, JsPortableMemory,
+    JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest, JsQueryStep,
     JsReviseMemoryRequest, JsSpaceProviderPolicy, JsStatus, QueryRequest, provider_result_from_js,
     query_step_to_js,
 };
@@ -168,6 +169,48 @@ pub fn export_memories(store: &NativeStore, scope: Vec<String>) -> Result<Vec<Js
         .export_memories(&scope)
         .map(|memories| memories.into_iter().map(JsPortableMemory::from).collect())
         .map_err(runtime_error)
+}
+
+#[napi]
+pub fn import_portable(
+    store: &NativeStore,
+    request: JsPortableImportRequest,
+) -> Result<JsPortableImportResult> {
+    let request = request.try_into()?;
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .import_portable(request)
+        .map(JsPortableImportResult::from)
+        .map_err(runtime_error)
+}
+
+#[napi]
+pub fn backup_create(
+    store: &NativeStore,
+    output_path: Option<String>,
+    include_adaptive: bool,
+) -> Result<JsBackupResult> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    let output_path = output_path.map(std::path::PathBuf::from);
+    let manifest = runtime
+        .create_backup(output_path.as_deref(), include_adaptive)
+        .map_err(runtime_error)?;
+    Ok(JsBackupResult::try_from(manifest)?)
+}
+
+#[napi]
+pub fn backup_restore(backup_path: String, target_path: String) -> Result<JsBackupResult> {
+    let manifest =
+        memoria_runtime::restore_store_backup(backup_path, &target_path).map_err(runtime_error)?;
+    let mut result = JsBackupResult::try_from(manifest)?;
+    result.path = target_path;
+    Ok(result)
 }
 
 #[napi]

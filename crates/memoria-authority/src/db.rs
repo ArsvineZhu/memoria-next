@@ -1,10 +1,12 @@
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
 };
 
 use memoria_types::{AuthorityGeneration, MemoriaError};
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
 use crate::model::{
     AuthorityTransaction, AuthorityWriteAction, AuthorityWriteResult, authority_generation,
@@ -43,8 +45,8 @@ impl AuthorityDb {
     where
         F: for<'tx> FnOnce(&mut AuthorityTransaction<'tx>) -> rusqlite::Result<T>,
     {
-        let mut connection = self.open_connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let connection = self.open_connection()?;
+        let transaction = begin_immediate_with_retry(&connection)?;
         let base_generation = transaction
             .query_row(
                 "SELECT generation FROM authority_generation WHERE id = 1",
@@ -99,10 +101,8 @@ impl AuthorityDb {
             &mut AuthorityTransaction<'tx>,
         ) -> Result<AuthorityWriteAction<T>, MemoriaError>,
     {
-        let mut connection = self.open_connection().map_err(database_error)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(database_error)?;
+        let connection = self.open_connection().map_err(database_error)?;
+        let transaction = begin_immediate_with_retry(&connection).map_err(database_error)?;
         let base_generation = transaction
             .query_row(
                 "SELECT generation FROM authority_generation WHERE id = 1",
@@ -165,7 +165,39 @@ impl AuthorityDb {
 }
 
 fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch("PRAGMA foreign_keys = ON;")
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA busy_timeout = 5000;",
+    )
+}
+
+fn begin_immediate_with_retry(connection: &Connection) -> rusqlite::Result<Transaction<'_>> {
+    begin_immediate_with_retry_count(connection, 0)
+}
+
+fn begin_immediate_with_retry_count(
+    connection: &Connection,
+    retry: usize,
+) -> rusqlite::Result<Transaction<'_>> {
+    const RETRY_DELAYS_MS: [u64; 3] = [10, 50, 200];
+    match Transaction::new_unchecked(connection, TransactionBehavior::Immediate) {
+        Ok(transaction) => Ok(transaction),
+        Err(error) if is_busy_or_locked(&error) && retry < RETRY_DELAYS_MS.len() => {
+            thread::sleep(Duration::from_millis(RETRY_DELAYS_MS[retry]));
+            begin_immediate_with_retry_count(connection, retry + 1)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(failure.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
 }
 
 fn initialize_schema(connection: &mut Connection) -> rusqlite::Result<()> {

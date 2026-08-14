@@ -19,5 +19,9 @@ pub use model::{
     AuthorityTransaction, AuthorityWriteResult, MemoryLifecycle, MemoryRecord, RevisionRecord,
     SpaceLifecycle, SpaceProviderMode, SpaceProviderPolicy, SpaceRecord,
 };
-pub use mutation::{AuthorityMutationBatch, AuthorityOperation};
+pub use mutation::{
+    AuthorityMutationBatch, AuthorityOperation, ImportMemoryAllocation, PortableImportAllocation,
+    PortableImportMapping, PortableImportResult,
+};
+pub use purge::PurgeOperationRecord;
 pub use read::MemoryRead;

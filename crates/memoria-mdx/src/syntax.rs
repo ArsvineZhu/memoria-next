@@ -10,6 +10,9 @@ pub enum MdxError {
     #[error("runtime component `{name}` is not allowed at byte span {span:?}")]
     UnsupportedRuntimeComponent { name: String, span: Range<usize> },
 
+    #[error("raw HTML tag `{name}` is not allowed at byte span {span:?}")]
+    RawHtml { name: String, span: Range<usize> },
+
     #[error("malformed semantic element at byte span {span:?}: {message}")]
     MalformedElement { message: String, span: Range<usize> },
 

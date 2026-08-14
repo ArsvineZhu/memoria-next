@@ -1,10 +1,12 @@
 mod digest;
+mod entity_ref;
 mod error;
 mod id;
 mod snapshot;
 mod time;
 
 pub use digest::SourceBlobHash;
+pub use entity_ref::{EntityRef, EntityRefError};
 pub use error::MemoriaError;
 pub use id::{MemoryId, RevisionId, SpaceId, StoreId};
 pub use snapshot::{

@@ -77,3 +77,33 @@ fn pathological_nesting_hits_resource_limit() {
         Err(MdxError::ResourceLimit { .. })
     ));
 }
+
+#[test]
+fn lowercase_script_element_is_rejected() {
+    assert!(matches!(
+        parse_source("<script>alert(1)</script>"),
+        Err(MdxError::RawHtml { .. })
+    ));
+}
+
+#[test]
+fn lowercase_img_with_event_attribute_is_rejected() {
+    assert!(matches!(
+        parse_source(r#"<img src="x" onerror="alert(1)"/>"#),
+        Err(MdxError::RawHtml { .. })
+    ));
+}
+
+#[test]
+fn html_comment_is_preserved_and_nonsemantic() {
+    let source = "<!-- audit note -->\n<State id=\"s\">A</State>";
+    let parsed = parse_source(source).unwrap();
+    assert_eq!(parsed.source(), source);
+    assert_eq!(parsed.semantic_elements().count(), 1);
+}
+
+#[test]
+fn angle_brackets_inside_fenced_code_are_not_raw_html_execution() {
+    let source = "```html\n<script>alert(1)</script>\n```";
+    assert!(parse_source(source).is_ok());
+}

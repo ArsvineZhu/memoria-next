@@ -35,6 +35,36 @@ impl MemoryRead {
 }
 
 impl AuthorityDb {
+    pub fn source_blob_hashes_at(
+        &self,
+        generation: AuthorityGeneration,
+    ) -> Result<Vec<SourceBlobHash>, MemoriaError> {
+        self.read(|connection| {
+            let generation_value = sqlite_generation(generation)?;
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT source_blob_hash
+                 FROM revisions
+                 WHERE committed_generation <= ?1
+                 ORDER BY source_blob_hash",
+            )?;
+            let rows = statement.query_map([generation_value], |row| {
+                let value = row.get::<_, String>(0)?;
+                value.parse::<SourceBlobHash>().map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            error.to_string(),
+                        )),
+                    )
+                })
+            })?;
+            rows.collect()
+        })
+        .map_err(database_error)
+    }
+
     pub fn list_active_space_ids_at(
         &self,
         generation: AuthorityGeneration,

@@ -4,7 +4,8 @@ use memoria_types::{
     AuthorityGeneration, MemoriaError, MemoryId, RevisionId, RevisionSemanticIntent,
     SourceBlobHash, SpaceId, Timestamp,
 };
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::cas::SourceCas;
@@ -68,6 +69,33 @@ pub enum AuthorityOperation {
     RestoreSpace {
         space_id: SpaceId,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportMemoryAllocation {
+    pub source_id: MemoryId,
+    pub memory_id: MemoryId,
+    pub document_key: Option<String>,
+    pub source: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortableImportAllocation {
+    pub target_space_id: SpaceId,
+    pub memories: Vec<ImportMemoryAllocation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PortableImportMapping {
+    pub source_id: MemoryId,
+    pub target_id: MemoryId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PortableImportResult {
+    pub target_space_id: SpaceId,
+    pub mappings: Vec<PortableImportMapping>,
+    pub unresolved_external_references: Vec<String>,
 }
 
 enum PreparedOperation {
@@ -401,6 +429,7 @@ impl AuthorityDb {
         cas: &SourceCas,
         batch: AuthorityMutationBatch,
     ) -> Result<AuthorityWriteResult<()>, MemoriaError> {
+        let batch = canonicalize_mutation_batch(batch)?;
         if batch.operations.is_empty() {
             return Err(MemoriaError::InvalidMutationBatch {
                 message: "operations must not be empty".to_owned(),
@@ -450,6 +479,239 @@ impl AuthorityDb {
                 .map_err(database_error)?;
             }
             Ok(AuthorityWriteAction::Commit(()))
+        })
+    }
+
+    /// Commit a previously validated portable import in one Authority
+    /// transaction. IDs are allocated by the runtime before this call so the
+    /// source-aware rewrite can use the complete mapping without exposing a
+    /// partially committed import.
+    pub fn import_portable(
+        &self,
+        cas: &SourceCas,
+        target_space_key: &str,
+        allocation: PortableImportAllocation,
+        idempotency_key: &str,
+        request_fingerprint: &str,
+        origin_store_id: Option<&str>,
+        mut unresolved_external_references: Vec<String>,
+    ) -> Result<AuthorityWriteResult<PortableImportResult>, MemoriaError> {
+        if idempotency_key.trim().is_empty() {
+            return Err(MemoriaError::IdempotencyConflict {
+                idempotency_key: idempotency_key.to_owned(),
+            });
+        }
+        if request_fingerprint.trim().is_empty() {
+            return Err(MemoriaError::InvalidMutationBatch {
+                message: "portable import fingerprint must not be empty".to_owned(),
+            });
+        }
+        if allocation.memories.is_empty() {
+            return Err(MemoriaError::InvalidMutationBatch {
+                message: "portable import must contain at least one memory".to_owned(),
+            });
+        }
+
+        let mut source_ids = HashSet::with_capacity(allocation.memories.len());
+        let mut target_ids = HashSet::with_capacity(allocation.memories.len());
+        for memory in &allocation.memories {
+            if !source_ids.insert(memory.source_id) {
+                return Err(MemoriaError::InvalidMutationBatch {
+                    message: format!(
+                        "portable import source memory {} is listed more than once",
+                        memory.source_id
+                    ),
+                });
+            }
+            if !target_ids.insert(memory.memory_id) {
+                return Err(MemoriaError::InvalidMutationBatch {
+                    message: format!(
+                        "portable import target memory {} is listed more than once",
+                        memory.memory_id
+                    ),
+                });
+            }
+        }
+
+        let PortableImportAllocation {
+            target_space_id,
+            memories,
+        } = allocation;
+        let mut prepared = Vec::with_capacity(memories.len());
+        for memory in memories {
+            let source_blob_hash = cas.put(&memory.source)?;
+            prepared.push((memory, source_blob_hash));
+        }
+
+        unresolved_external_references.sort_unstable();
+        unresolved_external_references.dedup();
+        let mappings = prepared
+            .iter()
+            .map(|(memory, _)| PortableImportMapping {
+                source_id: memory.source_id,
+                target_id: memory.memory_id,
+            })
+            .collect::<Vec<_>>();
+        let mapping_json = serde_json::to_string(&mappings)
+            .map_err(|error| MemoriaError::Serialization(error.to_string()))?;
+        let unresolved_json = serde_json::to_string(&unresolved_external_references)
+            .map_err(|error| MemoriaError::Serialization(error.to_string()))?;
+        let target_space_key = target_space_key.to_owned();
+        let idempotency_key = idempotency_key.to_owned();
+        let request_fingerprint = request_fingerprint.to_owned();
+        let origin_store_id = origin_store_id.map(str::to_owned);
+        self.write_memoria_action(move |transaction| {
+            let existing = transaction
+                .transaction
+                .query_row(
+                    "SELECT request_fingerprint, committed_generation,
+                            target_space_id, mapping_json, unresolved_json
+                     FROM import_records WHERE import_id = ?1",
+                    params![idempotency_key],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            crate::model::authority_generation(row.get(1)?)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(database_error)?;
+            if let Some((
+                stored_fingerprint,
+                committed_generation,
+                stored_space,
+                mapping_json,
+                unresolved_json,
+            )) = existing
+            {
+                if stored_fingerprint != request_fingerprint {
+                    return Err(MemoriaError::IdempotencyConflict {
+                        idempotency_key: idempotency_key.clone(),
+                    });
+                }
+                let target_space_bytes: [u8; 16] =
+                    stored_space
+                        .try_into()
+                        .map_err(|_| MemoriaError::Database {
+                            message: "portable import target space id has invalid length"
+                                .to_owned(),
+                        })?;
+                let result = PortableImportResult {
+                    target_space_id: SpaceId::from_bytes(target_space_bytes),
+                    mappings: serde_json::from_str(&mapping_json).map_err(|error| {
+                        MemoriaError::Database {
+                            message: format!("portable import mapping is invalid: {error}"),
+                        }
+                    })?,
+                    unresolved_external_references: serde_json::from_str(&unresolved_json)
+                        .map_err(|error| MemoriaError::Database {
+                            message: format!(
+                                "portable import unresolved report is invalid: {error}"
+                            ),
+                        })?,
+                };
+                return Ok(AuthorityWriteAction::Noop(AuthorityWriteResult::new(
+                    result,
+                    committed_generation,
+                )));
+            }
+
+            ensure_space_key_available(transaction, &target_space_key, None)?;
+            let space_exists = transaction
+                .transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM spaces WHERE space_id = ?1)",
+                    params![target_space_id.as_bytes().as_slice()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(database_error)?;
+            if space_exists {
+                return Err(MemoriaError::Database {
+                    message: format!(
+                        "portable import target space id collision: {target_space_id}"
+                    ),
+                });
+            }
+            transaction
+                .insert_space_record_with_id(
+                    target_space_id,
+                    &target_space_key,
+                    SpaceProviderPolicy::default(),
+                )
+                .map_err(database_error)?;
+
+            for (memory, source_blob_hash) in &prepared {
+                let memory_exists = transaction
+                    .transaction
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM memories WHERE memory_id = ?1)",
+                        params![memory.memory_id.as_bytes().as_slice()],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(database_error)?;
+                if memory_exists {
+                    return Err(MemoriaError::Database {
+                        message: format!(
+                            "portable import target memory id collision: {}",
+                            memory.memory_id
+                        ),
+                    });
+                }
+                ensure_document_key_available(
+                    transaction,
+                    target_space_id,
+                    memory.document_key.as_deref(),
+                    None,
+                )?;
+                let revision_id = derive_revision_id(
+                    memory.memory_id,
+                    &[],
+                    *source_blob_hash,
+                    RevisionSemanticIntent::Edit,
+                );
+                let record = MemoryRecord {
+                    memory_id: memory.memory_id,
+                    space_id: target_space_id,
+                    document_key: memory.document_key.clone(),
+                    head_revision_id: revision_id,
+                    lifecycle: MemoryLifecycle::Active,
+                    source_blob_hash: *source_blob_hash,
+                    generation: transaction.generation(),
+                };
+                transaction
+                    .insert_memory_record(&record, RevisionSemanticIntent::Edit, Timestamp::now()?)
+                    .map_err(database_error)?;
+            }
+
+            let result = PortableImportResult {
+                target_space_id,
+                mappings,
+                unresolved_external_references,
+            };
+            transaction
+                .transaction
+                .execute(
+                    "INSERT INTO import_records(
+                         import_id, origin_store_id, origin_record_id, status,
+                         committed_generation, request_fingerprint, target_space_id,
+                         mapping_json, unresolved_json
+                     ) VALUES (?1, ?2, ?1, 'completed', ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        idempotency_key,
+                        origin_store_id,
+                        i64::try_from(transaction.generation().value()).unwrap_or(i64::MAX),
+                        request_fingerprint,
+                        target_space_id.as_bytes().as_slice(),
+                        mapping_json,
+                        unresolved_json,
+                    ],
+                )
+                .map_err(database_error)?;
+            Ok(AuthorityWriteAction::Commit(result))
         })
     }
 }
@@ -1026,8 +1288,14 @@ fn insert_validated_revision(
     source_blob_hash: SourceBlobHash,
     semantic_intent: RevisionSemanticIntent,
 ) -> Result<RevisionId, MemoriaError> {
-    let revision_id = derive_revision_id(memory_id, parents, source_blob_hash, semantic_intent);
-    validate_revision_parents(tx, memory_id, revision_id, parents)?;
+    let canonical_parents = canonicalize_parents(parents)?;
+    let revision_id = derive_revision_id(
+        memory_id,
+        &canonical_parents,
+        source_blob_hash,
+        semantic_intent,
+    );
+    validate_revision_parents(tx, memory_id, revision_id, &canonical_parents)?;
     let committed_at = Timestamp::now()?;
     tx.insert_revision_record(
         memory_id,
@@ -1035,10 +1303,35 @@ fn insert_validated_revision(
         source_blob_hash,
         semantic_intent,
         committed_at,
-        parents,
+        &canonical_parents,
     )
     .map_err(database_error)?;
     Ok(revision_id)
+}
+
+fn canonicalize_mutation_batch(
+    mut batch: AuthorityMutationBatch,
+) -> Result<AuthorityMutationBatch, MemoriaError> {
+    for operation in &mut batch.operations {
+        if let AuthorityOperation::MergeMemory { parents, .. } = operation {
+            *parents = canonicalize_parents(parents)?;
+        }
+    }
+    Ok(batch)
+}
+
+fn canonicalize_parents(parents: &[RevisionId]) -> Result<Vec<RevisionId>, MemoriaError> {
+    let mut canonical = parents.to_vec();
+    let mut seen = HashSet::with_capacity(canonical.len());
+    for parent in &canonical {
+        if !seen.insert(*parent) {
+            return Err(MemoriaError::InvalidMutationBatch {
+                message: format!("revision parent {parent} is listed more than once"),
+            });
+        }
+    }
+    canonical.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    Ok(canonical)
 }
 
 fn validate_revision_parents(
@@ -1620,6 +1913,28 @@ fn derive_revision_id(
     );
     hasher.update(intent.as_bytes());
     RevisionId::from_bytes(hasher.finalize().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_revision_id;
+    use memoria_types::{MemoryId, RevisionId, RevisionSemanticIntent, SourceBlobHash};
+
+    #[test]
+    fn revision_id_derivation_is_parent_order_independent_after_canonicalization() {
+        let memory_id = MemoryId::from_bytes([1; 16]);
+        let low = RevisionId::from_bytes([2; 32]);
+        let high = RevisionId::from_bytes([3; 32]);
+        let source = SourceBlobHash::from_bytes(b"merge");
+        let mut left = vec![low, high];
+        let mut right = vec![high, low];
+        left.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        right.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        assert_eq!(
+            derive_revision_id(memory_id, &left, source, RevisionSemanticIntent::Merge),
+            derive_revision_id(memory_id, &right, source, RevisionSemanticIntent::Merge)
+        );
+    }
 }
 
 fn parse_fixed_bytes<const N: usize>(

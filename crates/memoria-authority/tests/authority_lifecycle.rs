@@ -778,9 +778,11 @@ fn merge_revision_keeps_all_valid_same_memory_parents() {
         )
         .unwrap();
 
+    let mut expected_parents = vec![left, right];
+    expected_parents.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     assert_eq!(
         store.revision_parents(merged.revision_id()).unwrap(),
-        vec![left, right]
+        expected_parents
     );
     assert_eq!(
         store
@@ -833,9 +835,11 @@ fn merge_batch_publishes_one_generation_and_updates_head() {
     assert_eq!(result.generation(), before.next());
     let merged = store.get_memory(base.memory_id()).unwrap();
     assert_eq!(merged.generation(), result.generation());
+    let mut expected_parents = vec![left, right];
+    expected_parents.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     assert_eq!(
         store.db.get_revision(merged.revision_id()).unwrap().parents,
-        vec![left, right]
+        expected_parents
     );
 }
 

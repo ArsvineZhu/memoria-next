@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::fs;
 use std::string::FromUtf8Error;
 
 use memoria_adaptive::{AdaptiveEventLog, AdaptiveStateV1, QueryAdaptiveSignature};
 use memoria_authority::{
-    AuthorityDb, MemoryLifecycle, SourceCas, SpaceProviderMode, SpaceProviderPolicy, StoreLayout,
-    StoreWriterLock,
+    AuthorityDb, ImportMemoryAllocation, MemoryLifecycle, PortableImportAllocation,
+    PortableImportResult, PurgeOperationRecord, SourceCas, SpaceProviderMode, SpaceProviderPolicy,
+    StoreLayout, StoreWriterLock,
 };
 use memoria_derived::{
     AnnSegmentEntry, AnnSegmentV1, BaseReadyReport, BuildJobState, DerivedCatalog, DerivedCompiler,
@@ -24,6 +26,7 @@ use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, Spa
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::backup;
 use crate::limits::{ResourceLimits, check_source_bytes};
 use crate::privacy::{ProviderCapability, ProviderEgressPolicy, space_provider_mode};
 use crate::provider::{
@@ -34,7 +37,7 @@ use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
 use crate::query_operation::{QueryOperationTable, QueryStep, QueryWork};
 use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
-use crate::transfer::PortableMemory;
+use crate::transfer::{PortableImportRequest, PortableMemory, rewrite_memory_ref_source};
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -115,6 +118,12 @@ pub enum RuntimeError {
 
     #[error("feedback receipt error: {0}")]
     Receipt(#[from] ReceiptError),
+
+    #[error("runtime I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("backup error: {0}")]
+    Backup(#[from] backup::BackupError),
 }
 
 impl RuntimeError {
@@ -145,6 +154,8 @@ impl RuntimeError {
             Self::Receipt(ReceiptError::NotFound { .. }) => "NOT_FOUND",
             Self::Receipt(ReceiptError::Expired { .. }) => "FEEDBACK_RECEIPT_EXPIRED",
             Self::Receipt(_) => "ADAPTIVE_ERROR",
+            Self::Backup(_) => "STORE_CORRUPT",
+            Self::Io(_) => "STORE_CORRUPT",
         }
     }
 }
@@ -365,10 +376,139 @@ impl MemoriaRuntime {
         Ok(memories)
     }
 
+    pub fn import_portable(
+        &mut self,
+        request: PortableImportRequest,
+    ) -> Result<PortableImportResult, RuntimeError> {
+        self.ensure_open()?;
+        let PortableImportRequest {
+            target_space_key,
+            idempotency_key,
+            request_fingerprint,
+            origin_store_id,
+            memories,
+        } = request;
+        if target_space_key.trim().is_empty() {
+            return Err(RuntimeError::Authority(
+                MemoriaError::InvalidMutationBatch {
+                    message: "portable import target space key must not be empty".to_owned(),
+                },
+            ));
+        }
+        if memories.is_empty() {
+            return Err(RuntimeError::Authority(
+                MemoriaError::InvalidMutationBatch {
+                    message: "portable import must contain at least one memory".to_owned(),
+                },
+            ));
+        }
+
+        let target_space_id = SpaceId::try_new()?;
+        let mut mapping = BTreeMap::new();
+        let mut allocated = Vec::with_capacity(memories.len());
+        for memory in memories {
+            let target_id = MemoryId::try_new()?;
+            if mapping
+                .insert(memory.source_id.to_string(), target_id.to_string())
+                .is_some()
+            {
+                return Err(RuntimeError::Authority(
+                    MemoriaError::InvalidMutationBatch {
+                        message: format!(
+                            "portable import source memory {} is listed more than once",
+                            memory.source_id
+                        ),
+                    },
+                ));
+            }
+            allocated.push((memory.source_id, target_id, memory.mdx));
+        }
+
+        // Allocate the complete local identity mapping before parsing and
+        // rewriting any document. This keeps the document pass independent of
+        // Authority commit order and makes all internal references resolvable.
+        let mut unresolved = std::collections::BTreeSet::new();
+        let mut import_memories = Vec::with_capacity(allocated.len());
+        let mut rewritten_sources = Vec::with_capacity(allocated.len());
+        for (source_id, target_id, source) in allocated {
+            let rewritten = rewrite_memory_ref_source(&source, &mapping)?;
+            unresolved.extend(rewritten.unresolved);
+            let source_bytes = rewritten.rewritten.into_bytes();
+            rewritten_sources.push((target_id, source_bytes.clone()));
+            import_memories.push(ImportMemoryAllocation {
+                source_id,
+                memory_id: target_id,
+                document_key: None,
+                source: source_bytes,
+            });
+        }
+
+        let allocation = PortableImportAllocation {
+            target_space_id,
+            memories: import_memories,
+        };
+        let before = self.authority_generation()?;
+        let result = self.authority.import_portable(
+            &self.cas,
+            &target_space_key,
+            allocation,
+            &idempotency_key,
+            &request_fingerprint,
+            origin_store_id.as_deref(),
+            unresolved.into_iter().collect(),
+        )?;
+        if result.generation() > before {
+            let policy = self.space_provider_policy_at(target_space_id, result.generation())?;
+            for (memory_id, source) in rewritten_sources {
+                let projection = local_embedding_projection(&source)?;
+                self.enqueue_embedding_work(memory_id, result.generation(), projection, policy);
+            }
+            self.rebuild_base_for_space(target_space_id, result.generation(), policy);
+        }
+        Ok(result.into_value())
+    }
+
+    pub fn create_backup(
+        &mut self,
+        destination: Option<&std::path::Path>,
+        includes_adaptive: bool,
+    ) -> Result<backup::BackupManifest, RuntimeError> {
+        self.ensure_open()?;
+        if let Some(destination) = destination
+            && destination.starts_with(self.layout.store_dir())
+        {
+            return Err(RuntimeError::Backup(backup::BackupError::Invalid {
+                message: "backup destination is inside the source Store".to_owned(),
+            }));
+        }
+        Ok(backup::create_backup(
+            &self.layout,
+            &self.authority,
+            &self.adaptive_log,
+            destination,
+            includes_adaptive,
+        )?)
+    }
+
     pub fn plan_purge(&mut self, memory_id: MemoryId) -> Result<PurgePlan, RuntimeError> {
         self.ensure_open()?;
         self.authority.get_memory(memory_id)?;
-        Ok(self.purge.plan(memory_id))
+        if let Some(existing) = self
+            .authority
+            .list_purge_operations()?
+            .into_iter()
+            .find(|operation| operation.memory_id == memory_id)
+        {
+            let plan = purge_plan_from_authority(existing)?;
+            self.purge.restore(plan.clone());
+            return Ok(plan);
+        }
+        let plan_id = format!("PURGE_{}_{}", memory_id, unique_purge_suffix());
+        let plan = self.purge.plan_with_id(plan_id, memory_id);
+        let persisted = self.authority.create_purge_operation(&plan.id, memory_id)?;
+        let plan = purge_plan_from_authority(persisted)?;
+        self.purge.restore(plan.clone());
+        Ok(plan)
     }
 
     pub fn execute_purge(&mut self, plan_id: &str) -> Result<PurgePlan, RuntimeError> {
@@ -384,6 +524,8 @@ impl MemoriaRuntime {
             return Ok(planned);
         }
         if planned.state == PurgeState::Planned {
+            self.authority
+                .transition_purge_operation(plan_id, "planned", "committed")?;
             self.purge
                 .transition(plan_id, PurgeState::Planned, PurgeState::Committed)
                 .map_err(|_| RuntimeError::PurgeConflict {
@@ -391,21 +533,36 @@ impl MemoriaRuntime {
                 })?;
         }
         if self.purge.state(plan_id) == Some(PurgeState::Committed) {
-            let hashes = self.authority.purge_memory(planned.memory_id)?;
+            match self.authority.purge_memory(planned.memory_id) {
+                Ok(_) | Err(MemoriaError::NotFound { .. }) => {}
+                Err(error) => return Err(error.into()),
+            }
+            self.authority
+                .transition_purge_operation(plan_id, "committed", "cleaning")?;
             self.purge
                 .transition(plan_id, PurgeState::Committed, PurgeState::Cleaning)
                 .map_err(|_| RuntimeError::PurgeConflict {
                     plan_id: plan_id.to_owned(),
                 })?;
+        }
+        if self.purge.state(plan_id) == Some(PurgeState::Cleaning) {
             self.adaptive_log
                 .rewrite_without_memory(planned.memory_id)?;
             self.receipts.clear();
             self.derived.delete_all_derived()?;
-            for hash in hashes {
-                if !self.authority.source_blob_is_referenced(hash)? {
-                    let _ = self.cas.remove_if_exists(hash)?;
-                }
+            self.collect_unreferenced_source_objects()?;
+            let integrity = self.authority.verify_full(&self.cas)?;
+            if !integrity.is_clean() {
+                let message = integrity
+                    .issues()
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.code, issue.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(MemoriaError::Corruption { message }.into());
             }
+            self.authority
+                .transition_purge_operation(plan_id, "cleaning", "completed")?;
             return self
                 .purge
                 .transition(plan_id, PurgeState::Cleaning, PurgeState::Completed)
@@ -1170,6 +1327,26 @@ impl MemoriaRuntime {
     }
 
     fn recover_after_open(&mut self) -> Result<(), RuntimeError> {
+        let purge_operations = self.authority.list_purge_operations()?;
+        for operation in purge_operations {
+            let plan = purge_plan_from_authority(operation)?;
+            let plan_id = plan.id.clone();
+            let state = plan.state;
+            let memory_id = plan.memory_id;
+            self.purge.restore(plan);
+            match state {
+                PurgeState::Planned => {
+                    // Planning is durable, but remains an explicit admin action.
+                    // Reopening validates the target without silently starting a
+                    // destructive operation.
+                    self.authority.get_memory(memory_id)?;
+                }
+                PurgeState::Committed | PurgeState::Cleaning => {
+                    self.execute_purge(&plan_id)?;
+                }
+                PurgeState::Completed => {}
+            }
+        }
         let generation = self.authority_generation()?;
         let spaces = self.authority.list_active_space_ids_at(generation)?;
         let serving_manifest = self.derived.serving_manifest()?;
@@ -1195,6 +1372,26 @@ impl MemoriaRuntime {
             {
                 let projection = local_embedding_projection(&read.source)?;
                 self.enqueue_embedding_work(read.memory.memory_id, generation, projection, policy);
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_unreferenced_source_objects(&self) -> Result<(), RuntimeError> {
+        let entries = fs::read_dir(self.layout.objects_dir())?;
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Ok(hash) = name.parse() else {
+                continue;
+            };
+            if !self.authority.source_blob_is_referenced(hash)? {
+                let _ = self.cas.remove_if_exists(hash)?;
             }
         }
         Ok(())
@@ -1610,7 +1807,13 @@ impl MemoriaRuntime {
                     let entities = record
                         .entity_refs
                         .iter()
-                        .map(|entity| memoria_query::EntityRef::new(entity.clone()))
+                        .map(|entity| {
+                            memoria_query::EntityRef::new(entity.clone()).map_err(|_| {
+                                QueryError::InvalidEntityRef {
+                                    value: entity.clone(),
+                                }
+                            })
+                        })
                         .collect::<Result<Vec<_>, _>>()?;
                     Ok(ExactRecord::new(
                         record.space_id,
@@ -1645,7 +1848,11 @@ impl MemoriaRuntime {
                     .observations()
                     .iter()
                     .map(|observation| {
-                        memoria_query::EntityRef::new(observation.entity_ref.as_str())
+                        memoria_query::EntityRef::new(observation.entity_ref.as_str()).map_err(
+                            |_| QueryError::InvalidEntityRef {
+                                value: observation.entity_ref.to_string(),
+                            },
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let tags = ExplicitTagBuilder::build_for(&ir, target)?
@@ -1687,6 +1894,31 @@ impl MemoriaRuntime {
     pub fn data_dir(&self) -> &std::path::Path {
         self.layout.store_dir()
     }
+}
+
+fn purge_plan_from_authority(operation: PurgeOperationRecord) -> Result<PurgePlan, RuntimeError> {
+    let state = match operation.state.as_str() {
+        "planned" => PurgeState::Planned,
+        "committed" => PurgeState::Committed,
+        "cleaning" => PurgeState::Cleaning,
+        "completed" => PurgeState::Completed,
+        value => {
+            return Err(RuntimeError::AuthorityDatabase {
+                message: format!("invalid purge operation state `{value}`"),
+            });
+        }
+    };
+    Ok(PurgePlan {
+        id: operation.purge_id,
+        memory_id: operation.memory_id,
+        state,
+    })
+}
+
+fn unique_purge_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos())
 }
 
 fn local_embedding_projection(source: &[u8]) -> Result<LocalEmbeddingProjectionV1, RuntimeError> {

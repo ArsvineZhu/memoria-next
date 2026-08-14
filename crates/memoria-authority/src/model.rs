@@ -266,6 +266,16 @@ impl<'tx> AuthorityTransaction<'tx> {
         provider_policy: SpaceProviderPolicy,
     ) -> rusqlite::Result<SpaceId> {
         let space_id = SpaceId::try_new().map_err(sqlite_conversion_error)?;
+        self.insert_space_record_with_id(space_id, space_key, provider_policy)?;
+        Ok(space_id)
+    }
+
+    pub(crate) fn insert_space_record_with_id(
+        &mut self,
+        space_id: SpaceId,
+        space_key: impl AsRef<str>,
+        provider_policy: SpaceProviderPolicy,
+    ) -> rusqlite::Result<()> {
         let space_key = space_key.as_ref();
         let generation = sqlite_generation(self.generation)?;
 
@@ -283,7 +293,7 @@ impl<'tx> AuthorityTransaction<'tx> {
             generation,
         )?;
 
-        Ok(space_id)
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

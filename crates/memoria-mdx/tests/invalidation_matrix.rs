@@ -21,11 +21,11 @@ fn formatting_only_change_has_no_invalidation_category() {
 #[test]
 fn entity_binding_tag_and_relation_changes_use_structural_categories() {
     let old = compile_ir(
-        r##"<Entity id="person" ref="person:old">Ada</Entity><Tag value="old"/><Section id="a"/><Section id="b"/><Relation id="r" from="#a" to="#b" kind="association"/>"##,
+        r##"<Entity id="person" ref="person:old">Ada</Entity><Tag value="old"/><Section id="a"/><Section id="b"/><Relation id="r" from="#a" to="#b" kind="associated-with"/>"##,
     )
     .unwrap();
     let new = compile_ir(
-        r##"<Entity id="person" ref="person:new">Ada</Entity><Tag value="new"/><Section id="a"/><Section id="b"/><Relation id="r" from="#b" to="#a" kind="association"/>"##,
+        r##"<Entity id="person" ref="person:new">Ada</Entity><Tag value="new"/><Section id="a"/><Section id="b"/><Relation id="r" from="#b" to="#a" kind="associated-with"/>"##,
     )
     .unwrap();
     let diff = SemanticDiff::between(&old, &new);

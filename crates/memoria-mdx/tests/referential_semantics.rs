@@ -30,11 +30,13 @@ fn entity_refs_use_a_generic_namespace_qualified_grammar() {
 #[test]
 fn relation_endpoints_must_resolve_to_declared_node_ids() {
     assert!(parse_and_validate(
-        r##"<Section id="a"/><Section id="b"/><Relation id="r" from="#a" to="#b" kind="association"/>"##
+        r##"<Section id="a"/><Section id="b"/><Relation id="r" from="#a" to="#b" kind="associated-with"/>"##
     )
     .is_ok());
     assert!(matches!(
-        parse_and_validate(r##"<Relation id="r" from="#missing" to="#b" kind="association"/>"##),
+        parse_and_validate(
+            r##"<Relation id="r" from="#missing" to="#b" kind="associated-with"/>"##
+        ),
         Err(MdxError::InvalidReference { .. })
     ));
 }
@@ -47,6 +49,28 @@ fn unknown_kind_is_rejected_but_opaque_class_is_valid() {
     ));
     assert!(
         parse_and_validate(r#"<Event id="e" occurredAt="2026" class="caller.taxonomy"/>"#).is_ok()
+    );
+}
+
+#[test]
+fn core_kind_is_checked_against_the_element_schema() {
+    assert!(matches!(
+        parse_and_validate(
+            r##"<Section id="a"/><Section id="b"/><Relation id="r" from="#a" to="#b" kind="person"/>"##
+        ),
+        Err(MdxError::UnknownKind { .. })
+    ));
+    assert!(matches!(
+        parse_and_validate(r#"<Entity id="e" ref="person:ada" kind="causal">Ada</Entity>"#),
+        Err(MdxError::UnknownKind { .. })
+    ));
+    let document = parse_and_validate(
+        r#"<Entity id="e" ref="person:ada" kind="person" class="caller.taxonomy">Ada</Entity>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        document.node(&"e".parse().unwrap()).unwrap().attributes()["class"],
+        "caller.taxonomy"
     );
 }
 

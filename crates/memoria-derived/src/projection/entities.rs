@@ -1,25 +1,8 @@
 use memoria_mdx::{MemoryIr, SemanticKind, SemanticNodeId};
+pub use memoria_types::EntityRef;
 
 use crate::DerivedError;
 use crate::projection::ProjectionTarget;
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct EntityRef(String);
-
-impl EntityRef {
-    pub fn new(value: impl Into<String>) -> Result<Self, DerivedError> {
-        let value = value.into();
-        if value.is_empty() || !value.contains(':') || value.chars().any(char::is_whitespace) {
-            return Err(DerivedError::InvalidProjectionValue { value });
-        }
-        Ok(Self(value))
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EntityObservationArtifact {
@@ -54,7 +37,11 @@ impl EntityObservationBuilder {
                     .ok_or_else(|| DerivedError::InvalidProjectionValue {
                         value: "Entity.ref is missing".to_owned(),
                     })
-                    .and_then(EntityRef::new)?;
+                    .and_then(|value| {
+                        EntityRef::new(value).map_err(|_| DerivedError::InvalidProjectionValue {
+                            value: value.to_owned(),
+                        })
+                    })?;
                 Ok(EntityObservation {
                     target,
                     entity_ref,

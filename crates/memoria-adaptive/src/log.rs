@@ -2,8 +2,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use memoria_types::{AdaptiveGeneration, MemoryId, SpaceId};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use sha2::{Digest, Sha256};
+use std::{thread, time::Duration};
 
 use crate::{
     AdaptiveCheckpoint, AdaptiveError, AdaptiveEvent, AdaptiveStateV1, FeedbackEventInput,
@@ -377,9 +380,7 @@ fn persist_append(
     generation: AdaptiveGeneration,
     event_count: usize,
 ) -> Result<(), AdaptiveError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(storage_error)?;
+    let transaction = begin_immediate_with_retry(connection).map_err(storage_error)?;
     for event in events {
         insert_event(&transaction, event)?;
     }
@@ -393,9 +394,7 @@ fn persist_snapshot(
     state: &AdaptiveStateV1,
     generation: AdaptiveGeneration,
 ) -> Result<(), AdaptiveError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(storage_error)?;
+    let transaction = begin_immediate_with_retry(connection).map_err(storage_error)?;
     transaction
         .execute("DELETE FROM adaptive_events", [])
         .map_err(storage_error)?;
@@ -447,6 +446,33 @@ fn insert_event(
         )
         .map_err(storage_error)?;
     Ok(())
+}
+
+fn begin_immediate_with_retry(connection: &Connection) -> rusqlite::Result<Transaction<'_>> {
+    begin_immediate_with_retry_count(connection, 0)
+}
+
+fn begin_immediate_with_retry_count(
+    connection: &Connection,
+    retry: usize,
+) -> rusqlite::Result<Transaction<'_>> {
+    const RETRY_DELAYS_MS: [u64; 3] = [10, 50, 200];
+    match Transaction::new_unchecked(connection, TransactionBehavior::Immediate) {
+        Ok(transaction) => Ok(transaction),
+        Err(error) if is_busy_or_locked(&error) && retry < RETRY_DELAYS_MS.len() => {
+            thread::sleep(Duration::from_millis(RETRY_DELAYS_MS[retry]));
+            begin_immediate_with_retry_count(connection, retry + 1)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(failure.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
 }
 
 fn persist_materialized(

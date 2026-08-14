@@ -34,13 +34,21 @@ impl PurgeCoordinator {
 
     pub fn plan(&mut self, memory_id: MemoryId) -> PurgePlan {
         self.next_id = self.next_id.saturating_add(1);
+        self.plan_with_id(format!("PURGE_{}", self.next_id), memory_id)
+    }
+
+    pub fn plan_with_id(&mut self, id: String, memory_id: MemoryId) -> PurgePlan {
         let plan = PurgePlan {
-            id: format!("PURGE_{}", self.next_id),
+            id,
             memory_id,
             state: PurgeState::Planned,
         };
         self.plans.insert(plan.id.clone(), plan.clone());
         plan
+    }
+
+    pub fn restore(&mut self, plan: PurgePlan) {
+        self.plans.insert(plan.id.clone(), plan);
     }
 
     pub fn state(&self, plan_id: &str) -> Option<PurgeState> {

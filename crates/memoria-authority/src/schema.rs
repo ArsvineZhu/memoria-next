@@ -11,6 +11,7 @@ pub(crate) const SCHEMA_V1_TABLES: &[&str] = &[
     "revision_parents",
     "idempotency_records",
     "import_records",
+    "purge_operations",
 ];
 
 pub(crate) const SCHEMA_V1_COLUMNS: &[(&str, &[&str])] = &[
@@ -79,6 +80,23 @@ pub(crate) const SCHEMA_V1_COLUMNS: &[(&str, &[&str])] = &[
             "origin_record_id",
             "status",
             "committed_generation",
+            "request_fingerprint",
+            "target_space_id",
+            "mapping_json",
+            "unresolved_json",
+        ],
+    ),
+    (
+        "purge_operations",
+        &[
+            "purge_id",
+            "memory_id",
+            "state",
+            "planned_at",
+            "committed_generation",
+            "updated_at",
+            "last_error_code",
+            "last_error_message",
         ],
     ),
 ];
@@ -274,10 +292,30 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
 );
 
 CREATE TABLE IF NOT EXISTS import_records (
-    import_id BLOB PRIMARY KEY NOT NULL,
-    origin_store_id BLOB,
+    import_id TEXT PRIMARY KEY NOT NULL,
+    origin_store_id TEXT,
     origin_record_id TEXT NOT NULL,
     status TEXT NOT NULL,
-    committed_generation INTEGER NOT NULL CHECK (committed_generation >= 0)
+    committed_generation INTEGER NOT NULL CHECK (committed_generation >= 0),
+    request_fingerprint TEXT NOT NULL,
+    target_space_id BLOB NOT NULL CHECK (length(target_space_id) = 16),
+    mapping_json TEXT NOT NULL,
+    unresolved_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS purge_operations (
+    purge_id TEXT PRIMARY KEY NOT NULL,
+    memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+    state TEXT NOT NULL CHECK (state IN ('planned', 'committed', 'cleaning', 'completed')),
+    planned_at INTEGER NOT NULL CHECK (planned_at >= 0),
+    committed_generation INTEGER CHECK (
+        committed_generation IS NULL OR committed_generation >= 0
+    ),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+    last_error_code TEXT,
+    last_error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS purge_operations_memory_state
+    ON purge_operations (memory_id, state);
 "#;

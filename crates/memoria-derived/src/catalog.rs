@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::{collections::BTreeSet, fs, time::Duration};
+use std::{collections::BTreeSet, fs, thread, time::Duration};
 
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 
 use crate::artifact::{ArtifactDescriptor, ArtifactId, ArtifactState, BuildJob, BuildJobState};
 use crate::gc::DerivedGc;
@@ -81,7 +83,12 @@ impl DerivedCatalog {
             fs::create_dir_all(parent)?;
         }
         let connection = Connection::open(&database_path)?;
-        connection.pragma_update(None, "foreign_keys", true)?;
+        connection.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;",
+        )?;
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS artifacts (
@@ -384,7 +391,7 @@ impl DerivedCatalog {
         space_id: SpaceId,
         records: &[ServingRecord],
     ) -> Result<(), DerivedError> {
-        let transaction = self.connection.transaction()?;
+        let transaction = self.begin_immediate_with_retry()?;
         transaction.execute(
             "DELETE FROM serving_records WHERE space_id = ?1",
             params![space_id.as_bytes().as_slice()],
@@ -871,7 +878,7 @@ impl DerivedCatalog {
         generation: AuthorityGeneration,
         capabilities: Vec<String>,
     ) -> Result<DerivedManifest, DerivedError> {
-        let transaction = self.connection.transaction()?;
+        let transaction = self.begin_immediate_with_retry()?;
         let mut kinds = BTreeSet::new();
         let mut has_compatible_semantic_artifact = false;
         for id in &artifact_ids {
@@ -962,7 +969,7 @@ impl DerivedCatalog {
         &mut self,
         generation: AuthorityGeneration,
     ) -> Result<DerivedManifest, DerivedError> {
-        let transaction = self.connection.transaction()?;
+        let transaction = self.begin_immediate_with_retry()?;
         transaction.execute(
             "INSERT INTO manifests(authority_generation) VALUES (?1)",
             params![generation_to_sql(generation)?],
@@ -1076,7 +1083,7 @@ impl DerivedCatalog {
     }
 
     pub fn delete_all_derived(&mut self) -> Result<(), DerivedError> {
-        let transaction = self.connection.transaction()?;
+        let transaction = self.begin_immediate_with_retry()?;
         transaction.execute_batch(
             "
             DELETE FROM manifest_capabilities;
@@ -1096,9 +1103,32 @@ impl DerivedCatalog {
         Ok(())
     }
 
-    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
-        &mut self.connection
+    pub(crate) fn begin_immediate_with_retry(&self) -> Result<Transaction<'_>, DerivedError> {
+        self.begin_immediate_with_retry_count(0)
     }
+
+    fn begin_immediate_with_retry_count(
+        &self,
+        retry: usize,
+    ) -> Result<Transaction<'_>, DerivedError> {
+        const RETRY_DELAYS_MS: [u64; 3] = [10, 50, 200];
+        match Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate) {
+            Ok(transaction) => Ok(transaction),
+            Err(error) if is_busy_or_locked(&error) && retry < RETRY_DELAYS_MS.len() => {
+                thread::sleep(Duration::from_millis(RETRY_DELAYS_MS[retry]));
+                self.begin_immediate_with_retry_count(retry + 1)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(failure.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
 }
 
 fn decode_vector_payload_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<VectorPayloadRecord> {

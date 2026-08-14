@@ -11,12 +11,14 @@ mod receipt;
 mod status;
 mod transfer;
 
-pub use backup::{BackupManifest, inspect_backup};
+pub use backup::{BackupError, BackupManifest, create_backup, inspect_backup, restore_backup};
 pub use diagnostics::{RedactedDiagnostic, redact_text};
 pub use discovery::{EntityObservation, discover_scoped};
 pub use engine::{MemoriaRuntime, MemoryMutation, RuntimeError};
 pub use limits::{ResourceLimitError, ResourceLimits, check_source_bytes};
-pub use memoria_authority::{SpaceProviderMode, SpaceProviderPolicy};
+pub use memoria_authority::{
+    PortableImportMapping, PortableImportResult, SpaceProviderMode, SpaceProviderPolicy,
+};
 pub use memoria_query::{MemoryQuery, RetrievalResponse};
 pub use privacy::{
     ProviderCapability, ProviderEgressPolicy, ProviderTrust, allows_space_provider_mode,
@@ -33,4 +35,14 @@ pub use receipt::{
     FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, ReceiptError, RetrievalReceipt,
 };
 pub use status::RuntimeStatus;
-pub use transfer::{PortableMemory, ReferenceRewrite, rewrite_reference_ids};
+pub use transfer::{
+    PortableImportRequest, PortableMemory, ReferenceRewrite, SourceReferenceRewrite,
+    rewrite_memory_ref_source, rewrite_reference_ids,
+};
+
+pub fn restore_store_backup(
+    backup_dir: impl AsRef<std::path::Path>,
+    target_dir: impl AsRef<std::path::Path>,
+) -> Result<BackupManifest, RuntimeError> {
+    Ok(restore_backup(backup_dir, target_dir)?)
+}

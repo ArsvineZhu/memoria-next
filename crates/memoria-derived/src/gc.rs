@@ -39,8 +39,7 @@ impl<'a> DerivedGc<'a> {
     pub fn collect(self) -> Result<GcReport, DerivedError> {
         let mut roots = self.grace;
         roots.extend(self.pins);
-        let connection = self.catalog.connection_mut();
-        let transaction = connection.transaction()?;
+        let transaction = self.catalog.begin_immediate_with_retry()?;
         let now = unix_now();
         transaction.execute("DELETE FROM leases WHERE expires_at <= ?1", [now])?;
 

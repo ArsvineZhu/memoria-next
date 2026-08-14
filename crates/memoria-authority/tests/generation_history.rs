@@ -83,6 +83,7 @@ fn schema_v1_creates_all_authority_tables() {
             "import_records",
             "memories",
             "memory_state_history",
+            "purge_operations",
             "revision_parents",
             "revisions",
             "space_state_history",

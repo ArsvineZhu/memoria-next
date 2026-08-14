@@ -183,6 +183,9 @@ interface TransferEngine {
     idempotencyKey?: string;
     mdx: string;
   }): Promise<{ memoryId: string; authorityGeneration: string }>;
+  importPortable?(
+    request: import("../native/protocol.js").NativePortableImportRequest,
+  ): Promise<import("../native/protocol.js").NativePortableImportResult>;
 }
 
 export async function createPortableExport(
@@ -229,24 +232,54 @@ export async function importPortablePackage(
   if (!input.idempotencyKey.trim()) {
     throw new Error("IDEMPOTENCY_CONFLICT: import idempotency key is empty");
   }
-  const packageValue = JSON.parse(
-    await readFile(resolve(input.packagePath), "utf8"),
-  ) as PortablePackage;
-  if (
-    packageValue.format !== "memoria-portable-v1" ||
-    !Array.isArray(packageValue.memories)
-  ) {
-    throw new Error("UNSUPPORTED_STORE_FORMAT: unsupported portable package");
+  const packagePath = resolve(input.packagePath);
+  if ((await stat(packagePath)).size > 32 * 1024 * 1024) {
+    throw new Error("RESOURCE_LIMIT: portable package is too large");
   }
+  const packageValue = JSON.parse(
+    await readFile(packagePath, "utf8"),
+  ) as PortablePackage;
+  validatePortablePackage(packageValue);
   const sourceIds = new Set<string>();
   for (const memory of packageValue.memories) {
-    if (sourceIds.has(memory.sourceId) || !memory.sourceId || !memory.mdx) {
+    if (sourceIds.has(memory.sourceId)) {
       throw new Error(
         "INVALID_MDX: portable package contains an invalid memory",
       );
     }
     sourceIds.add(memory.sourceId);
   }
+
+  const requestFingerprint = digest(
+    JSON.stringify({
+      format: packageValue.format,
+      originStoreId: packageValue.originStoreId,
+      scope: packageValue.scope,
+      memories: packageValue.memories,
+    }),
+  );
+  if (engine.importPortable) {
+    const imported = await engine.importPortable({
+      targetSpaceKey: input.targetSpace.key,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint,
+      originStoreId: packageValue.originStoreId,
+      memories: packageValue.memories.map(({ sourceId, spaceId, revisionId, mdx }) => ({
+        sourceId,
+        spaceId,
+        revisionId,
+        mdx,
+      })),
+    });
+    return {
+      mappings: { memories: imported.mappings },
+      unresolvedExternalReferences: [...imported.unresolvedExternalReferences].sort(),
+      targetSpaceId: imported.targetSpaceId,
+    };
+  }
+
+  // Lightweight test engines may not expose the Rust import entry point. The
+  // native Memoria engine always takes the durable path above.
   const targetSpaceId = await engine.createSpace(input.targetSpace.key);
   const mappings: Array<{ sourceId: string; targetId: string }> = [];
   const mappingBySource = new Map<string, string>();
@@ -272,6 +305,43 @@ export async function importPortablePackage(
     unresolvedExternalReferences: [...unresolved].sort(),
     targetSpaceId,
   };
+}
+
+function validatePortablePackage(value: PortablePackage): void {
+  if (
+    value.format !== "memoria-portable-v1" ||
+    typeof value.originStoreId !== "string" ||
+    !Array.isArray(value.scope) ||
+    !value.scope.every((space) => typeof space === "string" && space.length > 0) ||
+    !Array.isArray(value.memories) ||
+    value.memories.length === 0 ||
+    value.memories.length > 4096
+  ) {
+    throw new Error("UNSUPPORTED_STORE_FORMAT: unsupported portable package");
+  }
+  let totalSourceBytes = 0;
+  for (const memory of value.memories) {
+    if (
+      typeof memory.sourceId !== "string" ||
+      typeof memory.spaceId !== "string" ||
+      typeof memory.revisionId !== "string" ||
+      typeof memory.mdx !== "string" ||
+      memory.sourceId.length === 0 ||
+      memory.spaceId.length === 0 ||
+      memory.revisionId.length === 0 ||
+      memory.mdx.length === 0 ||
+      memory.mdx.length > 4 * 1024 * 1024 ||
+      (memory.references !== undefined &&
+        (!Array.isArray(memory.references) ||
+          !memory.references.every((reference) => typeof reference === "string")))
+    ) {
+      throw new Error("INVALID_MDX: portable package contains an invalid memory");
+    }
+    totalSourceBytes += Buffer.byteLength(memory.mdx, "utf8");
+    if (totalSourceBytes > 64 * 1024 * 1024) {
+      throw new Error("RESOURCE_LIMIT: portable package source is too large");
+    }
+  }
 }
 
 async function hashFiles(

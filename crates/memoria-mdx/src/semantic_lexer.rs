@@ -40,7 +40,7 @@ pub(crate) fn lex_source(
             cursor += 1;
             continue;
         }
-        if source[cursor..].starts_with("<!--") {
+        if source.is_char_boundary(cursor) && source[cursor..].starts_with("<!--") {
             cursor = source[cursor + 4..]
                 .find("-->")
                 .map(|end| cursor + 4 + end + 3)
@@ -49,8 +49,14 @@ pub(crate) fn lex_source(
         }
         let (tag_end, tag_text) = scan_tag(source, cursor)?;
         if tag_text.starts_with('!') || tag_text.starts_with('?') {
-            cursor = tag_end;
-            continue;
+            return Err(MdxError::RawHtml {
+                name: tag_text
+                    .split_ascii_whitespace()
+                    .next()
+                    .unwrap_or(tag_text)
+                    .to_owned(),
+                span: cursor..tag_end,
+            });
         }
         if let Some(closing_name) = tag_text.strip_prefix('/') {
             let name = parse_name(closing_name.trim(), cursor..tag_end)?;
@@ -75,6 +81,11 @@ pub(crate) fn lex_source(
                     open.attributes,
                     false,
                 ));
+            } else {
+                return Err(MdxError::RawHtml {
+                    name,
+                    span: cursor..tag_end,
+                });
             }
             cursor = tag_end;
             continue;
@@ -82,8 +93,10 @@ pub(crate) fn lex_source(
 
         let (name, attributes, self_closing) = parse_open_tag(tag_text, cursor..tag_end)?;
         if !is_uppercase_name(&name) {
-            cursor = tag_end;
-            continue;
+            return Err(MdxError::RawHtml {
+                name,
+                span: cursor..tag_end,
+            });
         }
         if !is_core_name(&name) {
             return Err(MdxError::UnsupportedRuntimeComponent {
@@ -124,6 +137,13 @@ fn reject_forbidden_syntax(source: &str, protected: &[Range<usize>]) -> Result<(
     while cursor < bytes.len() {
         if in_protected(cursor, protected) {
             cursor += 1;
+            continue;
+        }
+        if source.is_char_boundary(cursor) && source[cursor..].starts_with("<!--") {
+            cursor = source[cursor + 4..]
+                .find("-->")
+                .map(|end| cursor + 4 + end + 3)
+                .unwrap_or(bytes.len());
             continue;
         }
         if bytes[cursor] == b'{' || bytes[cursor] == b'}' {
