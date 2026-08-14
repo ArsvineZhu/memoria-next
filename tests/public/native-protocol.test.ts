@@ -132,3 +132,32 @@ test("text-only native request does not infer semantic capability", async () => 
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("default native loader carries structured cue into the real artifact", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-native-artifact-query-"));
+  const memoria = await createMemoria({ dataDir });
+
+  try {
+    const spaceId = await memoria.createSpace("a3-native-artifact");
+    await memoria.createMemory({
+      spaceId,
+      documentKey: "career",
+      mdx: "# Career\nRust systems work",
+    });
+    await memoria.createMemory({
+      spaceId,
+      documentKey: "graph",
+      mdx: "# Graph\nRust retrieval notes",
+    });
+
+    const response = await memoria.query({
+      scope: { spaces: [asSpaceId(spaceId)] },
+      cue: { text: "career" },
+    });
+
+    assert.equal(response.resultCount, 1);
+  } finally {
+    await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

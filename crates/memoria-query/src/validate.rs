@@ -29,6 +29,9 @@ pub enum QueryError {
     #[error("capability name cannot be empty")]
     EmptyCapability,
 
+    #[error("unsupported query capability `{capability}`")]
+    UnsupportedCapability { capability: String },
+
     #[error("required and preferred capability sets overlap")]
     CapabilityOverlap,
 
@@ -80,13 +83,22 @@ pub(crate) fn validate_query(query: &MemoryQuery) -> Result<(), QueryError> {
     {
         return Err(QueryError::EmptyTag);
     }
-    if query
+    for capability in query
         .required_capabilities
         .iter()
         .chain(query.preferred_capabilities.iter())
-        .any(|capability| capability.trim().is_empty())
     {
-        return Err(QueryError::EmptyCapability);
+        if capability.trim().is_empty() {
+            return Err(QueryError::EmptyCapability);
+        }
+        if !matches!(
+            capability.as_str(),
+            "semantic" | "associative" | "reranking" | "adaptive"
+        ) {
+            return Err(QueryError::UnsupportedCapability {
+                capability: capability.clone(),
+            });
+        }
     }
     let required = query
         .required_capabilities

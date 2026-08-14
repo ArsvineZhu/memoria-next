@@ -25,6 +25,19 @@ fn cue_entity_is_not_a_constraint() {
     assert!(query.constraints.entities.is_empty());
 }
 
+#[test]
+fn unsupported_capability_is_rejected_by_domain_validation() {
+    let error = MemoryQuery::builder()
+        .spaces(vec![fixture_space()])
+        .require_capability("unknown")
+        .build()
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        QueryError::UnsupportedCapability { capability } if capability == "unknown"
+    ));
+}
+
 fn compiler_with_semantic_coverage(authority: u64, coverage: u64) -> QueryCompiler {
     let dir = tempdir().unwrap();
     let mut catalog = DerivedCatalog::open(dir.path().join("derived.sqlite")).unwrap();

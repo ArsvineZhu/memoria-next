@@ -130,3 +130,42 @@ fn history_temporal_consistency_and_budget_round_trip() {
     assert_eq!(query.budget.max_evidence_tokens, 321);
     assert_eq!(query.quality.to_string(), "thorough");
 }
+
+#[test]
+fn invalid_capability_is_rejected_with_query_error_code() {
+    let mut request = full_request();
+    request.consistency.required = vec!["unknown".to_owned()];
+
+    let error = QueryRequest::try_from(request)
+        .unwrap()
+        .into_core()
+        .unwrap_err();
+
+    assert!(error.reason.starts_with("QUERY_ERROR:"));
+}
+
+#[test]
+fn invalid_query_enum_is_rejected_with_query_error_code() {
+    let mut request = full_request();
+    request.quality = "not-a-quality".to_owned();
+
+    let error = QueryRequest::try_from(request)
+        .unwrap()
+        .into_core()
+        .unwrap_err();
+
+    assert!(error.reason.starts_with("QUERY_ERROR:"));
+}
+
+#[test]
+fn invalid_generation_is_rejected_with_query_error_code() {
+    let mut request = full_request();
+    request.consistency.authority.generation = Some("not-a-generation".to_owned());
+
+    let error = QueryRequest::try_from(request)
+        .unwrap()
+        .into_core()
+        .unwrap_err();
+
+    assert!(error.reason.starts_with("QUERY_ERROR:"));
+}

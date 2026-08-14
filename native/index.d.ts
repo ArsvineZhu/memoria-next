@@ -108,9 +108,60 @@ export interface JsPurgePlan {
   state: string
 }
 
+export interface JsQueryAuthority {
+  mode: string
+  generation?: string
+}
+
+export interface JsQueryBudget {
+  maxResults: number
+  maxMatchesPerResult: number
+  maxEvidenceTokens: number
+}
+
+export interface JsQueryConsistency {
+  authority: JsQueryAuthority
+  required: Array<string>
+  preferred: Array<string>
+  onNotReady: string
+  timeoutMs: number
+}
+
+export interface JsQueryConstraints {
+  tags?: Array<string>
+  entities?: Array<string>
+  memories?: Array<JsQueryMemoryReference>
+  lifecycle?: string
+}
+
+export interface JsQueryCue {
+  text?: string
+  tags?: Array<string>
+  entities?: Array<string>
+  memories?: Array<JsQueryMemoryReference>
+}
+
+export interface JsQueryHistory {
+  mode: string
+  fromAuthorityGeneration?: string
+  toAuthorityGeneration?: string
+}
+
+export interface JsQueryMemoryReference {
+  memoryId: string
+  revisionId?: string
+  nodeId?: string
+}
+
 export interface JsQueryRequest {
   scope: Array<string>
-  text?: string
+  cue?: JsQueryCue
+  constraints?: JsQueryConstraints
+  temporal?: JsQueryTemporal
+  history?: JsQueryHistory
+  consistency: JsQueryConsistency
+  budget: JsQueryBudget
+  quality: string
 }
 
 export interface JsQueryResponse {
@@ -126,6 +177,10 @@ export interface JsQueryResult {
   spaceId: string
   memoryId: string
   revisionId: string
+}
+
+export interface JsQueryTemporal {
+  validAt?: string
 }
 
 export interface JsRerankScore {
