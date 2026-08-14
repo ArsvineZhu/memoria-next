@@ -4,6 +4,9 @@ use memoria_types::AuthorityGeneration;
 
 use crate::DerivedError;
 
+pub const SEMANTIC_ARTIFACT_KIND: &str = "semantic";
+pub const SEMANTIC_ARTIFACT_VERSION: u32 = 1;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ArtifactId(i64);
 
@@ -121,5 +124,12 @@ impl ArtifactDescriptor {
     #[must_use]
     pub const fn state(&self) -> ArtifactState {
         self.state
+    }
+
+    #[must_use]
+    pub fn is_compatible_semantic(&self) -> bool {
+        self.kind == SEMANTIC_ARTIFACT_KIND
+            && self.version == SEMANTIC_ARTIFACT_VERSION
+            && self.state.can_publish()
     }
 }

@@ -1,10 +1,389 @@
 use std::collections::BTreeMap;
+use std::fmt;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(unix)]
+use std::fs::File;
 
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
+use sha2::{Digest, Sha256};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
-use crate::{DerivedError, EmbeddingSignature, EmbeddingVector};
+use crate::{
+    DerivedError, EmbeddingNormalization, EmbeddingSignature, EmbeddingVector, ProjectionInputHash,
+};
+
+const VECTOR_PAYLOAD_MAGIC: &[u8; 8] = b"MEMVEC01";
+pub const VECTOR_PAYLOAD_FORMAT_VERSION: u16 = 1;
+const VECTOR_PAYLOAD_HEADER_LENGTH: usize = 8 + 2 + 4 + 1 + 32 + 32;
+static NEXT_VECTOR_PAYLOAD_STAGING_ID: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct VectorPayloadHash([u8; 32]);
+
+impl VectorPayloadHash {
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; 32] {
+        self.0
+    }
+
+    #[must_use]
+    pub fn as_hex(&self) -> String {
+        hex_lower(&self.0)
+    }
+}
+
+impl fmt::Display for VectorPayloadHash {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&hex_lower(&self.0))
+    }
+}
+
+/// Canonical immutable vector payload stored below `derived/objects/vector`.
+///
+/// Membership identity deliberately does not live in this object. The same
+/// payload can therefore be referenced by multiple revisions or Spaces.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VectorPayloadV1 {
+    dimension: u32,
+    normalization: EmbeddingNormalization,
+    producer_signature_hash: [u8; 32],
+    projection_input_hash: ProjectionInputHash,
+    values: Vec<f32>,
+}
+
+impl VectorPayloadV1 {
+    pub fn new(
+        values: Vec<f32>,
+        normalization: EmbeddingNormalization,
+        producer_signature: impl AsRef<[u8]>,
+        projection_input_hash: ProjectionInputHash,
+    ) -> Result<Self, DerivedError> {
+        let dimension =
+            u32::try_from(values.len()).map_err(|_| DerivedError::InvalidProjectionValue {
+                value: "vector payload dimension is out of range".to_owned(),
+            })?;
+        if dimension == 0 {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "vector payload dimension must be positive".to_owned(),
+            });
+        }
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "vector payload values must be finite".to_owned(),
+            });
+        }
+        Ok(Self {
+            dimension,
+            normalization,
+            producer_signature_hash: producer_signature_hash(producer_signature.as_ref()),
+            projection_input_hash,
+            values,
+        })
+    }
+
+    #[must_use]
+    pub const fn dimension(&self) -> u32 {
+        self.dimension
+    }
+
+    #[must_use]
+    pub const fn normalization(&self) -> EmbeddingNormalization {
+        self.normalization
+    }
+
+    #[must_use]
+    pub const fn producer_signature_hash(&self) -> [u8; 32] {
+        self.producer_signature_hash
+    }
+
+    #[must_use]
+    pub fn projection_input_hash(&self) -> &ProjectionInputHash {
+        &self.projection_input_hash
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &[f32] {
+        &self.values
+    }
+
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(VECTOR_PAYLOAD_HEADER_LENGTH + self.values.len() * 4);
+        bytes.extend_from_slice(VECTOR_PAYLOAD_MAGIC);
+        bytes.extend_from_slice(&VECTOR_PAYLOAD_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&self.dimension.to_le_bytes());
+        bytes.push(normalization_byte(self.normalization));
+        bytes.extend_from_slice(&self.producer_signature_hash);
+        bytes.extend_from_slice(self.projection_input_hash.as_bytes());
+        for value in &self.values {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        bytes
+    }
+
+    #[must_use]
+    pub fn hash(&self) -> VectorPayloadHash {
+        VectorPayloadHash::from_bytes(Sha256::digest(self.canonical_bytes()).into())
+    }
+
+    #[must_use]
+    pub fn payload_hash(&self) -> VectorPayloadHash {
+        self.hash()
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> Vec<u8> {
+        self.canonical_bytes()
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, DerivedError> {
+        if bytes.len() < VECTOR_PAYLOAD_HEADER_LENGTH {
+            return Err(invalid_payload("vector payload is truncated"));
+        }
+        if &bytes[..VECTOR_PAYLOAD_MAGIC.len()] != VECTOR_PAYLOAD_MAGIC {
+            return Err(invalid_payload(
+                "vector payload magic does not match MEMVEC01",
+            ));
+        }
+        let mut cursor = VECTOR_PAYLOAD_MAGIC.len();
+        let version = read_u16(bytes, &mut cursor)?;
+        if version != VECTOR_PAYLOAD_FORMAT_VERSION {
+            return Err(invalid_payload("unsupported vector payload format version"));
+        }
+        let dimension = read_u32(bytes, &mut cursor)?;
+        if dimension == 0 {
+            return Err(invalid_payload("vector payload dimension must be positive"));
+        }
+        let normalization = normalization_from_byte(read_byte(bytes, &mut cursor)?)?;
+        let producer_signature_hash = read_fixed::<32>(bytes, &mut cursor)?;
+        let projection_input_hash =
+            ProjectionInputHash::from_bytes(read_fixed::<32>(bytes, &mut cursor)?);
+        let value_bytes = usize::try_from(dimension)
+            .ok()
+            .and_then(|dimension| dimension.checked_mul(4))
+            .ok_or_else(|| invalid_payload("vector payload dimension is too large"))?;
+        let expected_length = cursor
+            .checked_add(value_bytes)
+            .ok_or_else(|| invalid_payload("vector payload length overflow"))?;
+        if bytes.len() != expected_length {
+            return Err(invalid_payload(
+                "vector payload length does not match dimension",
+            ));
+        }
+        let mut values = Vec::with_capacity(
+            usize::try_from(dimension)
+                .map_err(|_| invalid_payload("vector payload dimension is out of range"))?,
+        );
+        while cursor < bytes.len() {
+            let bits = read_u32(bytes, &mut cursor)?;
+            let value = f32::from_bits(bits);
+            if !value.is_finite() {
+                return Err(invalid_payload("vector payload values must be finite"));
+            }
+            values.push(value);
+        }
+        Ok(Self {
+            dimension,
+            normalization,
+            producer_signature_hash,
+            projection_input_hash,
+            values,
+        })
+    }
+
+    pub fn put(&self, derived_dir: impl AsRef<Path>) -> Result<VectorPayloadHash, DerivedError> {
+        let hash = self.hash();
+        let path = vector_payload_path(derived_dir.as_ref(), hash);
+        if path.is_file() {
+            verify_vector_payload_file(&path, hash)?;
+            return Ok(hash);
+        }
+        if path.exists() {
+            return Err(invalid_payload(
+                "vector payload target is not a regular file",
+            ));
+        }
+
+        let parent = path
+            .parent()
+            .ok_or_else(|| invalid_payload("vector payload path has no parent"))?;
+        fs::create_dir_all(parent)?;
+        let staging_path = parent.join(format!(
+            ".{}.{}.tmp",
+            hash,
+            NEXT_VECTOR_PAYLOAD_STAGING_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut staging = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging_path)?;
+        let bytes = self.canonical_bytes();
+        let write_result = staging.write_all(&bytes).and_then(|()| staging.sync_all());
+        drop(staging);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&staging_path);
+            return Err(error.into());
+        }
+
+        if path.is_file() {
+            let _ = fs::remove_file(&staging_path);
+            verify_vector_payload_file(&path, hash)?;
+            return Ok(hash);
+        }
+        match fs::rename(&staging_path, &path) {
+            Ok(()) => {
+                sync_directory(parent)?;
+                Ok(hash)
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let _ = fs::remove_file(&staging_path);
+                verify_vector_payload_file(&path, hash)?;
+                Ok(hash)
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&staging_path);
+                Err(error.into())
+            }
+        }
+    }
+
+    pub fn get(
+        derived_dir: impl AsRef<Path>,
+        hash: VectorPayloadHash,
+    ) -> Result<Self, DerivedError> {
+        let path = vector_payload_path(derived_dir.as_ref(), hash);
+        let bytes = fs::read(&path)?;
+        let payload = Self::from_canonical_bytes(&bytes)?;
+        if payload.hash() != hash {
+            return Err(invalid_payload(
+                "vector payload checksum does not match its path",
+            ));
+        }
+        Ok(payload)
+    }
+
+    pub fn verify(
+        derived_dir: impl AsRef<Path>,
+        hash: VectorPayloadHash,
+    ) -> Result<(), DerivedError> {
+        Self::get(derived_dir, hash).map(|_| ())
+    }
+}
+
+fn invalid_payload(value: impl Into<String>) -> DerivedError {
+    DerivedError::InvalidProjectionValue {
+        value: format!("vector payload: {}", value.into()),
+    }
+}
+
+fn producer_signature_hash(signature: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"memoria-vector-producer-signature-v1\0");
+    hasher.update(signature);
+    hasher.finalize().into()
+}
+
+fn normalization_byte(normalization: EmbeddingNormalization) -> u8 {
+    match normalization {
+        EmbeddingNormalization::None => 0,
+        EmbeddingNormalization::L2 => 1,
+    }
+}
+
+fn normalization_from_byte(value: u8) -> Result<EmbeddingNormalization, DerivedError> {
+    match value {
+        0 => Ok(EmbeddingNormalization::None),
+        1 => Ok(EmbeddingNormalization::L2),
+        _ => Err(invalid_payload("unknown vector normalization")),
+    }
+}
+
+fn read_byte(bytes: &[u8], cursor: &mut usize) -> Result<u8, DerivedError> {
+    let value = *bytes
+        .get(*cursor)
+        .ok_or_else(|| invalid_payload("vector payload is truncated"))?;
+    *cursor += 1;
+    Ok(value)
+}
+
+fn read_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16, DerivedError> {
+    Ok(u16::from_le_bytes(read_fixed(bytes, cursor)?))
+}
+
+fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, DerivedError> {
+    Ok(u32::from_le_bytes(read_fixed(bytes, cursor)?))
+}
+
+fn read_fixed<const N: usize>(bytes: &[u8], cursor: &mut usize) -> Result<[u8; N], DerivedError> {
+    let end = cursor
+        .checked_add(N)
+        .ok_or_else(|| invalid_payload("vector payload length overflow"))?;
+    let value = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| invalid_payload("vector payload is truncated"))?;
+    let mut result = [0; N];
+    result.copy_from_slice(value);
+    *cursor = end;
+    Ok(result)
+}
+
+fn vector_payload_path(derived_dir: &Path, hash: VectorPayloadHash) -> PathBuf {
+    let hex = hash.as_hex();
+    derived_dir
+        .join("objects")
+        .join("vector")
+        .join(&hex[..2])
+        .join(format!("{hex}.vec"))
+}
+
+fn verify_vector_payload_file(
+    path: &Path,
+    expected: VectorPayloadHash,
+) -> Result<(), DerivedError> {
+    let bytes = fs::read(path)?;
+    let payload = VectorPayloadV1::from_canonical_bytes(&bytes)?;
+    if payload.hash() != expected {
+        return Err(invalid_payload("existing vector payload checksum mismatch"));
+    }
+    Ok(())
+}
+
+fn sync_directory(path: &Path) -> Result<(), DerivedError> {
+    #[cfg(unix)]
+    {
+        File::open(path)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn hex_lower(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(64);
+    for byte in bytes {
+        output.push(HEX[usize::from(byte >> 4)] as char);
+        output.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    output
+}
 
 /// An immutable, content-addressed vector payload.
 ///

@@ -90,6 +90,11 @@ pub struct ProjectionInputHash([u8; 32]);
 
 impl ProjectionInputHash {
     #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
     pub fn new(
         kind: ProjectionKind,
         canonical_projection_bytes: &[u8],

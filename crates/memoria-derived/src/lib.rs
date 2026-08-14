@@ -18,7 +18,10 @@ use std::num::TryFromIntError;
 
 use thiserror::Error;
 
-pub use artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
+pub use artifact::{
+    ArtifactDescriptor, ArtifactId, ArtifactState, SEMANTIC_ARTIFACT_KIND,
+    SEMANTIC_ARTIFACT_VERSION,
+};
 pub use catalog::DerivedCatalog;
 pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
@@ -60,7 +63,8 @@ pub use tag_graph::{
     TagAssociationEvidence, TagGraph, TagMembershipEvidence, TagMembershipInput, TagSpaceGraph,
 };
 pub use vector::{
-    VectorArtifact, VectorFilter, VectorHit, VectorIndex, VectorMembership, VectorSearch,
+    VectorArtifact, VectorFilter, VectorHit, VectorIndex, VectorMembership, VectorPayloadHash,
+    VectorPayloadV1, VectorSearch,
 };
 
 #[derive(Debug, Error)]
