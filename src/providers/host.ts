@@ -25,7 +25,9 @@ export function createProviderEgressGuard(
     if (!policy[work.type]) {
       throw new MemoriaError(
         "CAPABILITY_NOT_READY",
-        "CAPABILITY_NOT_READY: " + work.type + " provider data egress is denied",
+        "CAPABILITY_NOT_READY: " +
+          work.type +
+          " provider data egress is denied",
       );
     }
     return work;

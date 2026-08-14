@@ -45,5 +45,6 @@ export async function createMemoria(
         })
       : undefined,
     config.dataDir,
+    config.resourceLimits,
   );
 }

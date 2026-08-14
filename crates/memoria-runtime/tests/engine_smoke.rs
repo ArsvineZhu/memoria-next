@@ -90,3 +90,34 @@ fn denied_provider_egress_is_blocked_before_work_is_emitted() {
         }
     ));
 }
+
+#[test]
+fn completed_purge_removes_authority_visibility_and_managed_source_blob() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    let memory_id = runtime
+        .create_memory(space, Some("private"), b"# Private\nPurge me")
+        .unwrap();
+    let object_count_before = std::fs::read_dir(directory.path().join("authority/objects"))
+        .unwrap()
+        .count();
+    assert_eq!(object_count_before, 1);
+
+    let plan = runtime.plan_purge(memory_id).unwrap();
+    let completed = runtime.execute_purge(&plan.id).unwrap();
+    assert_eq!(completed.state, memoria_runtime::PurgeState::Completed);
+    assert_eq!(
+        std::fs::read_dir(directory.path().join("authority/objects"))
+            .unwrap()
+            .count(),
+        0
+    );
+
+    let query = MemoryQuery::builder()
+        .spaces(vec![space])
+        .text_cue("Purge")
+        .build()
+        .unwrap();
+    assert!(runtime.query(query).unwrap().results.is_empty());
+}

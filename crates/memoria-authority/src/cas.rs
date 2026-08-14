@@ -91,6 +91,18 @@ impl SourceCas {
         Ok(object_is_file(&self.object_path(hash))?)
     }
 
+    pub fn remove_if_exists(&self, hash: SourceBlobHash) -> Result<bool, MemoriaError> {
+        let path = self.object_path(hash);
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                self.sync_objects_directory()?;
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn object_path(&self, hash: SourceBlobHash) -> PathBuf {
         self.objects_dir.join(hash.to_string())
     }

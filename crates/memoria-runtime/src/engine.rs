@@ -18,10 +18,13 @@ use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, Spa
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::limits::{ResourceLimits, check_source_bytes};
 use crate::privacy::{ProviderCapability, ProviderEgressPolicy};
 use crate::provider::{NeedWork, ProviderWorkResult};
+use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
 use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
+use crate::transfer::PortableMemory;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -58,6 +61,16 @@ pub enum RuntimeError {
     #[error("CAPABILITY_NOT_READY: provider data egress denied for {capability}")]
     ProviderEgressDenied { capability: ProviderCapability },
 
+    #[error("PURGE_CONFLICT: purge plan is unavailable or not resumable: {plan_id}")]
+    PurgeConflict { plan_id: String },
+
+    #[error("RESOURCE_LIMIT: {resource} size {actual} exceeds configured maximum {maximum}")]
+    ResourceLimit {
+        resource: &'static str,
+        actual: usize,
+        maximum: usize,
+    },
+
     #[error("feedback receipt error: {0}")]
     Receipt(#[from] ReceiptError),
 }
@@ -74,6 +87,8 @@ impl RuntimeError {
             Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
             Self::Adaptive(_) => "ADAPTIVE_ERROR",
             Self::ProviderEgressDenied { .. } => "CAPABILITY_NOT_READY",
+            Self::PurgeConflict { .. } => "PURGE_CONFLICT",
+            Self::ResourceLimit { .. } => "RESOURCE_LIMIT",
             Self::Receipt(ReceiptError::NotFound { .. }) => "NOT_FOUND",
             Self::Receipt(ReceiptError::Expired { .. }) => "FEEDBACK_RECEIPT_EXPIRED",
             Self::Receipt(_) => "ADAPTIVE_ERROR",
@@ -96,6 +111,8 @@ pub struct MemoriaRuntime {
     generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
     adaptive_log: AdaptiveEventLog,
     provider_egress_policy: ProviderEgressPolicy,
+    purge: PurgeCoordinator,
+    resource_limits: ResourceLimits,
     receipts: BTreeMap<String, RetrievalReceipt>,
     next_retrieval_id: u64,
     closed: bool,
@@ -153,6 +170,8 @@ impl MemoriaRuntime {
             generated_tag_artifacts: BTreeMap::new(),
             adaptive_log: AdaptiveEventLog::new(),
             provider_egress_policy,
+            purge: PurgeCoordinator::new(),
+            resource_limits: ResourceLimits::default(),
             receipts: BTreeMap::new(),
             next_retrieval_id: 0,
             closed: false,
@@ -181,6 +200,13 @@ impl MemoriaRuntime {
         source: &[u8],
     ) -> Result<MemoryId, RuntimeError> {
         self.ensure_open()?;
+        check_source_bytes(self.resource_limits, source.len()).map_err(|error| {
+            RuntimeError::ResourceLimit {
+                resource: error.resource,
+                actual: error.actual,
+                maximum: error.maximum,
+            }
+        })?;
         let result = self
             .authority
             .create_memory(&self.cas, space_id, document_key, source)?;
@@ -198,6 +224,13 @@ impl MemoriaRuntime {
         idempotency_key: &str,
     ) -> Result<MemoryId, RuntimeError> {
         self.ensure_open()?;
+        check_source_bytes(self.resource_limits, source.len()).map_err(|error| {
+            RuntimeError::ResourceLimit {
+                resource: error.resource,
+                actual: error.actual,
+                maximum: error.maximum,
+            }
+        })?;
         let before = self.authority_generation()?;
         let result = self.authority.create_memory_idempotent(
             &self.cas,
@@ -214,6 +247,80 @@ impl MemoriaRuntime {
         Ok(memory_id)
     }
 
+    pub fn export_memories(&self, scope: &[SpaceId]) -> Result<Vec<PortableMemory>, RuntimeError> {
+        self.ensure_open()?;
+        let generation = self.authority_generation()?;
+        let mut memories = Vec::new();
+        for space_id in scope {
+            for read in self
+                .authority
+                .list_memories_at(&self.cas, *space_id, generation)?
+            {
+                memories.push(PortableMemory {
+                    source_id: read.memory.memory_id,
+                    space_id: read.memory.space_id,
+                    revision_id: read.revision.revision_id,
+                    mdx: String::from_utf8(read.source)?,
+                });
+            }
+        }
+        memories.sort_by_key(|memory| (memory.space_id, memory.source_id));
+        Ok(memories)
+    }
+
+    pub fn plan_purge(&mut self, memory_id: MemoryId) -> Result<PurgePlan, RuntimeError> {
+        self.ensure_open()?;
+        self.authority.get_memory(memory_id)?;
+        Ok(self.purge.plan(memory_id))
+    }
+
+    pub fn execute_purge(&mut self, plan_id: &str) -> Result<PurgePlan, RuntimeError> {
+        self.ensure_open()?;
+        let planned =
+            self.purge
+                .plan_for(plan_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::PurgeConflict {
+                    plan_id: plan_id.to_owned(),
+                })?;
+        if planned.state == PurgeState::Completed {
+            return Ok(planned);
+        }
+        if planned.state == PurgeState::Planned {
+            self.purge
+                .transition(plan_id, PurgeState::Planned, PurgeState::Committed)
+                .map_err(|_| RuntimeError::PurgeConflict {
+                    plan_id: plan_id.to_owned(),
+                })?;
+        }
+        if self.purge.state(plan_id) == Some(PurgeState::Committed) {
+            let hashes = self.authority.purge_memory(planned.memory_id)?;
+            self.purge
+                .transition(plan_id, PurgeState::Committed, PurgeState::Cleaning)
+                .map_err(|_| RuntimeError::PurgeConflict {
+                    plan_id: plan_id.to_owned(),
+                })?;
+            self.adaptive_log
+                .rewrite_without_memory(planned.memory_id)?;
+            self.receipts.clear();
+            self.derived.delete_all_derived()?;
+            for hash in hashes {
+                if !self.authority.source_blob_is_referenced(hash)? {
+                    let _ = self.cas.remove_if_exists(hash)?;
+                }
+            }
+            return self
+                .purge
+                .transition(plan_id, PurgeState::Cleaning, PurgeState::Completed)
+                .map_err(|_| RuntimeError::PurgeConflict {
+                    plan_id: plan_id.to_owned(),
+                });
+        }
+        Err(RuntimeError::PurgeConflict {
+            plan_id: plan_id.to_owned(),
+        })
+    }
+
     pub fn revise_memory(
         &mut self,
         memory_id: MemoryId,
@@ -221,6 +328,13 @@ impl MemoriaRuntime {
         source: &[u8],
     ) -> Result<MemoryMutation, RuntimeError> {
         self.ensure_open()?;
+        check_source_bytes(self.resource_limits, source.len()).map_err(|error| {
+            RuntimeError::ResourceLimit {
+                resource: error.resource,
+                actual: error.actual,
+                maximum: error.maximum,
+            }
+        })?;
         let result = self
             .authority
             .revise_memory(&self.cas, memory_id, expected_head, source)?;

@@ -61,6 +61,23 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
         authorityGeneration: "1",
       };
     },
+    exportMemories() {
+      return [];
+    },
+    purgePlan() {
+      return {
+        id: "PURGE_fake",
+        memoryId: "M_fake",
+        state: "planned" as const,
+      };
+    },
+    purgeExecute() {
+      return {
+        id: "PURGE_fake",
+        memoryId: "M_fake",
+        state: "completed" as const,
+      };
+    },
     queryStart,
     queryResume() {
       return {

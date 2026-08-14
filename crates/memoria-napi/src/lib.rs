@@ -13,8 +13,8 @@ use napi_derive::napi;
 
 use crate::convert::{
     JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission, JsMemoryMutation,
-    JsProviderResult, JsProviderWork, JsQueryRequest, JsQueryResponse, JsQueryResult,
-    JsReviseMemoryRequest, JsStatus, QueryRequest,
+    JsPortableMemory, JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest,
+    JsQueryResponse, JsQueryResult, JsReviseMemoryRequest, JsStatus, QueryRequest,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -142,6 +142,47 @@ pub fn authority_revise(
         revision_id: mutation.revision_id.to_string(),
         authority_generation: mutation.generation.to_string(),
     })
+}
+
+#[napi]
+pub fn export_memories(store: &NativeStore, scope: Vec<String>) -> Result<Vec<JsPortableMemory>> {
+    let scope = scope
+        .into_iter()
+        .map(|space| space.parse::<SpaceId>().map_err(to_napi_error))
+        .collect::<Result<Vec<_>>>()?;
+    let runtime = store.runtime()?;
+    let runtime = runtime
+        .as_ref()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .export_memories(&scope)
+        .map(|memories| memories.into_iter().map(JsPortableMemory::from).collect())
+        .map_err(runtime_error)
+}
+
+#[napi]
+pub fn purge_plan(store: &NativeStore, memory_id: String) -> Result<JsPurgePlan> {
+    let memory_id = memory_id.parse::<MemoryId>().map_err(to_napi_error)?;
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .plan_purge(memory_id)
+        .map(JsPurgePlan::from)
+        .map_err(runtime_error)
+}
+
+#[napi]
+pub fn purge_execute(store: &NativeStore, plan_id: String) -> Result<JsPurgePlan> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .execute_purge(&plan_id)
+        .map(JsPurgePlan::from)
+        .map_err(runtime_error)
 }
 
 #[napi]

@@ -74,6 +74,19 @@ export interface NativeFeedbackCommit {
   }>;
 }
 
+export interface NativePortableMemory {
+  sourceId: string;
+  spaceId: string;
+  revisionId: string;
+  mdx: string;
+}
+
+export interface NativePurgePlan {
+  id: string;
+  memoryId: string;
+  state: "planned" | "committed" | "cleaning" | "completed";
+}
+
 export interface NativeProviderItem {
   key: string;
   text: string;
@@ -112,6 +125,9 @@ export interface NativeBinding {
   authorityMutate(store: NativeStoreHandle, request: NativeCreateMemoryRequest): string;
   authorityCreateSpace(store: NativeStoreHandle, spaceKey: string): string;
   authorityRevise(store: NativeStoreHandle, request: NativeReviseMemoryRequest): NativeMemoryMutation;
+  exportMemories(store: NativeStoreHandle, scope: string[]): NativePortableMemory[];
+  purgePlan(store: NativeStoreHandle, memoryId: string): NativePurgePlan;
+  purgeExecute(store: NativeStoreHandle, planId: string): NativePurgePlan;
   queryStart(
     store: NativeStoreHandle,
     request: NativeQueryRequest,

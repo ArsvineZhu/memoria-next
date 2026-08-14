@@ -1,5 +1,8 @@
 use memoria_query::MemoryQuery;
-use memoria_runtime::{FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork};
+use memoria_runtime::{
+    FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork, PortableMemory,
+    PurgePlan, PurgeState,
+};
 use memoria_types::SpaceId;
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -161,6 +164,50 @@ pub struct JsFeedbackEventResult {
     pub semantic_node_id: Option<String>,
     pub outcome: String,
     pub occurred_at_seconds: i64,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsPortableMemory {
+    pub source_id: String,
+    pub space_id: String,
+    pub revision_id: String,
+    pub mdx: String,
+}
+
+impl From<PortableMemory> for JsPortableMemory {
+    fn from(value: PortableMemory) -> Self {
+        Self {
+            source_id: value.source_id.to_string(),
+            space_id: value.space_id.to_string(),
+            revision_id: value.revision_id.to_string(),
+            mdx: value.mdx,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsPurgePlan {
+    pub id: String,
+    pub memory_id: String,
+    pub state: String,
+}
+
+impl From<PurgePlan> for JsPurgePlan {
+    fn from(value: PurgePlan) -> Self {
+        Self {
+            id: value.id,
+            memory_id: value.memory_id.to_string(),
+            state: match value.state {
+                PurgeState::Planned => "planned",
+                PurgeState::Committed => "committed",
+                PurgeState::Cleaning => "cleaning",
+                PurgeState::Completed => "completed",
+            }
+            .to_owned(),
+        }
+    }
 }
 
 impl TryFrom<JsFeedbackSubmission> for FeedbackSubmission {

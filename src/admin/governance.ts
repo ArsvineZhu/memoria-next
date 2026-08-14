@@ -140,6 +140,140 @@ export async function restoreStoreBackup(
   return { path: target, storeId: marker };
 }
 
+export interface PortableExportOptions {
+  scope: string[];
+  outputPath?: string;
+}
+
+export interface PortableImportInput {
+  packagePath: string;
+  targetSpace: { key: string };
+  idempotencyKey: string;
+}
+
+export interface PortableImportResult {
+  mappings: {
+    memories: Array<{ sourceId: string; targetId: string }>;
+  };
+  unresolvedExternalReferences: string[];
+  targetSpaceId: string;
+}
+
+interface TransferMemory {
+  sourceId: string;
+  spaceId: string;
+  revisionId: string;
+  mdx: string;
+  references?: string[];
+}
+
+interface PortablePackage {
+  format: "memoria-portable-v1";
+  originStoreId: string;
+  scope: string[];
+  memories: TransferMemory[];
+}
+
+interface TransferEngine {
+  exportMemories(scope: string[]): Promise<TransferMemory[]>;
+  createSpace(key: string): Promise<string>;
+  createMemory(request: {
+    spaceId: string;
+    documentKey?: string;
+    idempotencyKey?: string;
+    mdx: string;
+  }): Promise<{ memoryId: string; authorityGeneration: string }>;
+}
+
+export async function createPortableExport(
+  sourceDir: string,
+  engine: TransferEngine,
+  options: PortableExportOptions,
+): Promise<{ path: string; storeId: string }> {
+  if (options.scope.length === 0) {
+    throw new Error("OUT_OF_SCOPE: portable export requires an explicit scope");
+  }
+  const storeId = (
+    await readFile(join(resolve(sourceDir), "STORE"), "utf8")
+  ).trim();
+  const memories = (await engine.exportMemories(options.scope)).map(
+    (memory) => ({
+      ...memory,
+      references: extractMemoryReferences(memory.mdx),
+    }),
+  );
+  const packageValue: PortablePackage = {
+    format: "memoria-portable-v1",
+    originStoreId: storeId,
+    scope: [...options.scope],
+    memories,
+  };
+  const outputPath =
+    options.outputPath ??
+    join(
+      await mkdtemp(join(tmpdir(), "memoria-next-export-")),
+      "memoria-portable.json",
+    );
+  await writeFile(
+    outputPath,
+    JSON.stringify(packageValue, null, 2) + "\n",
+    "utf8",
+  );
+  return { path: resolve(outputPath), storeId };
+}
+
+export async function importPortablePackage(
+  engine: TransferEngine,
+  input: PortableImportInput,
+): Promise<PortableImportResult> {
+  if (!input.idempotencyKey.trim()) {
+    throw new Error("IDEMPOTENCY_CONFLICT: import idempotency key is empty");
+  }
+  const packageValue = JSON.parse(
+    await readFile(resolve(input.packagePath), "utf8"),
+  ) as PortablePackage;
+  if (
+    packageValue.format !== "memoria-portable-v1" ||
+    !Array.isArray(packageValue.memories)
+  ) {
+    throw new Error("UNSUPPORTED_STORE_FORMAT: unsupported portable package");
+  }
+  const sourceIds = new Set<string>();
+  for (const memory of packageValue.memories) {
+    if (sourceIds.has(memory.sourceId) || !memory.sourceId || !memory.mdx) {
+      throw new Error(
+        "INVALID_MDX: portable package contains an invalid memory",
+      );
+    }
+    sourceIds.add(memory.sourceId);
+  }
+  const targetSpaceId = await engine.createSpace(input.targetSpace.key);
+  const mappings: Array<{ sourceId: string; targetId: string }> = [];
+  const mappingBySource = new Map<string, string>();
+  for (const memory of packageValue.memories) {
+    const created = await engine.createMemory({
+      spaceId: targetSpaceId,
+      idempotencyKey: input.idempotencyKey + ":memory:" + memory.sourceId,
+      mdx: memory.mdx,
+    });
+    mappings.push({ sourceId: memory.sourceId, targetId: created.memoryId });
+    mappingBySource.set(memory.sourceId, created.memoryId);
+  }
+  const unresolved = new Set<string>();
+  for (const memory of packageValue.memories) {
+    for (const reference of memory.references ?? []) {
+      if (!mappingBySource.has(reference)) {
+        unresolved.add(reference);
+      }
+    }
+  }
+  return {
+    mappings: { memories: mappings },
+    unresolvedExternalReferences: [...unresolved].sort(),
+    targetSpaceId,
+  };
+}
+
 async function hashFiles(
   root: string,
   excluded: readonly string[],
@@ -187,6 +321,10 @@ async function assertFile(path: string): Promise<void> {
   if (!(await exists(path))) {
     throw new Error("STORE_CORRUPT: required store file is missing");
   }
+}
+
+function extractMemoryReferences(mdx: string): string[] {
+  return [...new Set(mdx.match(/M_[A-Z2-7]+/g) ?? [])].sort();
 }
 import { createHash } from "node:crypto";
 import {

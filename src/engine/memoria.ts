@@ -6,6 +6,8 @@ import type {
   NativeMemoryMutation,
   NativeQueryRequest,
   NativeQueryResponse,
+  NativePortableMemory,
+  NativePurgePlan,
   NativeStatus,
   NativeStoreHandle,
 } from "../native/protocol.js";
@@ -20,6 +22,7 @@ import {
   type FeedbackInput,
 } from "../domain/feedback.js";
 import { createSpacesApi, type SpacesApi } from "../domain/spaces.js";
+import type { ResourceLimits } from "../domain/config.js";
 
 export interface MemoriaQuery {
   scope: string[];
@@ -79,16 +82,19 @@ export class Memoria {
   #operations = new Set<string>();
   #readSessions = new Set<string>();
   #closed = false;
+  #resourceLimits: ResourceLimits;
 
   constructor(
     binding: NativeBinding,
     store: NativeStoreHandle,
     providerHost?: ProviderHost,
     dataDir = "",
+    resourceLimits: ResourceLimits = {},
   ) {
     this.#binding = binding;
     this.#store = store;
     this.#providerHost = providerHost;
+    this.#resourceLimits = resourceLimits;
     this.spaces = createSpacesApi(this);
     this.documents = createDocumentsApi(this);
     this.feedback = createFeedbackApi(this);
@@ -186,6 +192,7 @@ export class Memoria {
   }
 
   async createMemory(request: CreateMemoryRequest): Promise<CreatedMemory> {
+    this.assertSourceSize(request.mdx);
     const nativeRequest: NativeCreateMemoryRequest = {
       spaceId: request.spaceId,
       ...(request.documentKey === undefined
@@ -202,11 +209,24 @@ export class Memoria {
     return { memoryId, authorityGeneration: status.authorityGeneration };
   }
 
+  async exportMemories(scope: string[]): Promise<NativePortableMemory[]> {
+    return this.#binding.exportMemories(this.store(), scope);
+  }
+
+  async planPurge(memoryId: string): Promise<NativePurgePlan> {
+    return this.#binding.purgePlan(this.store(), memoryId);
+  }
+
+  async executePurge(planId: string): Promise<NativePurgePlan> {
+    return this.#binding.purgeExecute(this.store(), planId);
+  }
+
   async reviseMemory(request: {
     memoryId: string;
     expectedHead: string;
     mdx: string;
   }): Promise<NativeMemoryMutation> {
+    this.assertSourceSize(request.mdx);
     const mutation = this.#binding.authorityRevise(this.store(), request);
     this.#wakeProviderPump?.();
     return mutation;
@@ -263,6 +283,16 @@ export class Memoria {
       throw new MemoriaError("STORE_CLOSED", "Memoria is closed");
     }
     return this.#store;
+  }
+
+  private assertSourceSize(source: string): void {
+    const maximum = this.#resourceLimits.maxSourceBytes;
+    if (maximum !== undefined && Buffer.byteLength(source, "utf8") > maximum) {
+      throw new MemoriaError(
+        "RESOURCE_LIMIT",
+        "RESOURCE_LIMIT: source bytes exceed configured maximum",
+      );
+    }
   }
 
   private assertNotAborted(signal: AbortSignal | undefined): void {

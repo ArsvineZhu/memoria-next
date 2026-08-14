@@ -5,6 +5,7 @@ mod layout;
 mod lock;
 mod model;
 mod mutation;
+mod purge;
 mod read;
 mod schema;
 

@@ -15,6 +15,8 @@ export declare function cancelOperation(store: NativeStore, operationId: string)
 
 export declare function closeStore(store: NativeStore): void
 
+export declare function exportMemories(store: NativeStore, scope: Array<string>): Array<JsPortableMemory>
+
 export declare function feedbackSubmit(store: NativeStore, request: JsFeedbackSubmission): JsFeedbackCommit
 
 export interface JsCreateMemoryRequest {
@@ -70,6 +72,13 @@ export interface JsMemoryMutation {
   authorityGeneration: string
 }
 
+export interface JsPortableMemory {
+  sourceId: string
+  spaceId: string
+  revisionId: string
+  mdx: string
+}
+
 export interface JsProviderItem {
   key: string
   text: string
@@ -91,6 +100,12 @@ export interface JsProviderWork {
   query?: string
   candidates: Array<string>
   projection?: JsEnrichmentProjection
+}
+
+export interface JsPurgePlan {
+  id: string
+  memoryId: string
+  state: string
 }
 
 export interface JsQueryRequest {
@@ -137,6 +152,10 @@ export declare function openStore(dataDir: string): NativeStore
 export declare function providerPollWork(store: NativeStore): JsProviderWork | null
 
 export declare function providerSubmitResult(store: NativeStore, result: JsProviderResult): void
+
+export declare function purgeExecute(store: NativeStore, planId: string): JsPurgePlan
+
+export declare function purgePlan(store: NativeStore, memoryId: string): JsPurgePlan
 
 export declare function queryResume(store: NativeStore, operationId: string): JsQueryResponse
 

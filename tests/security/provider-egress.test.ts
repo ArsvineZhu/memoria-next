@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ProviderHost, createProviderEgressGuard } from "../../src/providers/host.js";
+import {
+  ProviderHost,
+  createProviderEgressGuard,
+} from "../../src/providers/host.js";
 import type { EmbeddingProvider } from "../../src/providers/types.js";
 
 test("required semantic fails before local-only provider egress", async () => {
@@ -34,8 +37,7 @@ test("required semantic fails before local-only provider egress", async () => {
         new AbortController().signal,
       ),
     (error: unknown) =>
-      error instanceof Error &&
-      error.message.includes("CAPABILITY_NOT_READY"),
+      error instanceof Error && error.message.includes("CAPABILITY_NOT_READY"),
   );
   assert.equal(calls, 0);
 });
