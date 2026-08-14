@@ -85,6 +85,16 @@ pub struct PortableImportAllocation {
     pub memories: Vec<ImportMemoryAllocation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortableImportCommit {
+    pub target_space_key: String,
+    pub allocation: PortableImportAllocation,
+    pub idempotency_key: String,
+    pub request_fingerprint: String,
+    pub origin_store_id: Option<String>,
+    pub unresolved_external_references: Vec<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PortableImportMapping {
     pub source_id: MemoryId,
@@ -489,13 +499,16 @@ impl AuthorityDb {
     pub fn import_portable(
         &self,
         cas: &SourceCas,
-        target_space_key: &str,
-        allocation: PortableImportAllocation,
-        idempotency_key: &str,
-        request_fingerprint: &str,
-        origin_store_id: Option<&str>,
-        mut unresolved_external_references: Vec<String>,
+        request: PortableImportCommit,
     ) -> Result<AuthorityWriteResult<PortableImportResult>, MemoriaError> {
+        let PortableImportCommit {
+            target_space_key,
+            allocation,
+            idempotency_key,
+            request_fingerprint,
+            origin_store_id,
+            mut unresolved_external_references,
+        } = request;
         if idempotency_key.trim().is_empty() {
             return Err(MemoriaError::IdempotencyConflict {
                 idempotency_key: idempotency_key.to_owned(),
@@ -556,10 +569,6 @@ impl AuthorityDb {
             .map_err(|error| MemoriaError::Serialization(error.to_string()))?;
         let unresolved_json = serde_json::to_string(&unresolved_external_references)
             .map_err(|error| MemoriaError::Serialization(error.to_string()))?;
-        let target_space_key = target_space_key.to_owned();
-        let idempotency_key = idempotency_key.to_owned();
-        let request_fingerprint = request_fingerprint.to_owned();
-        let origin_store_id = origin_store_id.map(str::to_owned);
         self.write_memoria_action(move |transaction| {
             let existing = transaction
                 .transaction
@@ -1886,6 +1895,22 @@ fn fingerprint_hex(hasher: Sha256) -> String {
     output
 }
 
+fn parse_fixed_bytes<const N: usize>(
+    bytes: Vec<u8>,
+    kind: &'static str,
+) -> rusqlite::Result<[u8; N]> {
+    bytes.try_into().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Blob,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{kind} has an invalid byte length"),
+            )),
+        )
+    })
+}
+
 fn derive_revision_id(
     memory_id: MemoryId,
     parents: &[RevisionId],
@@ -1935,20 +1960,4 @@ mod tests {
             derive_revision_id(memory_id, &right, source, RevisionSemanticIntent::Merge)
         );
     }
-}
-
-fn parse_fixed_bytes<const N: usize>(
-    bytes: Vec<u8>,
-    kind: &'static str,
-) -> rusqlite::Result<[u8; N]> {
-    bytes.try_into().map_err(|_| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Blob,
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{kind} has an invalid byte length"),
-            )),
-        )
-    })
 }

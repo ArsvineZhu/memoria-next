@@ -21,7 +21,7 @@ pub use model::{
 };
 pub use mutation::{
     AuthorityMutationBatch, AuthorityOperation, ImportMemoryAllocation, PortableImportAllocation,
-    PortableImportMapping, PortableImportResult,
+    PortableImportCommit, PortableImportMapping, PortableImportResult,
 };
 pub use purge::PurgeOperationRecord;
 pub use read::MemoryRead;

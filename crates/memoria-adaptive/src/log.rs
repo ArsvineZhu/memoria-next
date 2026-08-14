@@ -282,26 +282,32 @@ impl AdaptiveEventLog {
                 .unwrap_or(0);
             (state_json, reduced_count)
         };
-        if let Some(state_json) = state_json {
-            if let Ok(state) = serde_json::from_str::<AdaptiveStateV1>(&state_json) {
-                let checkpoint = AdaptiveCheckpoint {
-                    event_count: reduced_count.min(self.events.len()),
-                    generation: self.generation,
-                    state,
-                };
-                self.materialized_state = AdaptiveStateV1::from_checkpoint_and_tail(
-                    checkpoint,
-                    self.events[reduced_count.min(self.events.len())..]
-                        .iter()
-                        .cloned(),
-                );
-                self.materialized_state.set_generation(self.generation);
-                return Ok(());
-            }
+        if let Some(state_json) = state_json
+            && let Ok(state) = serde_json::from_str::<AdaptiveStateV1>(&state_json)
+        {
+            let checkpoint = AdaptiveCheckpoint {
+                event_count: reduced_count.min(self.events.len()),
+                generation: self.generation,
+                state,
+            };
+            self.materialized_state = AdaptiveStateV1::from_checkpoint_and_tail(
+                checkpoint,
+                self.events[reduced_count.min(self.events.len())..]
+                    .iter()
+                    .cloned(),
+            );
+            self.materialized_state.set_generation(self.generation);
+            return Ok(());
         }
         self.materialized_state = AdaptiveStateV1::replay(&self.events);
         self.materialized_state.set_generation(self.generation);
         Ok(())
+    }
+}
+
+impl Default for AdaptiveEventLog {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -495,7 +501,7 @@ fn persist_materialized(
         "last_reduced_sequence",
         &event_count.to_string(),
     )?;
-    put_meta(transaction, "materialized_state", &state_json)?;
+    put_meta(transaction, "materialized_state", state_json)?;
     transaction
         .execute("DELETE FROM adaptive_familiarity", [])
         .map_err(storage_error)?;

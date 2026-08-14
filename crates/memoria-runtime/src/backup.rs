@@ -86,7 +86,7 @@ pub fn create_backup(
         &destination.join("STORE"),
     )?;
     online_backup(
-        &layout.authority_database().to_path_buf(),
+        layout.authority_database(),
         &destination.join("authority/authority.sqlite"),
     )?;
 

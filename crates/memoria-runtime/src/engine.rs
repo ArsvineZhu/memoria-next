@@ -5,8 +5,8 @@ use std::string::FromUtf8Error;
 use memoria_adaptive::{AdaptiveEventLog, AdaptiveStateV1, QueryAdaptiveSignature};
 use memoria_authority::{
     AuthorityDb, ImportMemoryAllocation, MemoryLifecycle, PortableImportAllocation,
-    PortableImportResult, PurgeOperationRecord, SourceCas, SpaceProviderMode, SpaceProviderPolicy,
-    StoreLayout, StoreWriterLock,
+    PortableImportCommit, PortableImportResult, PurgeOperationRecord, SourceCas, SpaceProviderMode,
+    SpaceProviderPolicy, StoreLayout, StoreWriterLock,
 };
 use memoria_derived::{
     AnnSegmentEntry, AnnSegmentV1, BaseReadyReport, BuildJobState, DerivedCatalog, DerivedCompiler,
@@ -450,12 +450,14 @@ impl MemoriaRuntime {
         let before = self.authority_generation()?;
         let result = self.authority.import_portable(
             &self.cas,
-            &target_space_key,
-            allocation,
-            &idempotency_key,
-            &request_fingerprint,
-            origin_store_id.as_deref(),
-            unresolved.into_iter().collect(),
+            PortableImportCommit {
+                target_space_key,
+                allocation,
+                idempotency_key,
+                request_fingerprint,
+                origin_store_id,
+                unresolved_external_references: unresolved.into_iter().collect(),
+            },
         )?;
         if result.generation() > before {
             let policy = self.space_provider_policy_at(target_space_id, result.generation())?;

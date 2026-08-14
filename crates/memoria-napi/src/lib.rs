@@ -201,7 +201,7 @@ pub fn backup_create(
     let manifest = runtime
         .create_backup(output_path.as_deref(), include_adaptive)
         .map_err(runtime_error)?;
-    Ok(JsBackupResult::try_from(manifest)?)
+    JsBackupResult::try_from(manifest)
 }
 
 #[napi]
