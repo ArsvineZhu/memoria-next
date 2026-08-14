@@ -5,7 +5,7 @@ export declare class NativeStore {
   status(): JsStatus
 }
 
-export declare function authorityCreateSpace(store: NativeStore, spaceKey: string): string
+export declare function authorityCreateSpace(store: NativeStore, spaceKey: string, providerPolicy?: JsSpaceProviderPolicy | undefined | null): string
 
 export declare function authorityMutate(store: NativeStore, request: JsCreateMemoryRequest): string
 
@@ -109,6 +109,7 @@ export interface JsProviderWork {
   query?: string
   candidates: Array<string>
   projection?: JsEnrichmentProjection
+  spacePolicy: JsSpaceProviderPolicy
 }
 
 export interface JsPurgePlan {
@@ -211,6 +212,7 @@ export interface JsQueryWork {
   input?: JsProviderItem
   query?: string
   candidates: Array<JsQueryCandidate>
+  spacePolicy: JsSpaceProviderPolicy
 }
 
 export interface JsRerankScore {
@@ -222,6 +224,12 @@ export interface JsReviseMemoryRequest {
   memoryId: string
   expectedHead: string
   mdx: string
+}
+
+export interface JsSpaceProviderPolicy {
+  embedding: string
+  reranking: string
+  enrichment: string
 }
 
 export interface JsStatus {

@@ -3,7 +3,8 @@ use std::time::Duration;
 use memoria_query::MemoryQuery;
 use memoria_runtime::{
     EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector, MemoriaRuntime, NeedWork,
-    ProviderWorkResult, QueryStep, QueryWork, RuntimeError, validate_provider_result,
+    ProviderWorkResult, QueryStep, QueryWork, RuntimeError, SpaceProviderMode, SpaceProviderPolicy,
+    validate_provider_result,
 };
 use tempfile::tempdir;
 
@@ -49,6 +50,38 @@ fn semantic_query_returns_pending_query_embedding_work() {
         runtime.provider_poll_work().unwrap(),
         Some(NeedWork::Embeddings(request)) if request.work_id.starts_with("EW_")
     ));
+}
+
+#[test]
+fn semantic_work_uses_one_effective_policy_for_the_whole_scope() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let external = runtime.create_space("external").unwrap();
+    let local_only = runtime
+        .create_space_with_policy(
+            "local-only",
+            SpaceProviderPolicy {
+                embedding: SpaceProviderMode::LocalOnly,
+                ..SpaceProviderPolicy::default()
+            },
+        )
+        .unwrap();
+    let query = MemoryQuery::builder()
+        .spaces(vec![external, local_only])
+        .text_cue("career")
+        .require_capability("semantic")
+        .wait_for(Duration::from_secs(1))
+        .build()
+        .unwrap();
+
+    let step = runtime.query_start(query).unwrap();
+    match step {
+        QueryStep::Pending {
+            work: QueryWork::Embedding(work),
+            ..
+        } => assert_eq!(work.space_policy.embedding, SpaceProviderMode::LocalOnly),
+        other => panic!("expected pending query embedding work, got {other:?}"),
+    }
 }
 
 #[test]
@@ -166,6 +199,7 @@ fn rust_embedding_validation_uses_keys_and_reconstructs_request_order() {
                 text: "two".to_owned(),
             },
         ],
+        space_policy: memoria_authority::SpaceProviderPolicy::default(),
     });
     let result = validate_provider_result(
         &work,

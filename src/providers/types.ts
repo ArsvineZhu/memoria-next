@@ -1,10 +1,18 @@
-import type { NativeProviderWorkResult, NeedWork } from "../native/protocol.js";
+import type {
+  NativeProviderWorkResult,
+  NativeSpaceProviderPolicy,
+  NeedWork,
+} from "../native/protocol.js";
+
+export type ProviderTrust = "local" | "external";
+export type SpaceProviderPolicy = NativeSpaceProviderPolicy;
 
 export type EmbeddingWork = Extract<NeedWork, { type: "embedding" }>;
 export type RerankWork = Extract<NeedWork, { type: "rerank" }>;
 export type EnrichmentWork = Extract<NeedWork, { type: "enrichment" }>;
 
 export interface EmbeddingProvider {
+  trust: ProviderTrust;
   execute(work: EmbeddingWork, signal: AbortSignal): Promise<unknown>;
 }
 
@@ -14,6 +22,7 @@ export interface EmbeddingPayload {
 }
 
 export interface RerankProvider {
+  trust: ProviderTrust;
   execute(work: RerankWork, signal: AbortSignal): Promise<unknown>;
 }
 
@@ -23,6 +32,7 @@ export interface RerankScore {
 }
 
 export interface TagEnrichmentProvider {
+  trust: ProviderTrust;
   execute(work: EnrichmentWork, signal: AbortSignal): Promise<unknown>;
 }
 

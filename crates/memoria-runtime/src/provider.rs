@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use memoria_authority::SpaceProviderPolicy;
 use memoria_derived::EnrichmentProjection;
 use thiserror::Error;
 
@@ -17,6 +18,7 @@ pub struct EmbeddingBatchRequest {
     pub signature: String,
     pub dimensions: usize,
     pub items: Vec<EmbeddingItem>,
+    pub space_policy: SpaceProviderPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,6 +27,7 @@ pub struct RerankBatchRequest {
     pub signature: String,
     pub query: String,
     pub candidates: Vec<String>,
+    pub space_policy: SpaceProviderPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,6 +35,7 @@ pub struct EnrichmentBatchRequest {
     pub work_id: String,
     pub signature: String,
     pub projection: EnrichmentProjection,
+    pub space_policy: SpaceProviderPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,6 +52,15 @@ impl NeedWork {
             Self::Embeddings(_) => ProviderCapability::Embedding,
             Self::Rerank(_) => ProviderCapability::Rerank,
             Self::Enrichment(_) => ProviderCapability::Enrichment,
+        }
+    }
+
+    #[must_use]
+    pub const fn space_policy(&self) -> SpaceProviderPolicy {
+        match self {
+            Self::Embeddings(request) => request.space_policy,
+            Self::Rerank(request) => request.space_policy,
+            Self::Enrichment(request) => request.space_policy,
         }
     }
 }

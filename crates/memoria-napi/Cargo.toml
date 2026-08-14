@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 napi = { version = "3.0.0", features = ["async"] }
 napi-derive = "3.0.0"
+memoria-authority = { version = "0.1.0", path = "../memoria-authority" }
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
 memoria-adaptive = { version = "0.1.0", path = "../memoria-adaptive" }
 memoria-mdx = { version = "0.1.0", path = "../memoria-mdx" }

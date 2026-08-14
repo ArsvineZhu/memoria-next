@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::string::FromUtf8Error;
 
 use memoria_adaptive::{AdaptiveEventLog, AdaptiveStateV1, QueryAdaptiveSignature};
-use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, StoreWriterLock};
+use memoria_authority::{
+    AuthorityDb, MemoryLifecycle, SourceCas, SpaceProviderMode, SpaceProviderPolicy, StoreLayout,
+    StoreWriterLock,
+};
 use memoria_derived::{
     BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
     EntityObservationBuilder, ExplicitTagBuilder, GeneratedTagArtifact, LexicalDocument,
@@ -20,7 +23,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::limits::{ResourceLimits, check_source_bytes};
-use crate::privacy::{ProviderCapability, ProviderEgressPolicy};
+use crate::privacy::{ProviderCapability, ProviderEgressPolicy, space_provider_mode};
 use crate::provider::{
     EmbeddingBatchRequest, EmbeddingItem, NeedWork, ProviderWorkResult, RerankBatchRequest,
     validate_provider_result,
@@ -95,6 +98,9 @@ pub enum RuntimeError {
     #[error("CAPABILITY_NOT_READY: provider data egress denied for {capability}")]
     ProviderEgressDenied { capability: ProviderCapability },
 
+    #[error("PROVIDER_POLICY_DENIED: provider {capability} is denied by the scoped Space policy")]
+    ProviderPolicyDenied { capability: ProviderCapability },
+
     #[error("PURGE_CONFLICT: purge plan is unavailable or not resumable: {plan_id}")]
     PurgeConflict { plan_id: String },
 
@@ -131,6 +137,7 @@ impl RuntimeError {
             Self::QueryOperationPending { .. } => "QUERY_ERROR",
             Self::Adaptive(_) => "ADAPTIVE_ERROR",
             Self::ProviderEgressDenied { .. } => "CAPABILITY_NOT_READY",
+            Self::ProviderPolicyDenied { .. } => "PROVIDER_POLICY_DENIED",
             Self::PurgeConflict { .. } => "PURGE_CONFLICT",
             Self::ResourceLimit { .. } => "RESOURCE_LIMIT",
             Self::Receipt(ReceiptError::NotFound { .. }) => "NOT_FOUND",
@@ -233,12 +240,33 @@ impl MemoriaRuntime {
     }
 
     pub fn create_space(&mut self, space_key: impl AsRef<str>) -> Result<SpaceId, RuntimeError> {
+        self.create_space_with_policy(space_key, SpaceProviderPolicy::default())
+    }
+
+    pub fn create_space_with_policy(
+        &mut self,
+        space_key: impl AsRef<str>,
+        provider_policy: SpaceProviderPolicy,
+    ) -> Result<SpaceId, RuntimeError> {
         self.ensure_open()?;
         Ok(self
             .authority
-            .create_space(space_key)?
+            .create_space_with_policy(space_key, provider_policy)?
             .into_value()
             .space_id)
+    }
+
+    pub fn update_space_provider_policy(
+        &mut self,
+        space_id: SpaceId,
+        provider_policy: SpaceProviderPolicy,
+        expected_generation: AuthorityGeneration,
+    ) -> Result<AuthorityGeneration, RuntimeError> {
+        self.ensure_open()?;
+        Ok(self
+            .authority
+            .update_space_provider_policy(space_id, provider_policy, expected_generation)?
+            .generation())
     }
 
     pub fn create_memory(
@@ -260,8 +288,9 @@ impl MemoriaRuntime {
             .authority
             .create_memory(&self.cas, space_id, document_key, source)?;
         let memory_id = result.value().memory_id;
-        self.enqueue_embedding_work(memory_id, result.generation(), projection);
-        self.rebuild_base_for_space(space_id, result.generation());
+        let provider_policy = self.space_provider_policy_at(space_id, result.generation())?;
+        self.enqueue_embedding_work(memory_id, result.generation(), projection, provider_policy);
+        self.rebuild_base_for_space(space_id, result.generation(), provider_policy);
         Ok(memory_id)
     }
 
@@ -291,8 +320,14 @@ impl MemoriaRuntime {
         )?;
         let memory_id = result.value().memory_id;
         if result.generation() > before {
-            self.enqueue_embedding_work(memory_id, result.generation(), projection);
-            self.rebuild_base_for_space(space_id, result.generation());
+            let provider_policy = self.space_provider_policy_at(space_id, result.generation())?;
+            self.enqueue_embedding_work(
+                memory_id,
+                result.generation(),
+                projection,
+                provider_policy,
+            );
+            self.rebuild_base_for_space(space_id, result.generation(), provider_policy);
         }
         Ok(memory_id)
     }
@@ -396,12 +431,19 @@ impl MemoriaRuntime {
             .authority
             .revise_memory(&self.cas, memory_id, expected_head, source)?;
         let record = result.value();
+        let provider_policy =
+            self.space_provider_policy_at(record.space_id, result.generation())?;
         if let Some(projection) = projection {
-            self.enqueue_embedding_work(record.memory_id, result.generation(), projection);
+            self.enqueue_embedding_work(
+                record.memory_id,
+                result.generation(),
+                projection,
+                provider_policy,
+            );
         } else {
             self.advance_semantic_coverage();
         }
-        self.rebuild_base_for_space(record.space_id, result.generation());
+        self.rebuild_base_for_space(record.space_id, result.generation(), provider_policy);
         Ok(MemoryMutation {
             memory_id: record.memory_id,
             space_id: record.space_id,
@@ -465,6 +507,44 @@ impl MemoriaRuntime {
             Err(error) => return Err(error),
         };
 
+        let space_policy = self.space_provider_policy_at_scope(
+            &compiled.query.scope.spaces,
+            compiled.snapshot.authority_generation,
+        )?;
+        let semantic_policy_denied =
+            space_provider_mode(space_policy, ProviderCapability::Embedding)
+                == SpaceProviderMode::Deny;
+        if semantic_policy_denied && semantic_required {
+            return Err(RuntimeError::ProviderPolicyDenied {
+                capability: ProviderCapability::Embedding,
+            });
+        }
+        let compiled = if semantic_policy_denied && requested_semantic {
+            let mut fallback = query.clone();
+            fallback
+                .required_capabilities
+                .retain(|capability| capability != "semantic");
+            fallback
+                .preferred_capabilities
+                .retain(|capability| capability != "semantic");
+            let mut fallback = self.compile_query(fallback)?;
+            fallback.execution.degraded = true;
+            if !fallback
+                .execution
+                .degraded_capabilities
+                .iter()
+                .any(|item| item == "semantic")
+            {
+                fallback
+                    .execution
+                    .degraded_capabilities
+                    .push("semantic".to_owned());
+            }
+            fallback
+        } else {
+            compiled
+        };
+
         let semantic_ready = compiled.execution.used("semantic");
         let semantic_pending = requested_semantic && (semantic_required || semantic_ready);
         let rerank_candidates = if compiled.execution.used("reranking") {
@@ -473,9 +553,13 @@ impl MemoriaRuntime {
             Vec::new()
         };
         let work = if semantic_pending {
-            Some(query_embedding_work(&query))
+            Some(query_embedding_work(&query, space_policy))
         } else if !rerank_candidates.is_empty() {
-            Some(query_rerank_work(&query, rerank_candidates.clone()))
+            Some(query_rerank_work(
+                &query,
+                rerank_candidates.clone(),
+                space_policy,
+            ))
         } else {
             None
         };
@@ -533,6 +617,48 @@ impl MemoriaRuntime {
             message,
         } = result
         {
+            if code == "PROVIDER_POLICY_DENIED" {
+                let capability = match operation.work {
+                    QueryWork::Embedding(_) => "semantic",
+                    QueryWork::Rerank(_) => "reranking",
+                };
+                let required = operation
+                    .compiled
+                    .query
+                    .required_capabilities
+                    .iter()
+                    .any(|item| item == capability);
+                if !required {
+                    let operation =
+                        self.query_operations.remove(operation_id).ok_or_else(|| {
+                            RuntimeError::QueryOperationNotFound {
+                                operation_id: operation_id.to_owned(),
+                            }
+                        })?;
+                    let mut fallback_query = operation.compiled.query.clone();
+                    fallback_query
+                        .required_capabilities
+                        .retain(|item| item != capability);
+                    fallback_query
+                        .preferred_capabilities
+                        .retain(|item| item != capability);
+                    let mut fallback = self.compile_query(fallback_query)?;
+                    fallback.execution.degraded = true;
+                    if !fallback
+                        .execution
+                        .degraded_capabilities
+                        .iter()
+                        .any(|item| item == capability)
+                    {
+                        fallback
+                            .execution
+                            .degraded_capabilities
+                            .push(capability.to_owned());
+                    }
+                    self.query_operations.cleanup(now);
+                    return Ok(QueryStep::Complete(self.execute_compiled_query(fallback)?));
+                }
+            }
             return Err(RuntimeError::ProviderFailure {
                 work_id,
                 retryable,
@@ -550,7 +676,11 @@ impl MemoriaRuntime {
         {
             let mut operation = operation;
             let candidates = std::mem::take(&mut operation.rerank_candidates);
-            let work = query_rerank_work(&operation.compiled.query, candidates);
+            let work = query_rerank_work(
+                &operation.compiled.query,
+                candidates,
+                operation.work.space_policy(),
+            );
             operation.work = work.clone();
             self.query_operations
                 .replace(operation_id.to_owned(), operation);
@@ -744,6 +874,14 @@ impl MemoriaRuntime {
                 capability: pending.work.capability(),
             });
         }
+        if let Some(pending) = self.pending_provider_work.front()
+            && space_provider_mode(pending.work.space_policy(), pending.work.capability())
+                == SpaceProviderMode::Deny
+        {
+            return Err(RuntimeError::ProviderPolicyDenied {
+                capability: pending.work.capability(),
+            });
+        }
         let Some(pending) = self.pending_provider_work.pop_front() else {
             return Ok(None);
         };
@@ -837,10 +975,19 @@ impl MemoriaRuntime {
         Ok(())
     }
 
-    fn rebuild_base_for_space(&mut self, space_id: SpaceId, generation: AuthorityGeneration) {
+    fn rebuild_base_for_space(
+        &mut self,
+        space_id: SpaceId,
+        generation: AuthorityGeneration,
+        provider_policy: SpaceProviderPolicy,
+    ) {
         match self.try_rebuild_base_for_space(space_id, generation) {
             Ok(report) => {
-                self.enqueue_enrichment_work(generation, report.enrichment_projections());
+                self.enqueue_enrichment_work(
+                    generation,
+                    report.enrichment_projections(),
+                    provider_policy,
+                );
             }
             Err(error) => {
                 self.last_error = Some(error.to_string());
@@ -871,12 +1018,17 @@ impl MemoriaRuntime {
         &mut self,
         generation: AuthorityGeneration,
         projections: &[EnrichmentProjection],
+        space_policy: SpaceProviderPolicy,
     ) {
+        if space_policy.enrichment == SpaceProviderMode::Deny {
+            return;
+        }
         for (index, projection) in projections.iter().enumerate() {
             let work = NeedWork::Enrichment(crate::EnrichmentBatchRequest {
                 work_id: format!("TG_{}_{}_{}", projection.memory_id(), generation, index),
                 signature: projection.producer_signature().to_owned(),
                 projection: projection.clone(),
+                space_policy,
             });
             self.pending_provider_work
                 .push_back(PendingProviderWork { generation, work });
@@ -888,7 +1040,11 @@ impl MemoriaRuntime {
         memory_id: MemoryId,
         generation: AuthorityGeneration,
         projection: LocalEmbeddingProjectionV1,
+        space_policy: SpaceProviderPolicy,
     ) {
+        if space_policy.embedding == SpaceProviderMode::Deny {
+            return;
+        }
         let work_id = format!("EW_{memory_id}_{generation}");
         let work = NeedWork::Embeddings(crate::EmbeddingBatchRequest {
             work_id,
@@ -898,6 +1054,7 @@ impl MemoriaRuntime {
                 key: memory_id.to_string(),
                 text: projection.content().to_owned(),
             }],
+            space_policy,
         });
         self.pending_provider_work
             .push_back(PendingProviderWork { generation, work });
@@ -930,6 +1087,29 @@ impl MemoriaRuntime {
             .map_err(|error| RuntimeError::AuthorityDatabase {
                 message: error.to_string(),
             })
+    }
+
+    fn space_provider_policy_at(
+        &self,
+        space_id: SpaceId,
+        generation: AuthorityGeneration,
+    ) -> Result<SpaceProviderPolicy, RuntimeError> {
+        Ok(self
+            .authority
+            .get_space_at(space_id, generation)?
+            .provider_policy)
+    }
+
+    fn space_provider_policy_at_scope(
+        &self,
+        space_ids: &[SpaceId],
+        generation: AuthorityGeneration,
+    ) -> Result<SpaceProviderPolicy, RuntimeError> {
+        let mut policy = SpaceProviderPolicy::default();
+        for space_id in space_ids {
+            policy = policy.most_restrictive(self.space_provider_policy_at(*space_id, generation)?);
+        }
+        Ok(policy)
     }
 
     fn try_rebuild_base_for_space(
@@ -1047,7 +1227,7 @@ fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
         .count() as f32
 }
 
-fn query_embedding_work(query: &MemoryQuery) -> QueryWork {
+fn query_embedding_work(query: &MemoryQuery, space_policy: SpaceProviderPolicy) -> QueryWork {
     let projection = QueryEmbeddingProjectionV1::build(query.cue.text.join("\n"));
     QueryWork::Embedding(EmbeddingBatchRequest {
         work_id: format!("QW_{}", MemoryId::new()),
@@ -1057,15 +1237,21 @@ fn query_embedding_work(query: &MemoryQuery) -> QueryWork {
             key: "query".to_owned(),
             text: projection.content().to_owned(),
         }],
+        space_policy,
     })
 }
 
-fn query_rerank_work(query: &MemoryQuery, candidates: Vec<String>) -> QueryWork {
+fn query_rerank_work(
+    query: &MemoryQuery,
+    candidates: Vec<String>,
+    space_policy: SpaceProviderPolicy,
+) -> QueryWork {
     QueryWork::Rerank(RerankBatchRequest {
         work_id: format!("QW_{}", MemoryId::new()),
         signature: "query-rerank-v1".to_owned(),
         query: query.cue.text.join("\n"),
         candidates,
+        space_policy,
     })
 }
 

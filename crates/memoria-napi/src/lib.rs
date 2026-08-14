@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+use memoria_authority::SpaceProviderPolicy;
 use memoria_query::{MemoryQuery, ReadSession};
 use memoria_runtime::MemoriaRuntime;
 use memoria_types::{MemoryId, RevisionId, SpaceId};
@@ -14,7 +15,8 @@ use napi_derive::napi;
 use crate::convert::{
     JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission, JsMemoryMutation,
     JsPortableMemory, JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest, JsQueryStep,
-    JsReviseMemoryRequest, JsStatus, QueryRequest, provider_result_from_js, query_step_to_js,
+    JsReviseMemoryRequest, JsSpaceProviderPolicy, JsStatus, QueryRequest, provider_result_from_js,
+    query_step_to_js,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -78,13 +80,20 @@ pub fn close_store(store: &NativeStore) -> Result<()> {
 }
 
 #[napi]
-pub fn authority_create_space(store: &NativeStore, space_key: String) -> Result<String> {
+pub fn authority_create_space(
+    store: &NativeStore,
+    space_key: String,
+    provider_policy: Option<JsSpaceProviderPolicy>,
+) -> Result<String> {
     let mut runtime = store.runtime()?;
     let runtime = runtime
         .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    let provider_policy = provider_policy
+        .map(SpaceProviderPolicy::try_from)
+        .transpose()?;
     runtime
-        .create_space(space_key)
+        .create_space_with_policy(space_key, provider_policy.unwrap_or_default())
         .map(|space_id| space_id.to_string())
         .map_err(runtime_error)
 }

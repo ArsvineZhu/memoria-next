@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use memoria_authority::{SpaceProviderMode, SpaceProviderPolicy};
 use memoria_mdx::TemporalValue;
 use memoria_query::{
     AuthorityConsistency, EntityRef, MemoryQuery, MemoryReference, QueryBudget, QueryConsistency,
@@ -472,6 +473,55 @@ pub struct JsQueryStep {
 
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq)]
+pub struct JsSpaceProviderPolicy {
+    pub embedding: String,
+    pub reranking: String,
+    pub enrichment: String,
+}
+
+impl From<SpaceProviderPolicy> for JsSpaceProviderPolicy {
+    fn from(value: SpaceProviderPolicy) -> Self {
+        Self {
+            embedding: provider_mode_to_js(value.embedding).to_owned(),
+            reranking: provider_mode_to_js(value.reranking).to_owned(),
+            enrichment: provider_mode_to_js(value.enrichment).to_owned(),
+        }
+    }
+}
+
+impl TryFrom<JsSpaceProviderPolicy> for SpaceProviderPolicy {
+    type Error = napi::Error;
+
+    fn try_from(value: JsSpaceProviderPolicy) -> Result<Self> {
+        Ok(Self {
+            embedding: provider_mode_from_js("embedding", &value.embedding)?,
+            reranking: provider_mode_from_js("reranking", &value.reranking)?,
+            enrichment: provider_mode_from_js("enrichment", &value.enrichment)?,
+        })
+    }
+}
+
+fn provider_mode_to_js(value: SpaceProviderMode) -> &'static str {
+    match value {
+        SpaceProviderMode::Deny => "deny",
+        SpaceProviderMode::LocalOnly => "local-only",
+        SpaceProviderMode::ExternalAllowed => "external-allowed",
+    }
+}
+
+fn provider_mode_from_js(field: &str, value: &str) -> Result<SpaceProviderMode> {
+    match value {
+        "deny" => Ok(SpaceProviderMode::Deny),
+        "local-only" => Ok(SpaceProviderMode::LocalOnly),
+        "external-allowed" => Ok(SpaceProviderMode::ExternalAllowed),
+        _ => Err(napi::Error::from_reason(format!(
+            "UNSUPPORTED_OPERATION: {field} provider policy mode `{value}` is invalid"
+        ))),
+    }
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct JsQueryWork {
     pub r#type: String,
     pub work_id: String,
@@ -479,6 +529,7 @@ pub struct JsQueryWork {
     pub input: Option<JsProviderItem>,
     pub query: Option<String>,
     pub candidates: Vec<JsQueryCandidate>,
+    pub space_policy: JsSpaceProviderPolicy,
 }
 
 #[napi(object)]
@@ -776,6 +827,7 @@ pub struct JsProviderWork {
     pub query: Option<String>,
     pub candidates: Vec<String>,
     pub projection: Option<JsEnrichmentProjection>,
+    pub space_policy: JsSpaceProviderPolicy,
 }
 
 impl From<NeedWork> for JsProviderWork {
@@ -797,6 +849,7 @@ impl From<NeedWork> for JsProviderWork {
                 query: None,
                 candidates: Vec::new(),
                 projection: None,
+                space_policy: request.space_policy.into(),
             },
             NeedWork::Rerank(request) => Self {
                 work_id: request.work_id,
@@ -807,6 +860,7 @@ impl From<NeedWork> for JsProviderWork {
                 query: Some(request.query),
                 candidates: request.candidates,
                 projection: None,
+                space_policy: request.space_policy.into(),
             },
             NeedWork::Enrichment(request) => Self {
                 work_id: request.work_id,
@@ -826,6 +880,7 @@ impl From<NeedWork> for JsProviderWork {
                     content: request.projection.content().to_owned(),
                     max_tags: u32::try_from(request.projection.max_tags()).unwrap_or(u32::MAX),
                 }),
+                space_policy: request.space_policy.into(),
             },
         }
     }
@@ -845,6 +900,7 @@ fn query_work_to_js(work: QueryWork) -> JsQueryWork {
                 }),
                 query: None,
                 candidates: Vec::new(),
+                space_policy: request.space_policy.into(),
             }
         }
         QueryWork::Rerank(request) => JsQueryWork {
@@ -861,6 +917,7 @@ fn query_work_to_js(work: QueryWork) -> JsQueryWork {
                     text: String::new(),
                 })
                 .collect(),
+            space_policy: request.space_policy.into(),
         },
     }
 }

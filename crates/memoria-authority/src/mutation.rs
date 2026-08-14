@@ -11,7 +11,7 @@ use crate::cas::SourceCas;
 use crate::db::AuthorityDb;
 use crate::model::{
     AuthorityTransaction, AuthorityWriteAction, AuthorityWriteResult, MemoryLifecycle,
-    MemoryRecord, SpaceLifecycle, SpaceRecord, database_error,
+    MemoryRecord, SpaceLifecycle, SpaceProviderPolicy, SpaceRecord, database_error,
 };
 
 const REVISION_FORMAT_VERSION: u32 = 1;
@@ -126,15 +126,26 @@ impl AuthorityDb {
         &self,
         space_key: impl AsRef<str>,
     ) -> Result<AuthorityWriteResult<SpaceRecord>, MemoriaError> {
+        self.create_space_with_policy(space_key, SpaceProviderPolicy::default())
+    }
+
+    pub fn create_space_with_policy(
+        &self,
+        space_key: impl AsRef<str>,
+        provider_policy: SpaceProviderPolicy,
+    ) -> Result<AuthorityWriteResult<SpaceRecord>, MemoriaError> {
         let space_key = space_key.as_ref().to_owned();
         self.write_memoria(|tx| {
             ensure_space_key_available(tx, &space_key, None)?;
-            let space_id = tx.create_space_record(&space_key).map_err(database_error)?;
+            let space_id = tx
+                .create_space_record_with_policy(&space_key, provider_policy)
+                .map_err(database_error)?;
             Ok(SpaceRecord {
                 space_id,
                 space_key,
                 lifecycle: SpaceLifecycle::Active,
                 generation: tx.generation(),
+                provider_policy,
             })
         })
     }
@@ -365,6 +376,23 @@ impl AuthorityDb {
                 expected_generation,
             )?;
             restore_space_in_transaction(tx, space_id)
+        })
+    }
+
+    pub fn update_space_provider_policy(
+        &self,
+        space_id: SpaceId,
+        provider_policy: SpaceProviderPolicy,
+        expected_generation: AuthorityGeneration,
+    ) -> Result<AuthorityWriteResult<SpaceRecord>, MemoriaError> {
+        self.write_memoria(|tx| {
+            let state = current_space_state(tx, space_id)?;
+            ensure_direct_expected_generation(
+                tx,
+                state.valid_from_generation,
+                expected_generation,
+            )?;
+            update_space_provider_policy_in_transaction(tx, space_id, provider_policy)
         })
     }
 
@@ -670,6 +698,7 @@ fn rename_space_key_in_transaction(
         space_id,
         space_key.to_owned(),
         state.lifecycle,
+        state.provider_policy,
         tx.generation(),
     ))
 }
@@ -688,6 +717,7 @@ fn retire_space_in_transaction(
         display_name: state.display_name.clone(),
         description: state.description.clone(),
         lifecycle: SpaceLifecycle::Retired,
+        provider_policy: state.provider_policy,
         valid_from_generation: state.valid_from_generation,
     };
     replace_space_state(tx, space_id, &space_key, &next_state)?;
@@ -695,6 +725,7 @@ fn retire_space_in_transaction(
         space_id,
         space_key,
         SpaceLifecycle::Retired,
+        state.provider_policy,
         tx.generation(),
     ))
 }
@@ -713,6 +744,7 @@ fn restore_space_in_transaction(
         display_name: state.display_name.clone(),
         description: state.description.clone(),
         lifecycle: SpaceLifecycle::Active,
+        provider_policy: state.provider_policy,
         valid_from_generation: state.valid_from_generation,
     };
     replace_space_state(tx, space_id, &space_key, &next_state)?;
@@ -720,6 +752,32 @@ fn restore_space_in_transaction(
         space_id,
         space_key,
         SpaceLifecycle::Active,
+        state.provider_policy,
+        tx.generation(),
+    ))
+}
+
+fn update_space_provider_policy_in_transaction(
+    tx: &mut AuthorityTransaction<'_>,
+    space_id: SpaceId,
+    provider_policy: SpaceProviderPolicy,
+) -> Result<SpaceRecord, MemoriaError> {
+    let state = current_space_state(tx, space_id)?;
+    let space_key = state.space_key.clone();
+    let next_state = SpaceState {
+        space_key: space_key.clone(),
+        display_name: state.display_name.clone(),
+        description: state.description.clone(),
+        lifecycle: state.lifecycle,
+        provider_policy,
+        valid_from_generation: state.valid_from_generation,
+    };
+    replace_space_state(tx, space_id, &space_key, &next_state)?;
+    Ok(space_record(
+        space_id,
+        space_key,
+        state.lifecycle,
+        provider_policy,
         tx.generation(),
     ))
 }
@@ -757,6 +815,7 @@ fn replace_space_state(
         state.display_name.as_deref(),
         state.description.as_deref(),
         state.lifecycle,
+        state.provider_policy,
         generation,
     )
     .map_err(database_error)
@@ -917,6 +976,7 @@ struct SpaceState {
     display_name: Option<String>,
     description: Option<String>,
     lifecycle: SpaceLifecycle,
+    provider_policy: SpaceProviderPolicy,
     valid_from_generation: AuthorityGeneration,
 }
 
@@ -1224,7 +1284,9 @@ fn current_space_state(
     space_id: SpaceId,
 ) -> Result<SpaceState, MemoriaError> {
     let result = transaction.transaction.query_row(
-        "SELECT space_key, display_name, description, lifecycle, valid_from_generation
+        "SELECT space_key, display_name, description, lifecycle,
+                embedding_policy, reranking_policy, enrichment_policy,
+                valid_from_generation
          FROM space_state_history
          WHERE space_id = ?1 AND valid_to_generation IS NULL
          LIMIT 1",
@@ -1235,12 +1297,19 @@ fn current_space_state(
                 "retired" => SpaceLifecycle::Retired,
                 _ => return Err(rusqlite::Error::InvalidQuery),
             };
+            let provider_policy = SpaceProviderPolicy::from_sql(
+                row.get::<_, String>(4)?.as_str(),
+                row.get::<_, String>(5)?.as_str(),
+                row.get::<_, String>(6)?.as_str(),
+            )
+            .ok_or(rusqlite::Error::InvalidQuery)?;
             Ok(SpaceState {
                 space_key: row.get(0)?,
                 display_name: row.get(1)?,
                 description: row.get(2)?,
                 lifecycle,
-                valid_from_generation: crate::model::authority_generation(row.get(4)?)?,
+                provider_policy,
+                valid_from_generation: crate::model::authority_generation(row.get(7)?)?,
             })
         },
     );
@@ -1378,6 +1447,7 @@ fn space_record(
     space_id: SpaceId,
     space_key: String,
     lifecycle: SpaceLifecycle,
+    provider_policy: SpaceProviderPolicy,
     generation: AuthorityGeneration,
 ) -> SpaceRecord {
     SpaceRecord {
@@ -1385,6 +1455,7 @@ fn space_record(
         space_key,
         lifecycle,
         generation,
+        provider_policy,
     }
 }
 

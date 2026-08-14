@@ -1,8 +1,8 @@
 mod support;
 
 use memoria_authority::{
-    AuthorityDb, AuthorityMutationBatch, AuthorityOperation, MemoryRecord, SourceCas, SpaceRecord,
-    StoreLayout, StoreWriterLock,
+    AuthorityDb, AuthorityMutationBatch, AuthorityOperation, MemoryRecord, SourceCas,
+    SpaceProviderMode, SpaceProviderPolicy, SpaceRecord, StoreLayout, StoreWriterLock,
 };
 use memoria_types::{
     AuthorityGeneration, MemoriaError, MemoryId, RevisionId, RevisionSemanticIntent,
@@ -901,4 +901,55 @@ fn retired_space_is_not_a_default_writable_target() {
         Err(MemoriaError::SpaceRetired { .. })
     ));
     assert_eq!(store.db.current_generation().unwrap(), retired.generation());
+}
+
+#[test]
+fn provider_policy_is_snapshot_versioned_space_state() {
+    let store = TestAuthority::new();
+    let space = store.create_space("private").unwrap();
+    assert_eq!(space.provider_policy, SpaceProviderPolicy::default());
+
+    let policy = SpaceProviderPolicy {
+        embedding: SpaceProviderMode::LocalOnly,
+        reranking: SpaceProviderMode::Deny,
+        enrichment: SpaceProviderMode::ExternalAllowed,
+    };
+    let updated = store
+        .db
+        .update_space_provider_policy(space.id(), policy, space.generation())
+        .unwrap()
+        .into_value();
+
+    let historical = store
+        .db
+        .get_space_at(space.id(), space.generation())
+        .unwrap();
+    assert_eq!(historical.provider_policy, SpaceProviderPolicy::default());
+    assert_eq!(
+        store.db.get_space(space.id()).unwrap().provider_policy,
+        policy
+    );
+    assert_eq!(updated.provider_policy, policy);
+}
+
+#[test]
+fn space_policy_update_does_not_change_space_identity() {
+    let store = TestAuthority::new();
+    let space = store.create_space("stable").unwrap();
+    let updated = store
+        .db
+        .update_space_provider_policy(
+            space.id(),
+            SpaceProviderPolicy {
+                embedding: SpaceProviderMode::Deny,
+                ..SpaceProviderPolicy::default()
+            },
+            space.generation(),
+        )
+        .unwrap()
+        .into_value();
+
+    assert_eq!(updated.id(), space.id());
+    assert_eq!(updated.space_key, space.space_key);
+    assert_ne!(updated.generation(), space.generation());
 }

@@ -16,8 +16,12 @@ pub use diagnostics::{RedactedDiagnostic, redact_text};
 pub use discovery::{EntityObservation, discover_scoped};
 pub use engine::{MemoriaRuntime, MemoryMutation, RuntimeError};
 pub use limits::{ResourceLimitError, ResourceLimits, check_source_bytes};
+pub use memoria_authority::{SpaceProviderMode, SpaceProviderPolicy};
 pub use memoria_query::{MemoryQuery, RetrievalResponse};
-pub use privacy::{ProviderCapability, ProviderEgressPolicy};
+pub use privacy::{
+    ProviderCapability, ProviderEgressPolicy, ProviderTrust, allows_space_provider_mode,
+    allows_space_provider_policy, space_provider_mode,
+};
 pub use provider::{
     EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector, EnrichmentBatchRequest, NeedWork,
     ProviderResultValidationError, ProviderWorkResult, RerankBatchRequest, RerankScore,

@@ -2,6 +2,7 @@ import type { NeedWork } from "../native/protocol.js";
 import { MemoriaError } from "../domain/errors.js";
 import {
   ProviderExecutionError,
+  type ProviderTrust,
   type EmbeddingPayload,
   type EmbeddingWork,
   type EnrichmentWork,
@@ -58,6 +59,7 @@ export class ProviderHost {
     const egressWork = this.#onDataEgress
       ? await this.#onDataEgress(work)
       : work;
+    assertProviderTrust(work, providerTrust(this.#providers, work.type));
     const providerType = egressWork.type;
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
@@ -131,6 +133,28 @@ export class ProviderHost {
         return provider.execute(work, signal);
       }
     }
+  }
+}
+
+function providerTrust(
+  providers: ProviderSet,
+  providerType: NeedWork["type"],
+): ProviderTrust {
+  const provider = providers[providerType];
+  return provider?.trust ?? "external";
+}
+
+function assertProviderTrust(work: NeedWork, trust: ProviderTrust): void {
+  const mode =
+    work.spacePolicy?.[work.type === "rerank" ? "reranking" : work.type] ??
+    "external-allowed";
+  const permitted =
+    mode === "external-allowed" || (mode === "local-only" && trust === "local");
+  if (!permitted) {
+    throw new MemoriaError(
+      "PROVIDER_POLICY_DENIED",
+      `PROVIDER_POLICY_DENIED: ${work.type} provider route (${trust}) is not permitted by the scoped Space policy`,
+    );
   }
 }
 

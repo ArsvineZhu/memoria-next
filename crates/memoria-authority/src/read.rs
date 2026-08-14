@@ -6,8 +6,8 @@ use rusqlite::{Connection, Row, params};
 use crate::cas::SourceCas;
 use crate::db::AuthorityDb;
 use crate::model::{
-    MemoryLifecycle, MemoryRecord, RevisionRecord, SpaceLifecycle, SpaceRecord,
-    authority_generation, database_error, sqlite_generation,
+    MemoryLifecycle, MemoryRecord, RevisionRecord, SpaceLifecycle, SpaceProviderPolicy,
+    SpaceRecord, authority_generation, database_error, sqlite_generation,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -186,22 +186,30 @@ fn read_space_at(
 ) -> rusqlite::Result<Result<SpaceRecord, MemoriaError>> {
     let generation = sqlite_generation(generation)?;
     let result = connection.query_row(
-        "SELECT space_key, lifecycle, valid_from_generation
+        "SELECT space_key, lifecycle, embedding_policy, reranking_policy,
+                enrichment_policy, valid_from_generation
          FROM space_state_history
          WHERE space_id = ?1
            AND valid_from_generation <= ?2
            AND (valid_to_generation IS NULL OR ?2 < valid_to_generation)
          ORDER BY valid_from_generation DESC
-         LIMIT 1",
+        LIMIT 1",
         params![space_id.as_bytes().as_slice(), generation],
         |row| {
             let lifecycle = parse_space_lifecycle(row.get::<_, String>(1)?)?;
-            let valid_from_generation = row.get::<_, i64>(2)?;
+            let provider_policy = SpaceProviderPolicy::from_sql(
+                row.get::<_, String>(2)?.as_str(),
+                row.get::<_, String>(3)?.as_str(),
+                row.get::<_, String>(4)?.as_str(),
+            )
+            .ok_or(rusqlite::Error::InvalidQuery)?;
+            let valid_from_generation = row.get::<_, i64>(5)?;
             Ok(SpaceRecord {
                 space_id,
                 space_key: row.get(0)?,
                 lifecycle,
                 generation: authority_generation(valid_from_generation)?,
+                provider_policy,
             })
         },
     );

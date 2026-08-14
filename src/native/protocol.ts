@@ -94,6 +94,17 @@ export interface NativeReviseMemoryRequest {
   mdx: string;
 }
 
+export type NativeSpaceProviderMode =
+  | "deny"
+  | "local-only"
+  | "external-allowed";
+
+export interface NativeSpaceProviderPolicy {
+  embedding: NativeSpaceProviderMode;
+  reranking: NativeSpaceProviderMode;
+  enrichment: NativeSpaceProviderMode;
+}
+
 export interface NativeMemoryMutation {
   memoryId: string;
   spaceId: string;
@@ -184,6 +195,7 @@ export interface NativeProviderWork {
   query?: string;
   candidates: string[];
   projection?: NativeEnrichmentProjection;
+  spacePolicy?: NativeSpaceProviderPolicy;
 }
 
 export type NativeQueryWork =
@@ -192,6 +204,7 @@ export type NativeQueryWork =
       workId: string;
       signature: string;
       input: { key: string; text: string };
+      spacePolicy?: NativeSpaceProviderPolicy;
     }
   | {
       type: "query-rerank";
@@ -199,6 +212,7 @@ export type NativeQueryWork =
       signature: string;
       query: string;
       candidates: Array<{ handle: string; text: string }>;
+      spacePolicy?: NativeSpaceProviderPolicy;
     };
 
 export type NativeQueryStep =
@@ -214,7 +228,11 @@ export interface NativeBinding {
   openStore(dataDir: string): NativeStoreHandle;
   closeStore(store: NativeStoreHandle): void;
   authorityMutate(store: NativeStoreHandle, request: NativeCreateMemoryRequest): string;
-  authorityCreateSpace(store: NativeStoreHandle, spaceKey: string): string;
+  authorityCreateSpace(
+    store: NativeStoreHandle,
+    spaceKey: string,
+    providerPolicy?: NativeSpaceProviderPolicy,
+  ): string;
   authorityRevise(store: NativeStoreHandle, request: NativeReviseMemoryRequest): NativeMemoryMutation;
   exportMemories(store: NativeStoreHandle, scope: string[]): NativePortableMemory[];
   purgePlan(store: NativeStoreHandle, memoryId: string): NativePurgePlan;
@@ -246,6 +264,7 @@ export type NeedWork =
       signature: string;
       dimensions: number;
       items: Array<{ key: string; text: string }>;
+      spacePolicy?: NativeSpaceProviderPolicy;
     }
   | {
       type: "rerank";
@@ -253,12 +272,14 @@ export type NeedWork =
       signature: string;
       query: string;
       candidates: string[];
+      spacePolicy?: NativeSpaceProviderPolicy;
   }
   | {
       type: "enrichment";
       workId: string;
       signature: string;
       projection: NativeEnrichmentProjection;
+      spacePolicy?: NativeSpaceProviderPolicy;
     };
 
 export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork {
@@ -271,6 +292,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
           signature: work.signature,
           dimensions: work.dimensions,
           items: work.items,
+          spacePolicy: work.spacePolicy,
         };
       case "rerank":
         return {
@@ -279,6 +301,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
           signature: work.signature,
           query: work.query ?? "",
           candidates: work.candidates,
+          spacePolicy: work.spacePolicy,
         };
       case "enrichment":
         if (!work.projection) {
@@ -289,6 +312,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
           workId: work.workId,
           signature: work.signature,
           projection: work.projection,
+          spacePolicy: work.spacePolicy,
         };
       default:
         throw new Error(`Unsupported native provider work type: ${work.workType}`);
@@ -302,6 +326,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
         signature: work.signature,
         dimensions: 3,
         items: [work.input],
+        spacePolicy: work.spacePolicy,
       };
     case "query-rerank":
       return {
@@ -310,6 +335,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
         signature: work.signature,
         query: work.query,
         candidates: work.candidates.map((candidate) => candidate.handle),
+        spacePolicy: work.spacePolicy,
       };
   }
 }

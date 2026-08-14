@@ -25,6 +25,9 @@ pub(crate) const SCHEMA_V1_COLUMNS: &[(&str, &[&str])] = &[
             "display_name",
             "description",
             "lifecycle",
+            "embedding_policy",
+            "reranking_policy",
+            "enrichment_policy",
             "valid_from_generation",
             "valid_to_generation",
         ],
@@ -116,6 +119,15 @@ CREATE TABLE IF NOT EXISTS space_state_history (
     display_name TEXT,
     description TEXT,
     lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'retired')),
+    embedding_policy TEXT NOT NULL DEFAULT 'external-allowed' CHECK (
+        embedding_policy IN ('deny', 'local-only', 'external-allowed')
+    ),
+    reranking_policy TEXT NOT NULL DEFAULT 'external-allowed' CHECK (
+        reranking_policy IN ('deny', 'local-only', 'external-allowed')
+    ),
+    enrichment_policy TEXT NOT NULL DEFAULT 'external-allowed' CHECK (
+        enrichment_policy IN ('deny', 'local-only', 'external-allowed')
+    ),
     valid_from_generation INTEGER NOT NULL CHECK (valid_from_generation >= 0),
     valid_to_generation INTEGER,
     PRIMARY KEY (space_id, valid_from_generation),

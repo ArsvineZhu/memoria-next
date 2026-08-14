@@ -25,6 +25,14 @@ impl QueryWork {
     }
 
     #[must_use]
+    pub fn space_policy(&self) -> memoria_authority::SpaceProviderPolicy {
+        match self {
+            Self::Embedding(work) => work.space_policy,
+            Self::Rerank(work) => work.space_policy,
+        }
+    }
+
+    #[must_use]
     pub(crate) fn as_need_work(&self) -> NeedWork {
         match self {
             Self::Embedding(work) => NeedWork::Embeddings(work.clone()),

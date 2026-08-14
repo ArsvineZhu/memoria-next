@@ -9,6 +9,7 @@ import type {
   NativeQueryResponse,
   NativePortableMemory,
   NativePurgePlan,
+  NativeSpaceProviderPolicy,
   NativeStatus,
   NativeStoreHandle,
 } from "../native/protocol.js";
@@ -244,8 +245,15 @@ export class Memoria {
     }
   }
 
-  async createSpace(spaceKey: string): Promise<string> {
-    return this.#binding.authorityCreateSpace(this.store(), spaceKey);
+  async createSpace(
+    spaceKey: string,
+    providerPolicy?: NativeSpaceProviderPolicy,
+  ): Promise<string> {
+    return this.#binding.authorityCreateSpace(
+      this.store(),
+      spaceKey,
+      providerPolicy,
+    );
   }
 
   async createMemory(request: CreateMemoryRequest): Promise<CreatedMemory> {

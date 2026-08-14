@@ -17,7 +17,7 @@ pub use lock::StoreWriterLock;
 pub use memoria_types::{AuthorityGeneration, RevisionSemanticIntent};
 pub use model::{
     AuthorityTransaction, AuthorityWriteResult, MemoryLifecycle, MemoryRecord, RevisionRecord,
-    SpaceLifecycle, SpaceRecord,
+    SpaceLifecycle, SpaceProviderMode, SpaceProviderPolicy, SpaceRecord,
 };
 pub use mutation::{AuthorityMutationBatch, AuthorityOperation};
 pub use read::MemoryRead;

@@ -12,6 +12,78 @@ pub enum SpaceLifecycle {
     Retired,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SpaceProviderMode {
+    Deny,
+    LocalOnly,
+    #[default]
+    ExternalAllowed,
+}
+
+impl SpaceProviderMode {
+    pub(crate) const fn as_sql(self) -> &'static str {
+        match self {
+            Self::Deny => "deny",
+            Self::LocalOnly => "local-only",
+            Self::ExternalAllowed => "external-allowed",
+        }
+    }
+
+    pub(crate) fn from_sql(value: &str) -> Option<Self> {
+        match value {
+            "deny" => Some(Self::Deny),
+            "local-only" => Some(Self::LocalOnly),
+            "external-allowed" => Some(Self::ExternalAllowed),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn most_restrictive(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Deny, _) | (_, Self::Deny) => Self::Deny,
+            (Self::LocalOnly, _) | (_, Self::LocalOnly) => Self::LocalOnly,
+            (Self::ExternalAllowed, Self::ExternalAllowed) => Self::ExternalAllowed,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpaceProviderPolicy {
+    pub embedding: SpaceProviderMode,
+    pub reranking: SpaceProviderMode,
+    pub enrichment: SpaceProviderMode,
+}
+
+impl Default for SpaceProviderPolicy {
+    fn default() -> Self {
+        Self {
+            embedding: SpaceProviderMode::ExternalAllowed,
+            reranking: SpaceProviderMode::ExternalAllowed,
+            enrichment: SpaceProviderMode::ExternalAllowed,
+        }
+    }
+}
+
+impl SpaceProviderPolicy {
+    #[must_use]
+    pub const fn most_restrictive(self, other: Self) -> Self {
+        Self {
+            embedding: self.embedding.most_restrictive(other.embedding),
+            reranking: self.reranking.most_restrictive(other.reranking),
+            enrichment: self.enrichment.most_restrictive(other.enrichment),
+        }
+    }
+
+    pub(crate) fn from_sql(embedding: &str, reranking: &str, enrichment: &str) -> Option<Self> {
+        Some(Self {
+            embedding: SpaceProviderMode::from_sql(embedding)?,
+            reranking: SpaceProviderMode::from_sql(reranking)?,
+            enrichment: SpaceProviderMode::from_sql(enrichment)?,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryLifecycle {
     Active,
@@ -42,6 +114,7 @@ pub struct SpaceRecord {
     pub space_key: String,
     pub lifecycle: SpaceLifecycle,
     pub generation: AuthorityGeneration,
+    pub provider_policy: SpaceProviderPolicy,
 }
 
 impl SpaceRecord {
@@ -184,6 +257,14 @@ impl<'tx> AuthorityTransaction<'tx> {
     }
 
     pub fn create_space_record(&mut self, space_key: impl AsRef<str>) -> rusqlite::Result<SpaceId> {
+        self.create_space_record_with_policy(space_key, SpaceProviderPolicy::default())
+    }
+
+    pub fn create_space_record_with_policy(
+        &mut self,
+        space_key: impl AsRef<str>,
+        provider_policy: SpaceProviderPolicy,
+    ) -> rusqlite::Result<SpaceId> {
         let space_id = SpaceId::try_new().map_err(sqlite_conversion_error)?;
         let space_key = space_key.as_ref();
         let generation = sqlite_generation(self.generation)?;
@@ -198,12 +279,14 @@ impl<'tx> AuthorityTransaction<'tx> {
             None,
             None,
             SpaceLifecycle::Active,
+            provider_policy,
             generation,
         )?;
 
         Ok(space_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert_space_state(
         &mut self,
         space_id: SpaceId,
@@ -211,6 +294,7 @@ impl<'tx> AuthorityTransaction<'tx> {
         display_name: Option<&str>,
         description: Option<&str>,
         lifecycle: SpaceLifecycle,
+        provider_policy: SpaceProviderPolicy,
         valid_from_generation: i64,
     ) -> rusqlite::Result<()> {
         self.transaction.execute(
@@ -220,14 +304,20 @@ impl<'tx> AuthorityTransaction<'tx> {
                  display_name,
                  description,
                  lifecycle,
+                 embedding_policy,
+                 reranking_policy,
+                 enrichment_policy,
                  valid_from_generation
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 space_id.as_bytes().as_slice(),
                 space_key,
                 display_name,
                 description,
                 lifecycle.as_sql(),
+                provider_policy.embedding.as_sql(),
+                provider_policy.reranking.as_sql(),
+                provider_policy.enrichment.as_sql(),
                 valid_from_generation,
             ],
         )?;
@@ -251,6 +341,7 @@ impl<'tx> AuthorityTransaction<'tx> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn replace_space_state(
         &mut self,
         space_id: SpaceId,
@@ -258,6 +349,7 @@ impl<'tx> AuthorityTransaction<'tx> {
         display_name: Option<&str>,
         description: Option<&str>,
         lifecycle: SpaceLifecycle,
+        provider_policy: SpaceProviderPolicy,
         valid_from_generation: i64,
     ) -> rusqlite::Result<()> {
         let current_generation = self
@@ -278,14 +370,20 @@ impl<'tx> AuthorityTransaction<'tx> {
                  SET space_key = ?1,
                      display_name = ?2,
                      description = ?3,
-                     lifecycle = ?4
-                 WHERE space_id = ?5 AND valid_from_generation = ?6
+                     lifecycle = ?4,
+                     embedding_policy = ?5,
+                     reranking_policy = ?6,
+                     enrichment_policy = ?7
+                 WHERE space_id = ?8 AND valid_from_generation = ?9
                    AND valid_to_generation IS NULL",
                 params![
                     space_key,
                     display_name,
                     description,
                     lifecycle.as_sql(),
+                    provider_policy.embedding.as_sql(),
+                    provider_policy.reranking.as_sql(),
+                    provider_policy.enrichment.as_sql(),
                     space_id.as_bytes().as_slice(),
                     valid_from_generation,
                 ],
@@ -303,6 +401,7 @@ impl<'tx> AuthorityTransaction<'tx> {
             display_name,
             description,
             lifecycle,
+            provider_policy,
             valid_from_generation,
         )
     }
