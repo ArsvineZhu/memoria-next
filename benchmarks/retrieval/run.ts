@@ -1,5 +1,22 @@
-import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  asMemoryId,
+  asRevisionId,
+  asSpaceId,
+  createMemoria,
+  type Memoria,
+  type QueryOptionalCapability,
+  type SpaceId,
+} from "../../src/index.js";
+import type {
+  EmbeddingWork,
+  ProviderSet,
+  RerankWork,
+} from "../../src/providers/types.js";
 
 type Profile =
   | "lexical"
@@ -28,7 +45,6 @@ interface CorpusDocument {
   tags: string[];
   entities: string[];
   relations: Relation[];
-  vector: number[];
 }
 
 interface QueryCase {
@@ -43,13 +59,16 @@ interface QueryCase {
   relevant: Record<string, number>;
 }
 
-interface Candidate {
-  document: CorpusDocument;
-  score: number;
-  lexical: number;
-  semantic: number;
-  signals: string[];
-  rerankScore?: number;
+interface ProviderCounts {
+  embedding: number;
+  rerank: number;
+}
+
+interface ProfileDefinition {
+  quality: "fast" | "balanced" | "thorough";
+  required: QueryOptionalCapability[];
+  preferred: QueryOptionalCapability[];
+  expectedChannels: string[];
 }
 
 interface QueryMetrics {
@@ -64,8 +83,31 @@ interface QueryMetrics {
   providerCalls: number;
   annSearches: number;
   diffusionIterations: number;
+  rerankCalls: number;
+  rerankApplied: boolean;
+  basisRank?: number;
   latencyMs: number;
   hardConstraintViolations: number;
+  trace: {
+    channelsExecuted: string[];
+    candidateCounts: Array<{ channel: string; count: number }>;
+    activationEdgeVisits: number;
+    diffusionIterations: number;
+    relationExpansions: number;
+    rerankRequested: boolean;
+    rerankApplied: boolean;
+    capabilityDegraded: boolean;
+    authorityGeneration: string;
+  };
+}
+
+interface Fixture {
+  memoria: Memoria;
+  dataDir: string;
+  spaceIds: Map<string, SpaceId>;
+  externalIdByMemoryId: Map<string, string>;
+  documentByExternalId: Map<string, CorpusDocument>;
+  counts: ProviderCounts;
 }
 
 const PROFILES: Profile[] = [
@@ -80,265 +122,539 @@ const PROFILES: Profile[] = [
   "balanced",
   "thorough",
 ];
-const TOP_K = 5;
-const MAX_ACTIVE_TAGS = 64;
-const MAX_EDGE_VISITS = 512;
-const MAX_HOPS = 3;
 
-const corpus = readJsonLines<CorpusDocument>(
+const PROFILE_DEFINITIONS: Record<Profile, ProfileDefinition> = {
+  lexical: {
+    quality: "balanced",
+    required: [],
+    preferred: [],
+    expectedChannels: ["lexical"],
+  },
+  "lexical+semantic": {
+    quality: "balanced",
+    required: ["semantic"],
+    preferred: [],
+    expectedChannels: ["lexical", "semantic-direct"],
+  },
+  "tag-association": {
+    quality: "balanced",
+    required: ["associative"],
+    preferred: [],
+    expectedChannels: ["tag-readout"],
+  },
+  "tag-basis-residual": {
+    quality: "balanced",
+    required: ["semantic", "associative"],
+    preferred: [],
+    expectedChannels: ["semantic-direct", "semantic-residual"],
+  },
+  activation: {
+    quality: "balanced",
+    required: ["associative"],
+    preferred: [],
+    expectedChannels: ["activation"],
+  },
+  diffusion: {
+    quality: "thorough",
+    required: ["associative"],
+    preferred: [],
+    expectedChannels: ["diffusion"],
+  },
+  rerank: {
+    quality: "balanced",
+    required: [],
+    preferred: ["reranking"],
+    expectedChannels: ["lexical"],
+  },
+  fast: {
+    quality: "fast",
+    required: [],
+    preferred: [],
+    expectedChannels: ["lexical"],
+  },
+  balanced: {
+    quality: "balanced",
+    required: [],
+    preferred: [],
+    expectedChannels: ["lexical"],
+  },
+  thorough: {
+    quality: "thorough",
+    required: ["semantic", "associative"],
+    preferred: ["reranking"],
+    expectedChannels: [
+      "lexical",
+      "semantic-direct",
+      "tag-readout",
+      "activation",
+      "diffusion",
+      "relation",
+    ],
+  },
+};
+
+const TOP_K = 5;
+const corpus = await readJsonLines<CorpusDocument>(
   new URL("./corpus.jsonl", import.meta.url),
 );
-const queries = readJsonLines<QueryCase>(
+const queries = await readJsonLines<QueryCase>(
   new URL("./queries.jsonl", import.meta.url),
 );
 
-const profileArgument = process.argv.find((argument) =>
-  argument.startsWith("--profile="),
-);
-const profileFlagIndex = process.argv.indexOf("--profile");
-const requested =
-  profileArgument?.slice("--profile=".length) ??
-  (profileFlagIndex >= 0 ? process.argv[profileFlagIndex + 1] : "") ??
-  "";
+const requested = requestedProfile();
 
-if (requested === "all") {
-  console.log(JSON.stringify(PROFILES.map(runProfile), null, 2));
-} else if (PROFILES.includes(requested as Profile)) {
-  console.log(JSON.stringify(runProfile(requested as Profile), null, 2));
-} else {
-  console.error(`usage: run.ts --profile=${[...PROFILES, "all"].join("|")}`);
+try {
+  if (requested === "all") {
+    const results = [];
+    for (const profile of PROFILES) {
+      results.push(await runProfile(profile));
+    }
+    console.log(JSON.stringify(results, null, 2));
+  } else if (PROFILES.includes(requested as Profile)) {
+    console.log(
+      JSON.stringify(await runProfile(requested as Profile), null, 2),
+    );
+  } else {
+    console.error("usage: run.ts --profile=" + [...PROFILES, "all"].join("|"));
+    process.exitCode = 1;
+  }
+} catch (error) {
+  console.error(
+    error instanceof Error ? (error.stack ?? error.message) : String(error),
+  );
   process.exitCode = 1;
 }
 
-function runProfile(profile: Profile) {
+async function runProfile(profile: Profile) {
   const started = performance.now();
-  let providerCalls = 0;
-  let graphVisits = 0;
-  let basisRankTotal = 0;
-  let basisSkippedQueries = 0;
+  const definition = PROFILE_DEFINITIONS[profile];
+  const fixture = await createFixture();
   const queryMetrics: QueryMetrics[] = [];
-  const executionProfile: Profile =
-    profile === "fast" || profile === "balanced"
-      ? "lexical"
-      : profile === "thorough"
-        ? "rerank"
-        : profile;
+  const observedChannels = new Set<string>();
 
-  for (const query of queries) {
-    const queryStarted = performance.now();
-    const scoped = corpus.filter(
-      (document) =>
-        query.scope.includes(document.spaceId) &&
-        (query.state === undefined || document.state === query.state) &&
-        (query.entities ?? []).every((entity) =>
-          document.entities.includes(entity),
-        ),
-    );
-    const queryVector = queryVectorFor(query.text);
-    const tagGraph = buildTagGraph(scoped);
-    const activation =
-      executionProfile === "activation" || executionProfile === "diffusion"
-        ? propagateTags(
-            tagGraph,
-            query.tags ?? [],
-            executionProfile === "diffusion" ? MAX_HOPS + 1 : MAX_HOPS,
-          )
-        : { scores: new Map<string, number>(), visits: 0 };
-    graphVisits += activation.visits;
-    let queryBasisRank: number | undefined;
-
-    let candidates = scoped.map((document) => {
-      const candidate = scoreDocument(
-        document,
-        query,
-        queryVector,
-        executionProfile,
-        scoped,
-        activation.scores,
+  try {
+    for (const query of queries) {
+      const queryStarted = performance.now();
+      const before = { ...fixture.counts };
+      const response = await fixture.memoria.query(
+        buildQuery(query, definition, fixture.spaceIds),
       );
-      if (candidate.basisRank !== undefined && queryBasisRank === undefined) {
-        basisRankTotal += candidate.basisRank;
-        basisSkippedQueries += candidate.basisSkipped ? 1 : 0;
-        queryBasisRank = candidate.basisRank;
+      const trace = response.trace;
+      if (!trace) {
+        throw new Error(
+          profile +
+            "/" +
+            query.id +
+            ": real native response did not include QueryOperatorTrace",
+        );
       }
-      return candidate.value;
-    });
-    candidates.sort(compareBase);
+      for (const channel of trace.channelsExecuted) {
+        observedChannels.add(channel);
+      }
 
-    if (executionProfile === "rerank" && candidates.length > 0) {
-      providerCalls += 1;
-      const selected = candidates.slice(0, TOP_K).map((candidate) => ({
-        ...candidate,
-        rerankScore: 0.65 * candidate.lexical + 0.35 * candidate.semantic,
+      const returned = response.results.map((result) => ({
+        id:
+          fixture.externalIdByMemoryId.get(result.memoryId) ?? result.memoryId,
+        result,
       }));
-      selected.sort(compareReranked);
-      candidates = [...selected, ...candidates.slice(TOP_K)];
+      const providerCalls =
+        fixture.counts.embedding -
+        before.embedding +
+        fixture.counts.rerank -
+        before.rerank;
+      const rerankCalls = fixture.counts.rerank - before.rerank;
+      queryMetrics.push({
+        queryId: query.id,
+        case: query.case,
+        top: returned.slice(0, TOP_K).map((item) => item.id),
+        ...rankingMetrics(query, returned.slice(0, TOP_K)),
+        duplicateEvidence: trace.correlationSuppressedEvidence,
+        graphVisits: trace.activationEdgeVisits,
+        providerCalls,
+        annSearches: trace.channelsExecuted.filter((channel) =>
+          channel.startsWith("semantic-"),
+        ).length,
+        diffusionIterations: trace.diffusionIterations,
+        rerankCalls,
+        rerankApplied: trace.rerankApplied,
+        ...(trace.tagBasisRank === undefined
+          ? {}
+          : { basisRank: trace.tagBasisRank }),
+        latencyMs: Number((performance.now() - queryStarted).toFixed(3)),
+        hardConstraintViolations: countHardConstraintViolations(
+          query,
+          returned,
+          fixture,
+        ),
+        trace: {
+          channelsExecuted: trace.channelsExecuted,
+          candidateCounts: trace.candidateCounts,
+          activationEdgeVisits: trace.activationEdgeVisits,
+          diffusionIterations: trace.diffusionIterations,
+          relationExpansions: trace.relationExpansions,
+          rerankRequested: trace.rerankRequested,
+          rerankApplied: trace.rerankApplied,
+          capabilityDegraded: trace.capabilityDegraded,
+          authorityGeneration: trace.authorityGeneration,
+        },
+      });
     }
 
-    queryMetrics.push(
-      metricsFor(
-        query,
-        candidates,
-        activation.visits,
-        executionProfile === "rerank" && candidates.length > 0 ? 1 : 0,
-        executionProfile,
-        performance.now() - queryStarted,
-      ),
-    );
-  }
+    for (const expectedChannel of definition.expectedChannels) {
+      if (!observedChannels.has(expectedChannel)) {
+        throw new Error(
+          profile +
+            ": runtime trace never observed expected channel " +
+            expectedChannel,
+        );
+      }
+    }
+    if (
+      profile === "rerank" &&
+      !queryMetrics.some((metric) => metric.rerankApplied)
+    ) {
+      throw new Error("rerank profile completed without an applied rerank");
+    }
+    if (
+      profile === "thorough" &&
+      !queryMetrics.some((metric) => metric.rerankApplied)
+    ) {
+      throw new Error("thorough profile completed without an applied rerank");
+    }
 
-  const elapsedMs = Math.max(0.01, performance.now() - started);
-  return {
-    profile,
-    corpusDocuments: corpus.length,
-    queryCount: queries.length,
-    topK: TOP_K,
-    metrics: {
-      recallAtK: mean(queryMetrics.map((metric) => metric.recallAtK)),
-      recallAt10: mean(queryMetrics.map((metric) => metric.recallAtK)),
-      mrr: mean(queryMetrics.map((metric) => metric.mrr)),
-      ndcgAtK: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
-      ndcgAt10: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
-      duplicateEvidence: queryMetrics.reduce(
-        (total, metric) => total + metric.duplicateEvidence,
-        0,
-      ),
-      duplicateEvidenceRate: mean(
-        queryMetrics.map((metric) => metric.duplicateEvidence),
-      ),
-      latencyMs: Number(elapsedMs.toFixed(3)),
-      p50LatencyMs: percentile(
-        queryMetrics.map((metric) => metric.latencyMs),
-        0.5,
-      ),
-      p95LatencyMs: percentile(
-        queryMetrics.map((metric) => metric.latencyMs),
-        0.95,
-      ),
-      providerCalls,
-      annSearches: queryMetrics.reduce(
-        (total, metric) => total + metric.annSearches,
-        0,
-      ),
-      graphVisits,
-      diffusionIterations: queryMetrics.reduce(
-        (total, metric) => total + metric.diffusionIterations,
-        0,
-      ),
-      rerankCalls: providerCalls,
-      hardConstraintViolationCount: queryMetrics.reduce(
-        (total, metric) => total + metric.hardConstraintViolations,
-        0,
-      ),
-      workingSetBytes: estimateWorkingSetBytes(),
-      basisRankMean:
-        queries.length === 0
-          ? 0
-          : Number((basisRankTotal / queries.length).toFixed(3)),
-      basisSkippedQueries,
-    },
-    queries: queryMetrics,
-  };
+    const elapsedMs = Math.max(0.01, performance.now() - started);
+    const basisRanks = queryMetrics.flatMap((metric) =>
+      metric.basisRank === undefined ? [] : [metric.basisRank],
+    );
+    return {
+      runtimeBacked: true,
+      runtimePath:
+        "createMemoria -> NativeBinding -> MemoriaRuntime::query -> QueryOperatorTrace",
+      providerMode: "deterministic-local",
+      profile,
+      corpusDocuments: corpus.length,
+      queryCount: queries.length,
+      topK: TOP_K,
+      observedChannels: [...observedChannels].sort(),
+      metrics: {
+        recallAtK: mean(queryMetrics.map((metric) => metric.recallAtK)),
+        recallAt10: mean(queryMetrics.map((metric) => metric.recallAtK)),
+        mrr: mean(queryMetrics.map((metric) => metric.mrr)),
+        ndcgAtK: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
+        ndcgAt10: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
+        duplicateEvidence: queryMetrics.reduce(
+          (total, metric) => total + metric.duplicateEvidence,
+          0,
+        ),
+        duplicateEvidenceRate: mean(
+          queryMetrics.map((metric) => metric.duplicateEvidence),
+        ),
+        latencyMs: Number(elapsedMs.toFixed(3)),
+        p50LatencyMs: percentile(
+          queryMetrics.map((metric) => metric.latencyMs),
+          0.5,
+        ),
+        p95LatencyMs: percentile(
+          queryMetrics.map((metric) => metric.latencyMs),
+          0.95,
+        ),
+        providerCalls: queryMetrics.reduce(
+          (total, metric) => total + metric.providerCalls,
+          0,
+        ),
+        annSearches: queryMetrics.reduce(
+          (total, metric) => total + metric.annSearches,
+          0,
+        ),
+        graphVisits: queryMetrics.reduce(
+          (total, metric) => total + metric.graphVisits,
+          0,
+        ),
+        diffusionIterations: queryMetrics.reduce(
+          (total, metric) => total + metric.diffusionIterations,
+          0,
+        ),
+        rerankCalls: queryMetrics.reduce(
+          (total, metric) => total + metric.rerankCalls,
+          0,
+        ),
+        hardConstraintViolationCount: queryMetrics.reduce(
+          (total, metric) => total + metric.hardConstraintViolations,
+          0,
+        ),
+        storeBytes: await directorySize(fixture.dataDir),
+        basisRankMean: mean(basisRanks),
+        basisSkippedQueries: queries.length - basisRanks.length,
+      },
+      queries: queryMetrics,
+    };
+  } finally {
+    await fixture.memoria.close();
+    await rm(fixture.dataDir, { recursive: true, force: true });
+  }
 }
 
-function scoreDocument(
-  document: CorpusDocument,
-  query: QueryCase,
-  queryVector: number[],
-  profile: Profile,
-  scoped: CorpusDocument[],
-  activation: Map<string, number>,
-): { value: Candidate; basisRank?: number; basisSkipped?: boolean } {
-  const lexical = lexicalScore(document, query.text);
-  const semantic = cosine(queryVector, document.vector);
-  const signals: string[] = [];
-  let score = lexical;
-  if (lexical > 0) {
-    signals.push("lexical");
-  }
-
-  if (profile !== "lexical") {
-    score += semantic * 0.75;
-    if (semantic > 0) {
-      signals.push("semantic");
-    }
-  }
-
-  if (query.entities?.length && document.entities.length > 0) {
-    score += 0.35;
-    signals.push("entity");
-  }
-
-  if (profile === "tag-association" || profile === "tag-basis-residual") {
-    const association = tagAssociationScore(document, query.tags ?? [], scoped);
-    score += association * 0.45;
-    if (association > 0) {
-      signals.push("tag-association");
-    }
-  }
-
-  let basisRank: number | undefined;
-  let basisSkipped: boolean | undefined;
-  if (profile === "tag-basis-residual") {
-    const basis = residualScore(
-      queryVector,
-      query.tags ?? [],
-      scoped,
-      document.vector,
-    );
-    basisRank = basis.rank;
-    basisSkipped = !basis.used;
-    score += basis.score * 0.4;
-    if (basis.used && basis.score > 0) {
-      signals.push("tag-basis-residual");
-    }
-  }
-
-  if (profile === "activation" || profile === "diffusion") {
-    const activationScore = document.tags.reduce(
-      (best, tag) => Math.max(best, activation.get(tag) ?? 0),
-      0,
-    );
-    score += activationScore * 0.55;
-    if (activationScore > 0) {
-      signals.push(profile);
-    }
-  }
-
-  if (
-    query.relationKinds?.some((kind) =>
-      document.relations.some((r) => r.kind === kind),
-    )
-  ) {
-    score += 0.35;
-    signals.push("relation");
-  }
-
-  return {
-    value: { document, score, lexical, semantic, signals },
-    basisRank,
-    basisSkipped,
-  };
-}
-
-function metricsFor(
-  query: QueryCase,
-  candidates: Candidate[],
-  graphVisits: number,
-  providerCalls: number,
-  profile: Profile,
-  latencyMs: number,
-): QueryMetrics {
-  const top = candidates.slice(0, TOP_K);
-  const relevant = new Set(Object.keys(query.relevant));
-  const hits = top.filter((candidate) => relevant.has(candidate.document.id));
-  const recallAtK = relevant.size === 0 ? 0 : hits.length / relevant.size;
-  const firstHit = top.findIndex((candidate) =>
-    relevant.has(candidate.document.id),
+async function createFixture(): Promise<Fixture> {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-retrieval-"));
+  const counts: ProviderCounts = { embedding: 0, rerank: 0 };
+  const memoria = await createMemoria({
+    dataDir,
+    providers: deterministicProviders(counts),
+  });
+  const spaceIds = new Map<string, SpaceId>();
+  const externalIdByMemoryId = new Map<string, string>();
+  const documentByExternalId = new Map(
+    corpus.map((document) => [document.id, document]),
   );
-  const mrr = firstHit < 0 ? 0 : 1 / (firstHit + 1);
-  const dcg = top.reduce((total, candidate, index) => {
-    const grade = query.relevant[candidate.document.id] ?? 0;
+
+  try {
+    for (const spaceKey of [
+      ...new Set(corpus.map((document) => document.spaceId)),
+    ]) {
+      const space = await memoria.spaces.create({ key: spaceKey });
+      spaceIds.set(spaceKey, space.id);
+    }
+
+    let generation = "0";
+    for (const document of corpus) {
+      const space = spaceIds.get(document.spaceId);
+      if (!space) {
+        throw new Error("missing benchmark Space " + document.spaceId);
+      }
+      const created = await memoria.documents.create({
+        space: { id: asSpaceId(space) },
+        documentKey: document.id,
+        mdx: documentMdx(document),
+      });
+      generation = created.authorityGeneration;
+      externalIdByMemoryId.set(created.memoryId, document.id);
+    }
+    await waitForCoverage(memoria, generation);
+
+    const heads = await memoria.query({
+      scope: { spaces: [...spaceIds.values()] },
+      budget: {
+        maxResults: corpus.length + 10,
+        maxMatchesPerResult: 1,
+        maxEvidenceTokens: 100,
+      },
+    });
+    const headByMemoryId = new Map(
+      heads.results.map((result) => [result.memoryId, result.revisionId]),
+    );
+
+    for (const document of corpus.filter(
+      (candidate) => candidate.relations.length > 0,
+    )) {
+      const memoryId = [...externalIdByMemoryId.entries()].find(
+        ([, externalId]) => externalId === document.id,
+      )?.[0];
+      const space = spaceIds.get(document.spaceId);
+      const expectedHead = memoryId ? headByMemoryId.get(memoryId) : undefined;
+      if (!memoryId || !space || !expectedHead) {
+        throw new Error(
+          "could not resolve relation fixture head for " + document.id,
+        );
+      }
+      const revised = await memoria.documents.revise({
+        memory: { id: asMemoryId(memoryId) },
+        expectedHead: asRevisionId(expectedHead),
+        mdx: documentMdx(
+          document,
+          document.relations.map((relation) => {
+            const target = [...externalIdByMemoryId.entries()].find(
+              ([, externalId]) => externalId === relation.target,
+            )?.[0];
+            if (!target) {
+              throw new Error(
+                "relation target " +
+                  relation.target +
+                  " is missing from fixture",
+              );
+            }
+            return target;
+          }),
+        ),
+      });
+      generation = revised.authorityGeneration;
+    }
+    await waitForCoverage(memoria, generation);
+
+    return {
+      memoria,
+      dataDir,
+      spaceIds,
+      externalIdByMemoryId,
+      documentByExternalId,
+      counts,
+    };
+  } catch (error) {
+    await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function deterministicProviders(counts: ProviderCounts): ProviderSet {
+  return {
+    embedding: {
+      trust: "local",
+      async execute(work: EmbeddingWork) {
+        counts.embedding += 1;
+        return {
+          vectors: work.items.map((item) => ({
+            key: item.key,
+            values: anchorVector(item.text, item.key === "query"),
+          })),
+        };
+      },
+    },
+    rerank: {
+      trust: "local",
+      async execute(work: RerankWork) {
+        counts.rerank += 1;
+        return work.candidates.map((handle, index) => ({
+          handle,
+          score: rerankScore(work.query, handle, index),
+        }));
+      },
+    },
+    enrichment: {
+      trust: "local",
+      async execute() {
+        return [];
+      },
+    },
+  };
+}
+
+function anchorVector(text: string, query = false): number[] {
+  const terms = new Set(text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+  const groups = [
+    ["career", "rust", "alex", "apollo", "cooking", "food"],
+    [
+      "systems",
+      "graph",
+      "planning",
+      "support",
+      "retrieval",
+      "sourdough",
+      "vegetables",
+    ],
+  ];
+  const vector = groups.map((group) =>
+    group.reduce((total, term) => total + (terms.has(term) ? 1 : 0), 0),
+  );
+  return vector.some((value) => value > 0)
+    ? [...vector, query ? 0.25 : 0]
+    : [0.1, 0.1, query ? 0.25 : 0];
+}
+
+function rerankScore(query: string, handle: string, index: number): number {
+  const hash = stableHash(query + "\u0000" + handle);
+  const positionBonus = Math.max(0, 1 - index / 64);
+  return Math.min(1, 0.75 * ((hash % 10_000) / 10_000) + 0.25 * positionBonus);
+}
+
+function stableHash(value: string): number {
+  let hash = 2_166_136_261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return hash >>> 0;
+}
+
+function documentMdx(
+  document: CorpusDocument,
+  relationMemoryIds: string[] = [],
+): string {
+  const lines = ["# " + document.id];
+  for (const entity of document.entities) {
+    lines.push(
+      '<Entity ref="' +
+        escapeAttribute(entity) +
+        '">' +
+        escapeText(entity.split(":").at(-1) ?? entity) +
+        "</Entity>",
+    );
+  }
+  for (const tag of document.tags) {
+    lines.push('<Tag value="' + escapeAttribute(tag) + '"/>');
+  }
+  lines.push(document.text);
+  for (const memoryId of relationMemoryIds) {
+    lines.push('<MemoryRef memoryId="' + escapeAttribute(memoryId) + '"/>');
+  }
+  return lines.join("\n") + "\n";
+}
+
+function escapeAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeText(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
+}
+
+function buildQuery(
+  query: QueryCase,
+  profile: ProfileDefinition,
+  spaceIds: Map<string, SpaceId>,
+) {
+  return {
+    scope: {
+      spaces: query.scope.map((space) => {
+        const id = spaceIds.get(space);
+        if (!id) {
+          throw new Error("benchmark query references unknown Space " + space);
+        }
+        return id;
+      }),
+    },
+    cue: {
+      ...(query.text ? { text: query.text } : {}),
+      ...(query.tags ? { tags: query.tags } : {}),
+    },
+    ...(query.entities ? { constraints: { entities: query.entities } } : {}),
+    history: {
+      mode: (query.state === "historical" ? "all-revisions" : "current") as
+        "all-revisions" | "current",
+    },
+    consistency: {
+      required: profile.required,
+      preferred: profile.preferred,
+      onNotReady: "wait" as const,
+      timeoutMs: 5_000,
+    },
+    budget: {
+      maxResults: 20,
+      maxMatchesPerResult: 3,
+      maxEvidenceTokens: 2_000,
+    },
+    quality: profile.quality,
+  };
+}
+
+function rankingMetrics(
+  query: QueryCase,
+  returned: Array<{ id: string }>,
+): {
+  recallAtK: number;
+  mrr: number;
+  ndcgAtK: number;
+} {
+  const relevant = new Set(Object.keys(query.relevant));
+  const hits = returned.filter((candidate) => relevant.has(candidate.id));
+  const firstHit = returned.findIndex((candidate) =>
+    relevant.has(candidate.id),
+  );
+  const dcg = returned.reduce((total, candidate, index) => {
+    const grade = query.relevant[candidate.id] ?? 0;
     return total + (2 ** grade - 1) / Math.log2(index + 2);
   }, 0);
   const ideal = Object.values(query.relevant)
@@ -348,229 +664,99 @@ function metricsFor(
       (total, grade, index) => total + (2 ** grade - 1) / Math.log2(index + 2),
       0,
     );
-  const duplicateEvidence = top.reduce(
-    (total, candidate) =>
-      total + candidate.signals.length - new Set(candidate.signals).size,
-    0,
-  );
   return {
-    queryId: query.id,
-    case: query.case,
-    top: top.map((candidate) => candidate.document.id),
-    recallAtK,
-    mrr,
+    recallAtK: relevant.size === 0 ? 0 : hits.length / relevant.size,
+    mrr: firstHit < 0 ? 0 : 1 / (firstHit + 1),
     ndcgAtK: ideal === 0 ? 0 : dcg / ideal,
-    duplicateEvidence,
-    graphVisits: graphVisits,
-    providerCalls,
-    annSearches: profile === "lexical" ? 0 : 1,
-    diffusionIterations: profile === "diffusion" ? 1 : 0,
-    latencyMs,
-    hardConstraintViolations: 0,
   };
 }
 
-function lexicalScore(document: CorpusDocument, text: string): number {
-  const queryTerms = tokens(text);
-  const documentTerms = tokens(
-    [
-      document.text,
-      ...document.tags,
-      ...document.entities,
-      ...document.relations.map((r) => r.kind),
-    ].join(" "),
-  );
-  if (queryTerms.size === 0) {
-    return 0;
-  }
-  let overlap = 0;
-  for (const term of queryTerms) {
-    if (documentTerms.has(term)) {
-      overlap += 1;
-    }
-  }
-  return overlap / queryTerms.size;
-}
-
-function tagAssociationScore(
-  document: CorpusDocument,
-  seeds: string[],
-  scoped: CorpusDocument[],
+function countHardConstraintViolations(
+  query: QueryCase,
+  returned: Array<{ id: string; result: { spaceId: string } }>,
+  fixture: Fixture,
 ): number {
-  if (seeds.length === 0) {
-    return 0;
-  }
-  if (seeds.some((seed) => document.tags.includes(seed))) {
-    return 1;
-  }
-  const cooccurring = new Set(
-    scoped
-      .filter((item) => seeds.some((seed) => item.tags.includes(seed)))
-      .flatMap((item) => item.tags),
+  const scopeIds = new Set(
+    query.scope
+      .map((space) => fixture.spaceIds.get(space))
+      .filter((id): id is SpaceId => id !== undefined),
   );
-  return document.tags.some((tag) => cooccurring.has(tag)) ? 0.5 : 0;
+  return returned.reduce((total, item) => {
+    const document = fixture.documentByExternalId.get(item.id);
+    const outsideScope = !scopeIds.has(asSpaceId(item.result.spaceId));
+    const missingEntity =
+      query.entities !== undefined &&
+      document !== undefined &&
+      !query.entities.every((entity) => document.entities.includes(entity));
+    return total + (outsideScope || missingEntity ? 1 : 0);
+  }, 0);
 }
 
-function buildTagGraph(
-  documents: CorpusDocument[],
-): Map<string, Map<string, number>> {
-  const graph = new Map<string, Map<string, number>>();
-  for (const document of documents) {
-    for (const left of document.tags) {
-      for (const right of document.tags) {
-        if (left === right) {
-          continue;
-        }
-        const neighbors = graph.get(left) ?? new Map<string, number>();
-        neighbors.set(right, (neighbors.get(right) ?? 0) + 1);
-        graph.set(left, neighbors);
-      }
+async function waitForCoverage(
+  memoria: Memoria,
+  generation: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const target = BigInt(generation);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await memoria.status();
+    if (
+      BigInt(status.baseCoverage) >= target &&
+      BigInt(status.semanticCoverage) >= target &&
+      BigInt(status.semanticBuildCoverage) >= target
+    ) {
+      return;
     }
+    await delay(2);
   }
-  return graph;
-}
-
-function propagateTags(
-  graph: Map<string, Map<string, number>>,
-  seeds: string[],
-  maxHops: number,
-): { scores: Map<string, number>; visits: number } {
-  const scores = new Map<string, number>();
-  let frontier = new Map<string, number>();
-  for (const seed of seeds) {
-    if (scores.size >= MAX_ACTIVE_TAGS) {
-      break;
-    }
-    scores.set(seed, 1);
-    frontier.set(seed, 1);
-  }
-  let visits = 0;
-  for (let hop = 0; hop < maxHops && frontier.size > 0; hop += 1) {
-    const next = new Map<string, number>();
-    for (const [source, sourceScore] of frontier) {
-      const neighbors = [...(graph.get(source)?.entries() ?? [])].sort(
-        ([left], [right]) => left.localeCompare(right),
-      );
-      for (const [target, weight] of neighbors) {
-        if (visits >= MAX_EDGE_VISITS) {
-          return { scores, visits };
-        }
-        visits += 1;
-        const score = sourceScore * (weight / (1 + weight)) * 0.5;
-        if (
-          score <= 0 ||
-          (scores.has(target) && (scores.get(target) ?? 0) >= score)
-        ) {
-          continue;
-        }
-        if (!scores.has(target) && scores.size >= MAX_ACTIVE_TAGS) {
-          continue;
-        }
-        scores.set(target, score);
-        next.set(target, score);
-      }
-    }
-    frontier = next;
-  }
-  return { scores, visits };
-}
-
-function residualScore(
-  queryVector: number[],
-  tags: string[],
-  scoped: CorpusDocument[],
-  documentVector: number[],
-): { rank: number; used: boolean; score: number } {
-  const vectors = tags
-    .map((tag) =>
-      averageVector(scoped.filter((document) => document.tags.includes(tag))),
-    )
-    .filter((vector): vector is number[] => vector !== undefined);
-  const basis: number[][] = [];
-  for (const vector of vectors) {
-    let residual = [...vector];
-    for (const unit of basis) {
-      const projection = dot(residual, unit);
-      residual = residual.map(
-        (value, index) => value - projection * (unit[index] ?? 0),
-      );
-    }
-    const norm = l2(residual);
-    if (norm > 1.0e-6) {
-      basis.push(residual.map((value) => value / norm));
-    }
-  }
-  if (basis.length === 0) {
-    return { rank: 0, used: false, score: 0 };
-  }
-  let residual = [...queryVector];
-  for (const unit of basis) {
-    const projection = dot(residual, unit);
-    residual = residual.map(
-      (value, index) => value - projection * (unit[index] ?? 0),
-    );
-  }
-  const score = Math.max(0, cosine(residual, documentVector));
-  return { rank: basis.length, used: l2(residual) > 1.0e-6, score };
-}
-
-function averageVector(documents: CorpusDocument[]): number[] | undefined {
-  if (documents.length === 0) {
-    return undefined;
-  }
-  const dimensions = documents[0]?.vector.length ?? 0;
-  const vector = Array.from({ length: dimensions }, () => 0);
-  for (const document of documents) {
-    document.vector.forEach((value, index) => {
-      vector[index] = (vector[index] ?? 0) + value;
-    });
-  }
-  return vector.map((value) => value / documents.length);
-}
-
-function queryVectorFor(text: string): number[] {
-  const terms = tokens(text);
-  const anchors = [
-    ["career", "rust", "alex", "apollo"],
-    ["systems", "graph", "planning", "support", "retrieval"],
-    ["old", "deployment", "ops", "prototype"],
-    ["cooking", "sourdough", "vegetables", "travel", "itinerary"],
-  ];
-  return anchors.map((group) => group.filter((term) => terms.has(term)).length);
-}
-
-function cosine(left: number[], right: number[]): number {
-  const denominator = l2(left) * l2(right);
-  return denominator === 0 ? 0 : Math.max(0, dot(left, right) / denominator);
-}
-
-function dot(left: number[], right: number[]): number {
-  return left.reduce(
-    (total, value, index) => total + value * (right[index] ?? 0),
-    0,
+  const status = await memoria.status();
+  throw new Error(
+    "runtime-backed retrieval fixture did not converge: target=" +
+      generation +
+      " base=" +
+      status.baseCoverage +
+      " semantic=" +
+      status.semanticCoverage +
+      " semanticBuild=" +
+      status.semanticBuildCoverage,
   );
 }
 
-function l2(vector: number[]): number {
-  return Math.sqrt(dot(vector, vector));
+async function directorySize(path: string): Promise<number> {
+  const entries = await readdir(path, { withFileTypes: true });
+  let total = 0;
+  for (const entry of entries) {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) {
+      total += await directorySize(child);
+    } else {
+      total += (await stat(child)).size;
+    }
+  }
+  return total;
 }
 
-function tokens(value: string): Set<string> {
-  return new Set(value.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+async function readJsonLines<T>(url: URL): Promise<T[]> {
+  const source = await readFile(url, "utf8");
+  return source
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as T);
 }
 
-function compareBase(left: Candidate, right: Candidate): number {
+function requestedProfile(): string {
+  const argument = process.argv.find((value) => value.startsWith("--profile="));
+  const index = process.argv.indexOf("--profile");
   return (
-    right.score - left.score ||
-    left.document.id.localeCompare(right.document.id)
+    argument?.slice("--profile=".length) ??
+    (index >= 0 ? process.argv[index + 1] : "") ??
+    ""
   );
 }
 
-function compareReranked(left: Candidate, right: Candidate): number {
-  return (
-    (right.rerankScore ?? -1) - (left.rerankScore ?? -1) ||
-    compareBase(left, right)
-  );
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function percentile(values: number[], quantile: number): number {
@@ -593,18 +779,4 @@ function mean(values: number[]): number {
           values.reduce((total, value) => total + value, 0) / values.length
         ).toFixed(4),
       );
-}
-
-function estimateWorkingSetBytes(): number {
-  return (
-    Buffer.byteLength(JSON.stringify(corpus)) +
-    Buffer.byteLength(JSON.stringify(queries))
-  );
-}
-
-function readJsonLines<T>(url: URL): T[] {
-  return readFileSync(url, "utf8")
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as T);
 }
