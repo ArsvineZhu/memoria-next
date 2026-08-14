@@ -7,7 +7,11 @@ import { test } from "node:test";
 import { createMemoria } from "../../src/engine/create-memoria.js";
 import { asSpaceId } from "../../src/domain/ids.js";
 import { loadNativeBinding } from "../../src/native/binding.js";
-import type { NativeQueryResponse, NativeQueryStep } from "../../src/native/protocol.js";
+import {
+  asQueryStep,
+  type NativeQueryResponse,
+  type NativeQueryStep,
+} from "../../src/native/protocol.js";
 import { createBindingHarness } from "../support/remediation.js";
 
 const readinessResponse: NativeQueryResponse = {
@@ -65,6 +69,57 @@ test("text-only public query does not infer semantic capability", async () => {
     assert.deepEqual(harness.queryRequests[0]?.consistency.preferred, []);
   } finally {
     await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("real native query response exposes the executed physical trace", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-query-trace-"));
+  const binding = loadNativeBinding();
+  const store = binding.openStore(dataDir);
+
+  try {
+    const spaceId = binding.authorityCreateSpace(store, "trace");
+    binding.authorityMutate(store, {
+      spaceId,
+      documentKey: "trace",
+      mdx: "# Trace physical lexical cue",
+    });
+    const step = asQueryStep(
+      await binding.queryStart(store, {
+        scope: [spaceId],
+        cue: { text: "physical lexical cue" },
+        history: { mode: "current" },
+        consistency: {
+          authority: { mode: "latest" },
+          required: [],
+          preferred: [],
+          onNotReady: "fail",
+          timeoutMs: 100,
+        },
+        budget: {
+          maxResults: 10,
+          maxMatchesPerResult: 3,
+          maxEvidenceTokens: 1500,
+        },
+        quality: "balanced",
+      }),
+    );
+
+    assert.equal(step.state, "complete");
+    if (step.state !== "complete") {
+      throw new Error("expected a complete native query response");
+    }
+    assert(step.response.trace);
+    assert(step.response.trace.channelsExecuted.includes("lexical"));
+    assert(
+      step.response.trace.candidateCounts.some(
+        (entry) => entry.channel === "lexical",
+      ),
+    );
+    assert.equal(step.response.trace.rerankApplied, false);
+  } finally {
+    binding.closeStore(store);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

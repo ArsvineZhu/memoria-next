@@ -63,7 +63,29 @@ export interface NativeQueryResponse {
   authorityGeneration: string;
   degraded: boolean;
   retrievalId: string;
+  trace?: NativeQueryTrace;
   results: NativeQueryResult[];
+}
+
+export interface NativeQueryTrace {
+  channelsExecuted: string[];
+  candidateCounts: Array<{ channel: string; count: number }>;
+  tagBasisRank?: number;
+  tagBasisConditioning?: number;
+  tagBasisExplainedEnergy?: number;
+  activationEdgeVisits: number;
+  activationHops: number;
+  activationTruncated: boolean;
+  diffusionIterations: number;
+  diffusionConvergenceDelta?: number;
+  diffusionTruncated: boolean;
+  independentSupportCount: number;
+  correlationSuppressedEvidence: number;
+  relationExpansions: number;
+  rerankRequested: boolean;
+  rerankApplied: boolean;
+  capabilityDegraded: boolean;
+  authorityGeneration: string;
 }
 
 export interface NativeQueryResult {

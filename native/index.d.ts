@@ -182,6 +182,11 @@ export interface JsQueryCandidate {
   text: string
 }
 
+export interface JsQueryChannelCount {
+  channel: string
+  count: number
+}
+
 export interface JsQueryConsistency {
   authority: JsQueryAuthority
   required: Array<string>
@@ -232,6 +237,7 @@ export interface JsQueryResponse {
   authorityGeneration: string
   degraded: boolean
   retrievalId: string
+  trace: JsQueryTrace
   results: Array<JsQueryResult>
 }
 
@@ -253,6 +259,27 @@ export interface JsQueryStep {
 
 export interface JsQueryTemporal {
   validAt?: string
+}
+
+export interface JsQueryTrace {
+  channelsExecuted: Array<string>
+  candidateCounts: Array<JsQueryChannelCount>
+  tagBasisRank?: number
+  tagBasisConditioning?: number
+  tagBasisExplainedEnergy?: number
+  activationEdgeVisits: number
+  activationHops: number
+  activationTruncated: boolean
+  diffusionIterations: number
+  diffusionConvergenceDelta?: number
+  diffusionTruncated: boolean
+  independentSupportCount: number
+  correlationSuppressedEvidence: number
+  relationExpansions: number
+  rerankRequested: boolean
+  rerankApplied: boolean
+  capabilityDegraded: boolean
+  authorityGeneration: string
 }
 
 export interface JsQueryWork {

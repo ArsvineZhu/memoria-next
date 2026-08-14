@@ -474,7 +474,38 @@ pub struct JsQueryResponse {
     pub authority_generation: String,
     pub degraded: bool,
     pub retrieval_id: String,
+    pub trace: JsQueryTrace,
     pub results: Vec<JsQueryResult>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsQueryTrace {
+    pub channels_executed: Vec<String>,
+    pub candidate_counts: Vec<JsQueryChannelCount>,
+    pub tag_basis_rank: Option<u32>,
+    pub tag_basis_conditioning: Option<f64>,
+    pub tag_basis_explained_energy: Option<f64>,
+    pub activation_edge_visits: u32,
+    pub activation_hops: u32,
+    pub activation_truncated: bool,
+    pub diffusion_iterations: u32,
+    pub diffusion_convergence_delta: Option<f64>,
+    pub diffusion_truncated: bool,
+    pub independent_support_count: u32,
+    pub correlation_suppressed_evidence: u32,
+    pub relation_expansions: u32,
+    pub rerank_requested: bool,
+    pub rerank_applied: bool,
+    pub capability_degraded: bool,
+    pub authority_generation: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsQueryChannelCount {
+    pub channel: String,
+    pub count: u32,
 }
 
 #[napi(object)]
@@ -1131,12 +1162,14 @@ fn query_work_to_js(work: QueryWork) -> JsQueryWork {
 
 fn response_to_js(response: memoria_runtime::RetrievalResponse) -> Result<JsQueryResponse> {
     let retrieval_id = response.retrieval_id.clone();
+    let trace = trace_to_js(response.trace)?;
     Ok(JsQueryResponse {
         result_count: u32::try_from(response.results.len())
             .map_err(|error| napi::Error::from_reason(error.to_string()))?,
         authority_generation: response.snapshot.authority_generation.to_string(),
         degraded: response.execution.degraded,
         retrieval_id: retrieval_id.clone(),
+        trace,
         results: response
             .results
             .into_iter()
@@ -1145,6 +1178,46 @@ fn response_to_js(response: memoria_runtime::RetrievalResponse) -> Result<JsQuer
                 JsQueryResult::from((memoria_query::result_id_for(&retrieval_id, index), result))
             })
             .collect(),
+    })
+}
+
+fn trace_to_js(trace: memoria_query::QueryOperatorTrace) -> Result<JsQueryTrace> {
+    let candidate_counts = trace
+        .candidate_counts
+        .into_iter()
+        .map(|(channel, count)| {
+            Ok(JsQueryChannelCount {
+                channel,
+                count: u32::try_from(count).map_err(to_napi_error)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(JsQueryTrace {
+        channels_executed: trace.channels_executed,
+        candidate_counts,
+        tag_basis_rank: trace
+            .tag_basis_rank
+            .map(u32::try_from)
+            .transpose()
+            .map_err(to_napi_error)?,
+        tag_basis_conditioning: trace.tag_basis_conditioning.map(f64::from),
+        tag_basis_explained_energy: trace.tag_basis_explained_energy.map(f64::from),
+        activation_edge_visits: u32::try_from(trace.activation_edge_visits)
+            .map_err(to_napi_error)?,
+        activation_hops: u32::try_from(trace.activation_hops).map_err(to_napi_error)?,
+        activation_truncated: trace.activation_truncated,
+        diffusion_iterations: u32::try_from(trace.diffusion_iterations).map_err(to_napi_error)?,
+        diffusion_convergence_delta: trace.diffusion_convergence_delta.map(f64::from),
+        diffusion_truncated: trace.diffusion_truncated,
+        independent_support_count: u32::try_from(trace.independent_support_count)
+            .map_err(to_napi_error)?,
+        correlation_suppressed_evidence: u32::try_from(trace.correlation_suppressed_evidence)
+            .map_err(to_napi_error)?,
+        relation_expansions: u32::try_from(trace.relation_expansions).map_err(to_napi_error)?,
+        rerank_requested: trace.rerank_requested,
+        rerank_applied: trace.rerank_applied,
+        capability_degraded: trace.capability_degraded,
+        authority_generation: trace.authority_generation.to_string(),
     })
 }
 
