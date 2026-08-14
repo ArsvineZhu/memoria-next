@@ -103,6 +103,9 @@ test("Memoria.query hides start/resume loop from caller", async () => {
       observed.resumed = result;
       return { state: "complete", response };
     },
+    queryContinue() {
+      return { state: "complete", response };
+    },
     providerPollWork() {
       observed.providerPollCalls += 1;
       return null;
@@ -152,7 +155,7 @@ test("Memoria.query hides start/resume loop from caller", async () => {
   }
 });
 
-test("real native query operation exposes query work and cancellation", async () => {
+test("real native query operation exposes readiness continuation and cancellation", async () => {
   const dataDir = await mkdtemp(
     join(tmpdir(), "memoria-next-native-query-op-"),
   );
@@ -189,19 +192,12 @@ test("real native query operation exposes query work and cancellation", async ()
     });
 
     assert("state" in step);
-    if (step.state !== "pending") {
-      throw new Error("expected native query operation to be pending");
+    if (step.state !== "readiness-pending") {
+      throw new Error("expected native query operation to be readiness pending");
     }
-    assert.equal(step.work.type, "query-embedding");
-    assert.equal(step.work.input.key, "query");
     binding.cancelOperation(store, step.operationId);
     assert.throws(
-      () =>
-        binding.queryResume(store, step.operationId, {
-          type: "embeddings",
-          workId: step.work.workId,
-          vectors: [{ key: "query", values: [0, 0, 0] }],
-        }),
+      () => binding.queryContinue(store, step.operationId),
       /ABORTED/,
     );
   } finally {

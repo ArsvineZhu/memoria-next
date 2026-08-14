@@ -253,6 +253,18 @@ pub fn query_start(store: &NativeStore, request: JsQueryRequest) -> Result<JsQue
 }
 
 #[napi]
+pub fn query_continue(store: &NativeStore, operation_id: String) -> Result<JsQueryStep> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .query_continue(&operation_id)
+        .map_err(runtime_error)
+        .and_then(query_step_to_js)
+}
+
+#[napi]
 pub fn feedback_submit(
     store: &NativeStore,
     request: JsFeedbackSubmission,

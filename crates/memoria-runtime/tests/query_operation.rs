@@ -1,3 +1,5 @@
+mod support;
+
 use std::time::Duration;
 
 use memoria_query::MemoryQuery;
@@ -22,9 +24,10 @@ fn pending_embedding(
     runtime: &mut MemoriaRuntime,
     space: memoria_types::SpaceId,
 ) -> (String, String) {
+    support::drain_background_work(runtime, |_| vec![1.0, 0.0, 0.0]);
     let step = runtime.query_start(semantic_query(space)).unwrap();
     match step {
-        QueryStep::Pending {
+        QueryStep::ProviderPending {
             operation_id,
             work: QueryWork::Embedding(work),
         } => (operation_id, work.work_id),
@@ -46,10 +49,7 @@ fn semantic_query_returns_pending_query_embedding_work() {
     assert!(work_id.starts_with("QW_"));
 
     // Query-time work is not placed on the background Derived provider queue.
-    assert!(matches!(
-        runtime.provider_poll_work().unwrap(),
-        Some(NeedWork::Embeddings(request)) if request.work_id.starts_with("EW_")
-    ));
+    assert!(runtime.provider_poll_work().unwrap().is_none());
 }
 
 #[test]
@@ -66,6 +66,10 @@ fn semantic_work_uses_one_effective_policy_for_the_whole_scope() {
             },
         )
         .unwrap();
+    runtime
+        .create_memory(external, Some("career"), b"# Career\nRust systems work")
+        .unwrap();
+    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
     let query = MemoryQuery::builder()
         .spaces(vec![external, local_only])
         .text_cue("career")
@@ -76,7 +80,7 @@ fn semantic_work_uses_one_effective_policy_for_the_whole_scope() {
 
     let step = runtime.query_start(query).unwrap();
     match step {
-        QueryStep::Pending {
+        QueryStep::ProviderPending {
             work: QueryWork::Embedding(work),
             ..
         } => assert_eq!(work.space_policy.embedding, SpaceProviderMode::LocalOnly),

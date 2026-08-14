@@ -36,12 +36,13 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn publish_manifest_with_capabilities(
     runtime: &MemoriaRuntime,
     additional_capabilities: &[&str],
 ) {
-    let mut catalog = DerivedCatalog::open(runtime.data_dir().join("derived/catalog.sqlite"))
-        .unwrap();
+    let mut catalog =
+        DerivedCatalog::open(runtime.data_dir().join("derived/catalog.sqlite")).unwrap();
     let manifest = catalog.serving_manifest().unwrap().unwrap();
     let mut capabilities = manifest
         .capabilities()

@@ -30,7 +30,7 @@ pub use provider::{
     validate_provider_result,
 };
 pub use purge::{PurgeCoordinator, PurgePlan, PurgeState, PurgeTransitionError};
-pub use query_operation::{QueryStep, QueryWork};
+pub use query_operation::{QueryOperationStage, QueryStep, QueryWork, READINESS_RETRY_AFTER_MS};
 pub use receipt::{
     FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, ReceiptError, RetrievalReceipt,
 };

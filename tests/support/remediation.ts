@@ -10,6 +10,7 @@ import type {
   NativePurgePlan,
   NativeQueryRequest,
   NativeQueryResponse,
+  NativeQueryStep,
   NativeReviseMemoryRequest,
   NativeStatus,
   NativeStoreHandle,
@@ -84,11 +85,14 @@ export function deferredObservedEmbeddingProvider(
 export interface BindingHarness {
   binding: NativeBinding;
   queryRequests: NativeQueryRequest[];
+  queryContinueCalls: string[];
   providerSubmissions: NativeProviderWorkResult[];
 }
 
 interface BindingHarnessOptions {
   queryResponse?: NativeQueryResponse;
+  queryStartResult?: NativeQueryResponse | NativeQueryStep;
+  queryContinueResult?: NativeQueryResponse | NativeQueryStep;
   providerWork?: NativeProviderWork[];
   status?: Partial<NativeStatus>;
 }
@@ -97,6 +101,7 @@ export function createBindingHarness(
   options: BindingHarnessOptions = {},
 ): BindingHarness {
   const queryRequests: NativeQueryRequest[] = [];
+  const queryContinueCalls: string[] = [];
   const providerSubmissions: NativeProviderWorkResult[] = [];
   const providerWork = [...(options.providerWork ?? [])];
   const status: NativeStatus = {
@@ -124,6 +129,8 @@ export function createBindingHarness(
     results: [],
   };
   const queryResponse = options.queryResponse ?? defaultQueryResponse;
+  const queryStartResult = options.queryStartResult ?? queryResponse;
+  const queryContinueResult = options.queryContinueResult ?? queryResponse;
   const defaultMutation: NativeMemoryMutation = {
     memoryId: "M_remediation",
     spaceId: "SP_remediation",
@@ -142,6 +149,7 @@ export function createBindingHarness(
   const defaultPortableMemories: NativePortableMemory[] = [];
   return {
     queryRequests,
+    queryContinueCalls,
     providerSubmissions,
     binding: {
       openStore() {
@@ -176,10 +184,14 @@ export function createBindingHarness(
       },
       queryStart(_store: NativeStoreHandle, request: NativeQueryRequest) {
         queryRequests.push(request);
-        return queryResponse;
+        return queryStartResult;
       },
       queryResume() {
         return queryResponse;
+      },
+      queryContinue(_store: NativeStoreHandle, operationId: string) {
+        queryContinueCalls.push(operationId);
+        return queryContinueResult;
       },
       providerPollWork() {
         return providerWork.shift() ?? null;

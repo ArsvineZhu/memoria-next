@@ -32,7 +32,7 @@ fn submit_content_embedding(runtime: &mut MemoriaRuntime, values: Vec<f32>) {
 }
 
 fn query_embedding_work_id(step: QueryStep) -> (String, String) {
-    let QueryStep::Pending {
+    let QueryStep::ProviderPending {
         operation_id,
         work: memoria_runtime::QueryWork::Embedding(request),
     } = step

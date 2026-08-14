@@ -234,6 +234,8 @@ export interface JsQueryStep {
   response?: JsQueryResponse
   operationId?: string
   work?: JsQueryWork
+  retryAfterMs?: number
+  deadlineUnixMs?: number
 }
 
 export interface JsQueryTemporal {
@@ -285,6 +287,8 @@ export declare function providerSubmitResult(store: NativeStore, result: JsProvi
 export declare function purgeExecute(store: NativeStore, planId: string): JsPurgePlan
 
 export declare function purgePlan(store: NativeStore, memoryId: string): JsPurgePlan
+
+export declare function queryContinue(store: NativeStore, operationId: string): JsQueryStep
 
 export declare function queryResume(store: NativeStore, operationId: string, result: JsProviderResult): JsQueryStep
 

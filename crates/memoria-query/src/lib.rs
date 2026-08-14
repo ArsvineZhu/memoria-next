@@ -5,9 +5,9 @@ mod association;
 mod compile;
 mod consolidate;
 mod continuation;
-mod executor;
 mod evidence;
 mod exact;
+mod executor;
 mod fusion;
 mod history;
 mod lexical;
@@ -40,10 +40,6 @@ pub use consolidate::{
     ConsolidationCandidate, ConsolidationError, MemoryMatch, MemoryResult, consolidate,
 };
 pub use continuation::{Continuation, ReadSession, SessionError};
-pub use executor::{
-    AdaptivePolicy, CandidateKey, CandidatePool, CompiledConstraints, DerivedUnitId,
-    PhysicalChannel, PhysicalQueryPlan, PhysicalQueryPlanner, RerankPolicy,
-};
 pub use evidence::{
     CandidateEvidence, CandidateResponse, CandidateTarget, ExactEvidence, HistoryEvidence,
     LexicalEvidence, PropagationEvidence, RelationEvidence, SemanticChannel, SemanticEvidence,
@@ -51,6 +47,10 @@ pub use evidence::{
 };
 pub use exact::{
     ExactIndex, ExactRecord, MemoryReference, ReferenceStatus, ResolvedReference, execute_exact,
+};
+pub use executor::{
+    AdaptivePolicy, CandidateKey, CandidatePool, CompiledConstraints, DerivedUnitId,
+    PhysicalChannel, PhysicalQueryPlan, PhysicalQueryPlanner, RerankPolicy,
 };
 pub use fusion::{
     FusedCandidate, RRF_K, fuse_channels, fuse_channels_scoped, fuse_channels_with_adaptive, rrf,

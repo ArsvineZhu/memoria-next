@@ -3,9 +3,7 @@ mod support;
 use std::time::Duration;
 
 use memoria_query::{AdaptiveSnapshotIdentity, MemoryQuery};
-use memoria_runtime::{
-    MemoriaRuntime, ProviderWorkResult, QueryStep, QueryWork, RerankScore,
-};
+use memoria_runtime::{MemoriaRuntime, ProviderWorkResult, QueryStep, QueryWork, RerankScore};
 use tempfile::tempdir;
 
 #[test]
@@ -14,11 +12,7 @@ fn semantic_does_not_replace_lexical_channel() {
     let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
     let space = runtime.create_space("personal").unwrap();
     let memory_id = runtime
-        .create_memory(
-            space,
-            Some("lexical"),
-            b"# Lexical\nunique-lexical-token",
-        )
+        .create_memory(space, Some("lexical"), b"# Lexical\nunique-lexical-token")
         .unwrap();
     support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
 
@@ -28,7 +22,7 @@ fn semantic_does_not_replace_lexical_channel() {
         .require_capability("semantic")
         .build()
         .unwrap();
-    let QueryStep::Pending {
+    let QueryStep::ProviderPending {
         operation_id,
         work: QueryWork::Embedding(request),
     } = runtime.query_start(query).unwrap()
@@ -85,7 +79,7 @@ fn required_semantic_wait_never_degrades_to_lexical() {
             !response.execution.degraded,
             "required semantic wait must not complete with a degraded fallback"
         ),
-        QueryStep::Pending {
+        QueryStep::ProviderPending {
             operation_id,
             work: QueryWork::Embedding(request),
         } => {
@@ -148,7 +142,7 @@ fn rerank_scores_change_result_order() {
         .prefer_capability("reranking")
         .build()
         .unwrap();
-    let QueryStep::Pending {
+    let QueryStep::ProviderPending {
         operation_id,
         work: QueryWork::Rerank(request),
     } = runtime.query_start(query).unwrap()
@@ -196,5 +190,8 @@ fn adaptive_is_not_used_without_adaptive_capability() {
                 .unwrap(),
         )
         .unwrap();
-    assert_eq!(response.snapshot.adaptive, AdaptiveSnapshotIdentity::Disabled);
+    assert_eq!(
+        response.snapshot.adaptive,
+        AdaptiveSnapshotIdentity::Disabled
+    );
 }

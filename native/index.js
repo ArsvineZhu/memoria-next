@@ -716,6 +716,7 @@ module.exports.providerPollWork = nativeBinding.providerPollWork
 module.exports.providerSubmitResult = nativeBinding.providerSubmitResult
 module.exports.purgeExecute = nativeBinding.purgeExecute
 module.exports.purgePlan = nativeBinding.purgePlan
+module.exports.queryContinue = nativeBinding.queryContinue
 module.exports.queryResume = nativeBinding.queryResume
 module.exports.queryStart = nativeBinding.queryStart
 module.exports.readSessionClose = nativeBinding.readSessionClose

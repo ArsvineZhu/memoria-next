@@ -34,7 +34,7 @@ use crate::provider::{
     validate_provider_result,
 };
 use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
-use crate::query_operation::{QueryOperationTable, QueryStep, QueryWork};
+use crate::query_operation::{QueryOperationStage, QueryOperationTable, QueryStep, QueryWork};
 use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
 use crate::transfer::{PortableImportRequest, PortableMemory, rewrite_memory_ref_source};
@@ -627,7 +627,8 @@ impl MemoriaRuntime {
     pub fn query(&mut self, query: MemoryQuery) -> Result<RetrievalResponse, RuntimeError> {
         match self.query_start(query)? {
             QueryStep::Complete(response) => Ok(response),
-            QueryStep::Pending { operation_id, .. } => {
+            QueryStep::ProviderPending { operation_id, .. }
+            | QueryStep::ReadinessPending { operation_id, .. } => {
                 Err(RuntimeError::QueryOperationPending { operation_id })
             }
         }
@@ -638,6 +639,37 @@ impl MemoriaRuntime {
         self.query_operations.cleanup(std::time::Instant::now());
         query.validate()?;
 
+        let compiled = match self.compile_query(query.clone()) {
+            Ok(compiled) => compiled,
+            Err(RuntimeError::Query(QueryError::CapabilityNotReady { .. }))
+                if matches!(query.consistency.readiness, ReadinessBehavior::Wait(_)) =>
+            {
+                let ReadinessBehavior::Wait(timeout) = query.consistency.readiness else {
+                    unreachable!("readiness wait guard must hold");
+                };
+                let operation_id = self.query_operations.insert_readiness(query, timeout);
+                return Ok(QueryStep::ReadinessPending {
+                    deadline_unix_ms: self
+                        .query_operations
+                        .get(&operation_id)
+                        .and_then(|operation| operation.deadline_unix_ms)
+                        .unwrap_or_default(),
+                    operation_id,
+                    retry_after_ms: crate::query_operation::READINESS_RETRY_AFTER_MS,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+
+        self.start_compiled_query(compiled, None)
+    }
+
+    fn start_compiled_query(
+        &mut self,
+        compiled: memoria_query::CompiledQuery,
+        continuation_operation_id: Option<String>,
+    ) -> Result<QueryStep, RuntimeError> {
+        let query = compiled.query.clone();
         let semantic_required = query
             .required_capabilities
             .iter()
@@ -647,37 +679,6 @@ impl MemoriaRuntime {
                 .preferred_capabilities
                 .iter()
                 .any(|capability| capability == "semantic");
-        let compiled = match self.compile_query(query.clone()) {
-            Ok(compiled) => compiled,
-            Err(RuntimeError::Query(QueryError::CapabilityNotReady { capability, .. }))
-                if capability == "semantic"
-                    && semantic_required
-                    && matches!(query.consistency.readiness, ReadinessBehavior::Wait(_)) =>
-            {
-                let mut fallback = query.clone();
-                fallback
-                    .required_capabilities
-                    .retain(|capability| capability != "semantic");
-                fallback
-                    .preferred_capabilities
-                    .retain(|capability| capability != "semantic");
-                let mut compiled = self.compile_query(fallback)?;
-                compiled.execution.degraded = true;
-                if !compiled
-                    .execution
-                    .degraded_capabilities
-                    .iter()
-                    .any(|item| item == "semantic")
-                {
-                    compiled
-                        .execution
-                        .degraded_capabilities
-                        .push("semantic".to_owned());
-                }
-                compiled
-            }
-            Err(error) => return Err(error),
-        };
 
         let space_policy = self.space_provider_policy_at_scope(
             &compiled.query.scope.spaces,
@@ -736,15 +737,88 @@ impl MemoriaRuntime {
             None
         };
         if let Some(work) = work {
-            let operation_id =
-                self.query_operations
-                    .insert(compiled, work.clone(), rerank_candidates);
-            return Ok(QueryStep::Pending { operation_id, work });
+            let operation_id = if let Some(operation_id) = continuation_operation_id {
+                self.query_operations.replace_provider(
+                    &operation_id,
+                    compiled,
+                    work.clone(),
+                    rerank_candidates,
+                );
+                operation_id
+            } else {
+                self.query_operations.insert_provider(
+                    query,
+                    compiled,
+                    work.clone(),
+                    rerank_candidates,
+                )
+            };
+            return Ok(QueryStep::ProviderPending { operation_id, work });
         }
 
+        if let Some(operation_id) = continuation_operation_id {
+            self.query_operations.remove(&operation_id);
+        }
         Ok(QueryStep::Complete(
             self.execute_compiled_query(compiled, None)?,
         ))
+    }
+
+    pub fn query_continue(&mut self, operation_id: &str) -> Result<QueryStep, RuntimeError> {
+        self.ensure_open()?;
+        let now = std::time::Instant::now();
+        let Some(operation) = self.query_operations.get(operation_id) else {
+            return Err(RuntimeError::QueryOperationNotFound {
+                operation_id: operation_id.to_owned(),
+            });
+        };
+        if operation.is_expired(now) {
+            self.query_operations.remove(operation_id);
+            return Err(RuntimeError::QueryOperationExpired {
+                operation_id: operation_id.to_owned(),
+            });
+        }
+        if operation.cancelled {
+            self.query_operations.remove(operation_id);
+            return Err(RuntimeError::QueryOperationCancelled {
+                operation_id: operation_id.to_owned(),
+            });
+        }
+        if operation.stage != QueryOperationStage::WaitingForCapabilities {
+            if let Some(work) = operation.work {
+                return Ok(QueryStep::ProviderPending {
+                    operation_id: operation_id.to_owned(),
+                    work,
+                });
+            }
+            return Err(RuntimeError::QueryOperationPending {
+                operation_id: operation_id.to_owned(),
+            });
+        }
+
+        let query = operation.query.clone();
+        match self.compile_query(query) {
+            Ok(compiled) => self
+                .start_compiled_query(compiled, Some(operation_id.to_owned()))
+                .inspect_err(|_| {
+                    self.query_operations.remove(operation_id);
+                }),
+            Err(error @ RuntimeError::Query(QueryError::CapabilityNotReady { .. })) => {
+                let deadline = operation
+                    .readiness_deadline
+                    .expect("capability readiness operation must have a deadline");
+                if now >= deadline {
+                    self.query_operations.remove(operation_id);
+                    Err(error)
+                } else {
+                    Ok(self
+                        .query_operations
+                        .readiness_step(operation_id)
+                        .expect("capability readiness operation must remain pending"))
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn query_resume(
@@ -772,12 +846,17 @@ impl MemoriaRuntime {
                 operation_id: operation_id.to_owned(),
             });
         }
-        if operation.work.work_id() != result.work_id() {
+        let Some(expected_work) = operation.work.as_ref() else {
+            return Err(RuntimeError::UnexpectedQueryWork {
+                work_id: result.work_id().to_owned(),
+            });
+        };
+        if expected_work.work_id() != result.work_id() {
             return Err(RuntimeError::UnexpectedQueryWork {
                 work_id: result.work_id().to_owned(),
             });
         }
-        let expected_work = operation.work.as_need_work();
+        let expected_work = expected_work.as_need_work();
         let result = validate_provider_result(&expected_work, result).map_err(|error| {
             RuntimeError::InvalidProviderResult {
                 work_id: work_id(&expected_work).to_owned(),
@@ -792,12 +871,15 @@ impl MemoriaRuntime {
         } = result
         {
             if code == "PROVIDER_POLICY_DENIED" {
-                let capability = match operation.work {
-                    QueryWork::Embedding(_) => "semantic",
-                    QueryWork::Rerank(_) => "reranking",
+                let capability = match operation.work.as_ref() {
+                    Some(QueryWork::Embedding(_)) => "semantic",
+                    Some(QueryWork::Rerank(_)) => "reranking",
+                    None => unreachable!("provider work was checked above"),
                 };
                 let required = operation
                     .compiled
+                    .as_ref()
+                    .expect("provider operation must have a compiled query")
                     .query
                     .required_capabilities
                     .iter()
@@ -809,7 +891,12 @@ impl MemoriaRuntime {
                                 operation_id: operation_id.to_owned(),
                             }
                         })?;
-                    let mut fallback_query = operation.compiled.query.clone();
+                    let mut fallback_query = operation
+                        .compiled
+                        .as_ref()
+                        .expect("provider operation must have a compiled query")
+                        .query
+                        .clone();
                     fallback_query
                         .required_capabilities
                         .retain(|item| item != capability);
@@ -853,22 +940,31 @@ impl MemoriaRuntime {
             }
             _ => None,
         };
-        if matches!(operation.work, QueryWork::Embedding(_))
+        if matches!(operation.work, Some(QueryWork::Embedding(_)))
             && !operation.rerank_candidates.is_empty()
         {
             let mut operation = operation;
             operation.query_vector = query_vector;
             let candidates = std::mem::take(&mut operation.rerank_candidates);
             let work = query_rerank_work(
-                &operation.compiled.query,
+                &operation
+                    .compiled
+                    .as_ref()
+                    .expect("provider operation must have a compiled query")
+                    .query,
                 candidates,
-                operation.work.space_policy(),
+                operation
+                    .work
+                    .as_ref()
+                    .expect("embedding operation must have provider work")
+                    .space_policy(),
             );
-            operation.work = work.clone();
+            operation.work = Some(work.clone());
+            operation.stage = QueryOperationStage::WaitingForRerank;
             self.query_operations
                 .replace(operation_id.to_owned(), operation);
             self.query_operations.cleanup(now);
-            return Ok(QueryStep::Pending {
+            return Ok(QueryStep::ProviderPending {
                 operation_id: operation_id.to_owned(),
                 work,
             });
@@ -876,10 +972,15 @@ impl MemoriaRuntime {
         let mut operation = operation;
         operation.query_vector = query_vector;
         self.query_operations.cleanup(now);
-        Ok(QueryStep::Complete(self.execute_compiled_query(
-            operation.compiled,
-            operation.query_vector,
-        )?))
+        Ok(QueryStep::Complete(
+            self.execute_compiled_query(
+                operation
+                    .compiled
+                    .take()
+                    .expect("provider operation must have a compiled query"),
+                operation.query_vector,
+            )?,
+        ))
     }
 
     pub fn cancel_operation(&mut self, operation_id: &str) -> Result<(), RuntimeError> {

@@ -207,7 +207,16 @@ export class Memoria {
     const providerSignal = signal
       ? AbortSignal.any([signal, this.#providerAbort.signal])
       : this.#providerAbort.signal;
-    while (step.state === "pending") {
+    while (step.state !== "complete") {
+      if (step.state === "readiness-pending") {
+        this.#operations.set(operationId, step.operationId);
+        this.assertNotAborted(signal);
+        await this.waitForReadiness(step, providerSignal);
+        step = asQueryStep(
+          await this.#binding.queryContinue(this.store(), step.operationId),
+        );
+        continue;
+      }
       this.#operations.set(operationId, step.operationId);
       this.assertNotAborted(signal);
       const work = decodeNeedWork(step.work);
@@ -235,6 +244,45 @@ export class Memoria {
       );
     }
     return mapResponse(step.response);
+  }
+
+  private async waitForReadiness(
+    step: Extract<
+      ReturnType<typeof asQueryStep>,
+      { state: "readiness-pending" }
+    >,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const remainingMs = Math.max(0, step.deadlineUnixMs - Date.now());
+    const delayMs = Math.min(step.retryAfterMs, remainingMs);
+    if (delayMs === 0) {
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        if (error === undefined) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      };
+      const onAbort = () => {
+        finish(new MemoriaError("ABORTED", "The operation was aborted"));
+      };
+      const timer = setTimeout(() => finish(), delayMs);
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
   }
 
   async submitFeedback(input: FeedbackInput): Promise<NativeFeedbackCommit> {

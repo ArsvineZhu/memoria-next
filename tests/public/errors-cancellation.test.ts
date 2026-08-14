@@ -90,6 +90,15 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
         results: [],
       };
     },
+    queryContinue() {
+      return {
+        resultCount: 0,
+        authorityGeneration: "0",
+        degraded: false,
+        retrievalId: "RET_fake",
+        results: [],
+      };
+    },
     providerPollWork() {
       return null;
     },

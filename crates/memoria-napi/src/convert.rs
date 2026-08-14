@@ -483,6 +483,8 @@ pub struct JsQueryStep {
     pub response: Option<JsQueryResponse>,
     pub operation_id: Option<String>,
     pub work: Option<JsQueryWork>,
+    pub retry_after_ms: Option<u32>,
+    pub deadline_unix_ms: Option<f64>,
 }
 
 #[napi(object)]
@@ -1060,12 +1062,28 @@ pub fn query_step_to_js(step: QueryStep) -> Result<JsQueryStep> {
             response: Some(response_to_js(response)?),
             operation_id: None,
             work: None,
+            retry_after_ms: None,
+            deadline_unix_ms: None,
         }),
-        QueryStep::Pending { operation_id, work } => Ok(JsQueryStep {
+        QueryStep::ProviderPending { operation_id, work } => Ok(JsQueryStep {
             state: "pending".to_owned(),
             response: None,
             operation_id: Some(operation_id),
             work: Some(query_work_to_js(work)),
+            retry_after_ms: None,
+            deadline_unix_ms: None,
+        }),
+        QueryStep::ReadinessPending {
+            operation_id,
+            retry_after_ms,
+            deadline_unix_ms,
+        } => Ok(JsQueryStep {
+            state: "readiness-pending".to_owned(),
+            response: None,
+            operation_id: Some(operation_id),
+            work: None,
+            retry_after_ms: Some(retry_after_ms),
+            deadline_unix_ms: Some(deadline_unix_ms as f64),
         }),
     }
 }

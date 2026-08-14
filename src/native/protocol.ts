@@ -242,7 +242,13 @@ export type NativeQueryWork =
 
 export type NativeQueryStep =
   | { state: "complete"; response: NativeQueryResponse }
-  | { state: "pending"; operationId: string; work: NativeQueryWork };
+  | { state: "pending"; operationId: string; work: NativeQueryWork }
+  | {
+      state: "readiness-pending";
+      operationId: string;
+      retryAfterMs: number;
+      deadlineUnixMs: number;
+    };
 
 export interface NativeStoreHandle {
   close(): void;
@@ -280,6 +286,10 @@ export interface NativeBinding {
     store: NativeStoreHandle,
     operationId: string,
     result: NativeProviderWorkResult,
+  ): NativeQueryResponse | NativeQueryStep | Promise<NativeQueryResponse | NativeQueryStep>;
+  queryContinue(
+    store: NativeStoreHandle,
+    operationId: string,
   ): NativeQueryResponse | NativeQueryStep | Promise<NativeQueryResponse | NativeQueryStep>;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
   providerSubmitResult(store: NativeStoreHandle, result: NativeProviderWorkResult): void;
@@ -378,7 +388,12 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
 export function asQueryStep(
   result: NativeQueryResponse | NativeQueryStep,
 ): NativeQueryStep {
-  if ("state" in result && (result.state === "complete" || result.state === "pending")) {
+  if (
+    "state" in result &&
+    (result.state === "complete" ||
+      result.state === "pending" ||
+      result.state === "readiness-pending")
+  ) {
     return result;
   }
   return { state: "complete", response: result };

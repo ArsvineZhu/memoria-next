@@ -4,9 +4,50 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { createMemoria } from "../../src/engine/create-memoria.js";
+import { asSpaceId } from "../../src/domain/ids.js";
 import { loadNativeBinding } from "../../src/native/binding.js";
+import type { NativeQueryResponse, NativeQueryStep } from "../../src/native/protocol.js";
+import { createBindingHarness } from "../support/remediation.js";
 
-test("required semantic wait does not return a degraded lexical response", async () => {
+const readinessResponse: NativeQueryResponse = {
+  resultCount: 0,
+  authorityGeneration: "0",
+  degraded: false,
+  retrievalId: "RET_readiness",
+  results: [],
+};
+
+test("readiness pending uses an abortable timer and queryContinue", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-readiness-loop-"));
+  const start: NativeQueryStep = {
+    state: "readiness-pending",
+    operationId: "QO_readiness",
+    retryAfterMs: 1,
+    deadlineUnixMs: Date.now() + 250,
+  };
+  const harness = createBindingHarness({
+    queryStartResult: start,
+    queryContinueResult: { state: "complete", response: readinessResponse },
+  });
+  const memoria = await createMemoria({
+    dataDir,
+    binding: harness.binding,
+  });
+
+  try {
+    const response = await memoria.query({
+      scope: { spaces: [asSpaceId("SP_remediation")] },
+    });
+    assert.equal(response.retrievalId, readinessResponse.retrievalId);
+    assert.deepEqual(harness.queryContinueCalls, [start.operationId]);
+  } finally {
+    await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("required semantic wait returns readiness pending for continuation", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-readiness-"));
   const binding = loadNativeBinding();
   const store = binding.openStore(dataDir);
@@ -38,26 +79,15 @@ test("required semantic wait does not return a degraded lexical response", async
     });
 
     assert("state" in step);
-    if (step.state === "complete") {
-      assert.equal(
-        step.response?.degraded,
-        false,
-        "required semantic wait must not complete with a degraded fallback",
-      );
-    } else if (step.work.type === "query-embedding") {
-      const resumed = await binding.queryResume(store, step.operationId, {
-        type: "embeddings",
-        workId: step.work.workId,
-        vectors: [{ key: "query", values: [1, 0, 0] }],
-      });
-      if ("state" in resumed && resumed.state === "complete") {
-        assert.equal(
-          resumed.response?.degraded,
-          false,
-          "required semantic wait must not complete with a degraded fallback",
-        );
-      }
-    }
+    assert.equal(step.state, "readiness-pending");
+    assert.equal(typeof step.retryAfterMs, "number");
+    const continued = await binding.queryContinue(store, step.operationId);
+    assert("state" in continued);
+    assert.notEqual(
+      continued.state,
+      "complete",
+      "required semantic wait must not complete before semantic readiness",
+    );
   } finally {
     binding.closeStore(store);
     await rm(dataDir, { recursive: true, force: true });
