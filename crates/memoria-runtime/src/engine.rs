@@ -251,11 +251,11 @@ impl SemanticResidualOperator for RuntimeSemanticResidualOperator<'_> {
     fn search(
         &self,
         query_vector: &[f32],
-        _limit: usize,
+        limit: usize,
     ) -> Result<Vec<CandidateEvidence>, QueryError> {
         let hits = self
             .runtime
-            .semantic_vector_hits(self.compiled, query_vector, self.exact)
+            .semantic_vector_hits(self.compiled, query_vector, self.exact, limit)
             .map_err(|error| QueryError::OperatorFailure {
                 message: error.to_string(),
             })?;
@@ -1260,7 +1260,7 @@ impl MemoriaRuntime {
                 operator.search(
                     &compiled.query.cue.text.join(" "),
                     &compiled.query.scope.spaces,
-                    compiled.query.budget.max_candidates,
+                    plan.profile.lexical_candidates,
                 )?
             };
             pool.insert_response(
@@ -1274,7 +1274,12 @@ impl MemoriaRuntime {
             let query_vector = query_vector
                 .as_deref()
                 .ok_or(QueryError::QueryEmbeddingRequired)?;
-            let hits = self.semantic_vector_hits(compiled, query_vector, &exact)?;
+            let hits = self.semantic_vector_hits(
+                compiled,
+                query_vector,
+                &exact,
+                plan.profile.semantic_direct_candidates,
+            )?;
             pool.insert_response(
                 PhysicalChannel::SemanticDirect,
                 execute_semantic(
@@ -1542,14 +1547,9 @@ impl MemoriaRuntime {
         compiled: &memoria_query::CompiledQuery,
         query_vector: &[f32],
         exact: &ExactIndex,
+        limit: usize,
     ) -> Result<Vec<memoria_derived::VectorHit>, RuntimeError> {
         let manifest = self.derived.manifest(compiled.snapshot.derived_manifest)?;
-        let limit = compiled
-            .query
-            .budget
-            .max_candidates
-            .saturating_mul(8)
-            .min(512);
         let mut hits = Vec::new();
         for artifact_id in manifest.artifacts() {
             let artifact = self.derived.artifact(artifact_id)?;

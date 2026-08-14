@@ -25,8 +25,13 @@ pub struct CapabilityTarget {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetrievalProfile {
+    pub lexical_candidates: usize,
+    pub semantic_direct_candidates: usize,
+    pub semantic_residual_candidates: usize,
+    pub tag_readout_candidates: usize,
     pub tag_basis_vectors: usize,
     pub activation_budget: crate::PropagationBudget,
+    pub diffusion_max_nodes: usize,
     pub relation_budget: crate::RelationExpansionBudget,
     pub run_diffusion: bool,
     pub rerank_candidates: usize,
@@ -37,12 +42,17 @@ impl RetrievalProfile {
     pub const fn for_quality(level: QueryQualityLevel) -> Self {
         match level {
             QueryQualityLevel::Fast => Self {
+                lexical_candidates: 32,
+                semantic_direct_candidates: 32,
+                semantic_residual_candidates: 16,
+                tag_readout_candidates: 24,
                 tag_basis_vectors: crate::FAST_TAG_BASIS_VECTORS,
                 activation_budget: crate::PropagationBudget {
                     max_active_tags: 48,
                     max_edge_visits: 512,
                     max_hops: 2,
                 },
+                diffusion_max_nodes: 0,
                 relation_budget: crate::RelationExpansionBudget {
                     max_hops: 1,
                     max_added: 16,
@@ -51,12 +61,17 @@ impl RetrievalProfile {
                 rerank_candidates: 16,
             },
             QueryQualityLevel::Balanced => Self {
+                lexical_candidates: 64,
+                semantic_direct_candidates: 64,
+                semantic_residual_candidates: 32,
+                tag_readout_candidates: 48,
                 tag_basis_vectors: crate::BALANCED_TAG_BASIS_VECTORS,
                 activation_budget: crate::PropagationBudget {
                     max_active_tags: 96,
                     max_edge_visits: 1024,
                     max_hops: 3,
                 },
+                diffusion_max_nodes: 0,
                 relation_budget: crate::RelationExpansionBudget {
                     max_hops: 1,
                     max_added: 32,
@@ -65,12 +80,17 @@ impl RetrievalProfile {
                 rerank_candidates: 32,
             },
             QueryQualityLevel::Thorough => Self {
+                lexical_candidates: 128,
+                semantic_direct_candidates: 128,
+                semantic_residual_candidates: 64,
+                tag_readout_candidates: 96,
                 tag_basis_vectors: crate::THOROUGH_TAG_BASIS_VECTORS,
                 activation_budget: crate::PropagationBudget {
-                    max_active_tags: 96,
-                    max_edge_visits: 1024,
-                    max_hops: 3,
+                    max_active_tags: 192,
+                    max_edge_visits: 4096,
+                    max_hops: 4,
                 },
+                diffusion_max_nodes: 256,
                 relation_budget: crate::RelationExpansionBudget {
                     max_hops: 2,
                     max_added: 64,

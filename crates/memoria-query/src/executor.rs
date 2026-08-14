@@ -234,7 +234,10 @@ pub fn execute_algorithm_channels(
     {
         pool.insert_channel(
             PhysicalChannel::SemanticResidual,
-            operator.search(&basis.residual, plan.profile.tag_basis_vectors.max(1))?,
+            operator.search(
+                &basis.residual,
+                plan.profile.semantic_residual_candidates.max(1),
+            )?,
         );
         record_channel(
             &mut trace,
@@ -265,6 +268,7 @@ pub fn execute_algorithm_channels(
         let candidates =
             readout_tag_candidates(&inputs.tag_graph, &seed_ids, &compiled.query.scope.spaces)
                 .into_iter()
+                .take(plan.profile.tag_readout_candidates)
                 .filter_map(|candidate| tag_readout_evidence(exact, compiled, inputs, candidate))
                 .collect::<Vec<_>>();
         pool.insert_channel(PhysicalChannel::TagReadout, candidates);
@@ -294,10 +298,17 @@ pub fn execute_algorithm_channels(
         record_channel(&mut trace, pool, PhysicalChannel::Activation, "activation");
 
         if plan.channels.contains(&PhysicalChannel::Diffusion) {
-            let diffusion = diffusion_propagate(&graph, &seeds, plan.profile.activation_budget)
-                .map_err(|error| QueryError::OperatorFailure {
-                    message: error.to_string(),
-                })?;
+            let diffusion = diffusion_propagate(
+                &graph,
+                &seeds,
+                crate::PropagationBudget {
+                    max_active_tags: plan.profile.diffusion_max_nodes,
+                    ..plan.profile.activation_budget
+                },
+            )
+            .map_err(|error| QueryError::OperatorFailure {
+                message: error.to_string(),
+            })?;
             trace.diffusion_iterations = diffusion.iterations;
             trace.diffusion_convergence_delta = Some(diffusion.convergence_delta);
             trace.diffusion_truncated = diffusion.truncated;
