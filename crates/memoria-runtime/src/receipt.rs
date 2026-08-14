@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use memoria_adaptive::{
     AdaptiveError, AdaptiveEvent, FeedbackEventInput, FeedbackOutcome, QueryAdaptiveSignature,
 };
-use memoria_query::{MemoryResult, QuerySnapshot};
+use memoria_query::{MemoryResult, QuerySnapshot, result_id_for};
 use memoria_types::{AdaptiveGeneration, MemoryId, RevisionId, SpaceId, Timestamp};
 use thiserror::Error;
 
@@ -93,12 +93,10 @@ impl RetrievalReceipt {
         )
         .map_err(|_| ReceiptError::ExpirationOverflow)?;
         let mut pinned = BTreeMap::new();
-        for result in results {
-            if result.result_id.trim().is_empty() {
-                return Err(ReceiptError::InvalidSubmission { field: "result_id" });
-            }
+        for (index, result) in results.iter().enumerate() {
+            let result_id = result_id_for(&retrieval_id, index);
             pinned.insert(
-                result.result_id.clone(),
+                result_id,
                 PinnedEvidence {
                     space_id: result.space_id,
                     memory_id: result.memory_id,

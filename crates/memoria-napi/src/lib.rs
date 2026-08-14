@@ -153,15 +153,19 @@ pub fn query_start(store: &NativeStore, request: JsQueryRequest) -> Result<JsQue
         .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
     let response = runtime.query(query).map_err(runtime_error)?;
+    let retrieval_id = response.retrieval_id.clone();
     Ok(JsQueryResponse {
         result_count: u32::try_from(response.results.len()).map_err(to_napi_error)?,
         authority_generation: response.snapshot.authority_generation.to_string(),
         degraded: response.execution.degraded,
-        retrieval_id: response.retrieval_id,
+        retrieval_id: retrieval_id.clone(),
         results: response
             .results
             .into_iter()
-            .map(JsQueryResult::from)
+            .enumerate()
+            .map(|(index, result)| {
+                JsQueryResult::from((memoria_query::result_id_for(&retrieval_id, index), result))
+            })
             .collect(),
     })
 }

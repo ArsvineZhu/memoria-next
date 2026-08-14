@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::string::FromUtf8Error;
 
-use memoria_adaptive::{AdaptiveEventLog, QueryAdaptiveSignature};
+use memoria_adaptive::{AdaptiveEventLog, AdaptiveStateV1, QueryAdaptiveSignature};
 use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, StoreWriterLock};
 use memoria_derived::{
     BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
@@ -11,8 +11,8 @@ use memoria_derived::{
 use memoria_mdx::compile_ir;
 use memoria_query::{
     AdaptiveSnapshotIdentity, ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex,
-    MemoryQuery, QueryCompiler, ReadSession, RetrievalResponse, build_response, execute_exact,
-    execute_lexical,
+    MemoryQuery, QueryCompiler, ReadSession, RetrievalResponse, assess, build_response,
+    execute_exact, execute_lexical, rank_with_adaptive,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
@@ -262,12 +262,16 @@ impl MemoriaRuntime {
             execute_lexical(&compiled, &LexicalCandidateIndex::new(lexical)).results
         };
         self.next_retrieval_id = self.next_retrieval_id.saturating_add(1);
-        let response = build_response(
+        let mut response = build_response(
             format!("RET_{}", self.next_retrieval_id),
             &compiled,
             candidates,
         )?;
         let now = memoria_types::Timestamp::now()?;
+        let adaptive_state = AdaptiveStateV1::replay(self.adaptive_log.events());
+        response.results =
+            rank_with_adaptive(response.results, &adaptive_state, &query_signature, now);
+        response.assessment = assess(&response.results);
         let receipt = RetrievalReceipt::from_results(
             response.retrieval_id.clone(),
             response.snapshot.clone(),

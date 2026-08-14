@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
+use memoria_adaptive::{AdaptiveStateV1, QueryAdaptiveSignature};
 use memoria_types::SpaceId;
+use memoria_types::Timestamp;
 
+use crate::adaptive::adaptive_prior;
 use crate::evidence::{CandidateEvidence, CandidateTarget, LexicalEvidence};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,10 +65,52 @@ pub fn fuse_channels_scoped(
         .iter()
         .copied()
         .collect::<std::collections::HashSet<_>>();
-    fuse_channels(channels, k, limit)
+    fuse_channels(channels, k, usize::MAX)
         .into_iter()
         .filter(|candidate| scope.contains(&candidate.evidence.target.space_id))
+        .take(limit)
         .collect()
+}
+
+pub fn fuse_channels_with_adaptive(
+    channels: impl IntoIterator<Item = Vec<CandidateEvidence>>,
+    k: f32,
+    limit: usize,
+    allowed_spaces: &[SpaceId],
+    state: &AdaptiveStateV1,
+    signature: &QueryAdaptiveSignature,
+    now: Timestamp,
+) -> Vec<FusedCandidate> {
+    let mut fused = fuse_channels_scoped(channels, k, limit, allowed_spaces);
+    fused.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| {
+                let left_prior = adaptive_prior(
+                    state,
+                    signature,
+                    left.evidence.target.space_id,
+                    left.evidence.target.memory_id,
+                    now,
+                );
+                let right_prior = adaptive_prior(
+                    state,
+                    signature,
+                    right.evidence.target.space_id,
+                    right.evidence.target.memory_id,
+                    now,
+                );
+                right_prior.total_cmp(&left_prior)
+            })
+            .then_with(|| {
+                left.evidence
+                    .target
+                    .memory_id
+                    .cmp(&right.evidence.target.memory_id)
+            })
+    });
+    fused
 }
 
 fn merge_evidence(target: &mut CandidateEvidence, source: CandidateEvidence) {

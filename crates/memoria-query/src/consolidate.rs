@@ -49,7 +49,6 @@ pub struct MemoryMatch {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MemoryResult {
-    pub result_id: String,
     pub space_id: memoria_types::SpaceId,
     pub memory_id: memoria_types::MemoryId,
     pub revision_id: memoria_types::RevisionId,
@@ -129,7 +128,6 @@ fn consolidate_group(
     .filter(|present| *present)
     .count();
     MemoryResult {
-        result_id: String::new(),
         space_id: target.space_id,
         memory_id: target.memory_id,
         revision_id: target.revision_id,

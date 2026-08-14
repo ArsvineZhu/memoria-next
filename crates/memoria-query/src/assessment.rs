@@ -5,6 +5,8 @@ pub struct RecallAssessment {
     pub result_count: usize,
     pub top_relevance: Option<f32>,
     pub mean_confidence: f32,
+    pub mean_accessibility: f32,
+    pub mean_effort: f32,
     pub channel_coverage: f32,
 }
 
@@ -16,6 +18,20 @@ pub fn assess(results: &[MemoryResult]) -> RecallAssessment {
         0.0
     } else {
         results.iter().map(|result| result.confidence).sum::<f32>() / results.len() as f32
+    };
+    let mean_accessibility = if results.is_empty() {
+        0.0
+    } else {
+        results
+            .iter()
+            .map(|result| result.accessibility)
+            .sum::<f32>()
+            / results.len() as f32
+    };
+    let mean_effort = if results.is_empty() {
+        0.0
+    } else {
+        results.iter().map(|result| result.effort).sum::<f32>() / results.len() as f32
     };
     let channel_coverage = if results.is_empty() {
         0.0
@@ -46,6 +62,8 @@ pub fn assess(results: &[MemoryResult]) -> RecallAssessment {
         result_count,
         top_relevance,
         mean_confidence,
+        mean_accessibility,
+        mean_effort,
         channel_coverage,
     }
 }

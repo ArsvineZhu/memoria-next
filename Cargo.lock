@@ -852,6 +852,7 @@ dependencies = [
 name = "memoria-query"
 version = "0.1.0"
 dependencies = [
+ "memoria-adaptive",
  "memoria-derived",
  "memoria-mdx",
  "memoria-types",

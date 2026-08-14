@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
+memoria-adaptive = { version = "0.1.0", path = "../memoria-adaptive" }
 memoria-mdx = { version = "0.1.0", path = "../memoria-mdx" }
 memoria-derived = { version = "0.1.0", path = "../memoria-derived" }
 sha2 = "0.11.0"

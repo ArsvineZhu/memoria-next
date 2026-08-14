@@ -212,10 +212,10 @@ impl From<FeedbackCommit> for JsFeedbackCommit {
     }
 }
 
-impl From<memoria_query::MemoryResult> for JsQueryResult {
-    fn from(value: memoria_query::MemoryResult) -> Self {
+impl From<(String, memoria_query::MemoryResult)> for JsQueryResult {
+    fn from((result_id, value): (String, memoria_query::MemoryResult)) -> Self {
         Self {
-            result_id: value.result_id,
+            result_id,
             space_id: value.space_id.to_string(),
             memory_id: value.memory_id.to_string(),
             revision_id: value.revision_id.to_string(),

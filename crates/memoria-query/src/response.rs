@@ -11,6 +11,11 @@ pub struct RetrievalResponse {
     pub assessment: RecallAssessment,
 }
 
+#[must_use]
+pub fn result_id_for(retrieval_id: &str, index: usize) -> String {
+    format!("{retrieval_id}:result:{index}")
+}
+
 pub fn build_response<I, C>(
     retrieval_id: impl Into<String>,
     compiled: &CompiledQuery,
@@ -21,10 +26,7 @@ where
     C: Into<ConsolidationCandidate>,
 {
     let retrieval_id = retrieval_id.into();
-    let mut results = consolidate(candidates, compiled.query.budget)?;
-    for (index, result) in results.iter_mut().enumerate() {
-        result.result_id = format!("{retrieval_id}:result:{index}");
-    }
+    let results = consolidate(candidates, compiled.query.budget)?;
     let assessment = assess(&results);
     Ok(RetrievalResponse {
         retrieval_id,

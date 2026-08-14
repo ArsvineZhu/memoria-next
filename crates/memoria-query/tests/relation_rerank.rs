@@ -29,7 +29,6 @@ fn evidence(target: CandidateTarget, text: &str) -> CandidateEvidence {
 
 fn result(target: CandidateTarget, relevance: f32, text: &str) -> MemoryResult {
     MemoryResult {
-        result_id: String::new(),
         space_id: target.space_id,
         memory_id: target.memory_id,
         revision_id: target.revision_id,
