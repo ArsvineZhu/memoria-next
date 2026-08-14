@@ -48,6 +48,16 @@ impl LexicalDocument {
     }
 
     #[must_use]
+    pub fn derived_unit_id(&self) -> String {
+        self.memory_id.to_string()
+    }
+
+    #[must_use]
+    pub const fn resolution(&self) -> &'static str {
+        "memory"
+    }
+
+    #[must_use]
     pub const fn ir(&self) -> &MemoryIr {
         &self.ir
     }
@@ -63,6 +73,8 @@ pub struct LexicalHit {
     pub space_id: SpaceId,
     pub memory_id: MemoryId,
     pub revision_id: RevisionId,
+    pub derived_unit_id: String,
+    pub resolution: String,
     pub score: f32,
 }
 
@@ -115,6 +127,8 @@ impl LexicalIndex {
                     space_id: stored_id(&document, self.space_field)?.parse()?,
                     memory_id: stored_id(&document, self.memory_field)?.parse()?,
                     revision_id: stored_id(&document, self.revision_field)?.parse()?,
+                    derived_unit_id: stored_id(&document, self.memory_field)?.to_owned(),
+                    resolution: "memory".to_owned(),
                 })
             })
             .collect()
@@ -135,7 +149,7 @@ pub fn lexical_projection_hash(document: &LexicalDocument) -> ProjectionInputHas
     )
 }
 
-fn build_schema() -> (
+pub(crate) fn build_schema() -> (
     Schema,
     tantivy::schema::Field,
     tantivy::schema::Field,
@@ -156,7 +170,7 @@ fn build_schema() -> (
     )
 }
 
-fn stored_id(
+pub(crate) fn stored_id(
     document: &TantivyDocument,
     field: tantivy::schema::Field,
 ) -> Result<&str, DerivedError> {
@@ -168,7 +182,7 @@ fn stored_id(
         })
 }
 
-fn lexical_text(ir: &MemoryIr) -> String {
+pub(crate) fn lexical_text(ir: &MemoryIr) -> String {
     let mut output = ir.text_hierarchy().to_owned();
     for node in ir.nodes() {
         if node.kind() != SemanticKind::Tag {

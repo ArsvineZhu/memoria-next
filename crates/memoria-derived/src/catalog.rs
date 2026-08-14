@@ -55,6 +55,14 @@ pub struct AnnSegmentRecord {
     pub created_at: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LexicalArtifactRecord {
+    pub artifact_id: ArtifactId,
+    pub object_hash: [u8; 32],
+    pub object_path: String,
+    pub document_count: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TagMembershipRecord {
     pub membership_id: i64,
@@ -161,6 +169,12 @@ impl DerivedCatalog {
                 target_key TEXT NOT NULL,
                 PRIMARY KEY (artifact_id, target_key)
             );
+            CREATE TABLE IF NOT EXISTS lexical_artifacts (
+                artifact_id INTEGER PRIMARY KEY REFERENCES artifacts(id),
+                object_hash BLOB NOT NULL CHECK (length(object_hash) = 32),
+                object_path TEXT NOT NULL,
+                document_count INTEGER NOT NULL CHECK (document_count >= 0)
+            );
             CREATE TABLE IF NOT EXISTS build_jobs (
                 job_id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
@@ -231,6 +245,13 @@ impl DerivedCatalog {
             connection,
             database_path,
         })
+    }
+
+    #[must_use]
+    pub fn derived_dir(&self) -> &Path {
+        self.database_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
     }
 
     pub fn stage_artifact(
@@ -691,6 +712,83 @@ impl DerivedCatalog {
         usize::try_from(count).map_err(DerivedError::from)
     }
 
+    pub fn register_lexical_artifact(
+        &mut self,
+        artifact_id: ArtifactId,
+        object_hash: [u8; 32],
+        object_path: impl AsRef<str>,
+        document_count: u64,
+    ) -> Result<LexicalArtifactRecord, DerivedError> {
+        let artifact = self.artifact(artifact_id)?;
+        if artifact.kind() != "lexical" || artifact.version() != 1 {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: format!("artifact {artifact_id} is not lexical schema V1"),
+            });
+        }
+        self.connection.execute(
+            "INSERT OR IGNORE INTO lexical_artifacts(
+                artifact_id, object_hash, object_path, document_count
+             ) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                artifact_id.value(),
+                object_hash.as_slice(),
+                object_path.as_ref(),
+                i64::try_from(document_count)?,
+            ],
+        )?;
+        let record = self.lexical_artifact(artifact_id)?;
+        if record.object_hash != object_hash
+            || record.object_path != object_path.as_ref()
+            || record.document_count != document_count
+        {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: format!("lexical artifact {artifact_id} registration is not immutable"),
+            });
+        }
+        Ok(record)
+    }
+
+    pub fn lexical_artifact(
+        &self,
+        artifact_id: ArtifactId,
+    ) -> Result<LexicalArtifactRecord, DerivedError> {
+        self.connection
+            .query_row(
+                "SELECT artifact_id, object_hash, object_path, document_count
+                 FROM lexical_artifacts WHERE artifact_id = ?1",
+                params![artifact_id.value()],
+                decode_lexical_artifact_record,
+            )
+            .optional()?
+            .ok_or_else(|| DerivedError::InvalidProjectionValue {
+                value: format!("lexical artifact {artifact_id} is not registered"),
+            })
+    }
+
+    pub fn lexical_artifact_for_manifest(
+        &self,
+        manifest_id: ManifestId,
+    ) -> Result<LexicalArtifactRecord, DerivedError> {
+        let artifact_id = self
+            .connection
+            .query_row(
+                "SELECT ma.artifact_id
+                 FROM manifest_artifacts ma
+                 JOIN artifacts a ON a.id = ma.artifact_id
+                 JOIN lexical_artifacts la ON la.artifact_id = ma.artifact_id
+                 WHERE ma.manifest_id = ?1 AND a.kind = 'lexical'
+                 ORDER BY ma.artifact_id LIMIT 1",
+                params![manifest_id.value()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(ArtifactId::from_raw)
+            .ok_or_else(|| DerivedError::InvalidProjectionValue {
+                value: format!("manifest {manifest_id} has no lexical artifact"),
+            })?;
+        self.lexical_artifact(artifact_id)
+    }
+
     pub fn add_ann_tombstone(
         &mut self,
         artifact_id: ArtifactId,
@@ -881,6 +979,7 @@ impl DerivedCatalog {
         let transaction = self.begin_immediate_with_retry()?;
         let mut kinds = BTreeSet::new();
         let mut has_compatible_semantic_artifact = false;
+        let mut has_compatible_lexical_artifact = false;
         for id in &artifact_ids {
             let (state, artifact_generation, kind, version) = transaction
                 .query_row(
@@ -925,14 +1024,30 @@ impl DerivedCatalog {
             if kind == "semantic" && version == 1 && has_vector_membership {
                 has_compatible_semantic_artifact = true;
             }
+            if kind == "lexical" && version == 1 {
+                has_compatible_lexical_artifact = transaction.query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM lexical_artifacts WHERE artifact_id = ?1
+                    )",
+                    params![id.value()],
+                    |row| row.get(0),
+                )?;
+            }
             kinds.insert(kind);
         }
         let capabilities = if capabilities.is_empty() {
-            capabilities_for_kinds(&kinds, has_compatible_semantic_artifact)
+            capabilities_for_kinds(
+                &kinds,
+                has_compatible_semantic_artifact,
+                has_compatible_lexical_artifact,
+            )
         } else {
             capabilities
                 .into_iter()
-                .filter(|capability| capability != "semantic" || has_compatible_semantic_artifact)
+                .filter(|capability| {
+                    (capability != "semantic" || has_compatible_semantic_artifact)
+                        && (capability != "lexical" || has_compatible_lexical_artifact)
+                })
                 .collect()
         };
         transaction.execute(
@@ -1096,6 +1211,7 @@ impl DerivedCatalog {
             DELETE FROM tag_memberships;
             DELETE FROM tag_dictionary;
             DELETE FROM build_jobs;
+            DELETE FROM lexical_artifacts;
             DELETE FROM artifacts;
             ",
         )?;
@@ -1181,6 +1297,18 @@ fn decode_ann_segment_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnnSeg
         dimension,
         producer_signature: row.get(5)?,
         created_at: row.get(6)?,
+    })
+}
+
+fn decode_lexical_artifact_record(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<LexicalArtifactRecord> {
+    let document_count = u64::try_from(row.get::<_, i64>(3)?).map_err(|_| conversion_error(3))?;
+    Ok(LexicalArtifactRecord {
+        artifact_id: ArtifactId::from_raw(row.get(0)?),
+        object_hash: blob_array(row, 1)?,
+        object_path: row.get(2)?,
+        document_count,
     })
 }
 
@@ -1350,12 +1478,13 @@ fn conversion_error(index: usize) -> rusqlite::Error {
 fn capabilities_for_kinds(
     kinds: &BTreeSet<String>,
     has_compatible_semantic_artifact: bool,
+    has_compatible_lexical_artifact: bool,
 ) -> Vec<String> {
     let mut capabilities = Vec::new();
     if has_compatible_semantic_artifact {
         capabilities.push("semantic".to_owned());
     }
-    if kinds.contains("lexical") {
+    if kinds.contains("lexical") && has_compatible_lexical_artifact {
         capabilities.push("lexical".to_owned());
     }
     if kinds.contains("structural")
@@ -1373,10 +1502,10 @@ fn capabilities_for_kinds(
         "relations",
         "entity_observations",
         "explicit_tags",
-        "lexical",
     ]
     .iter()
     .all(|kind| kinds.contains(*kind))
+        && has_compatible_lexical_artifact
     {
         capabilities.push("base-search".to_owned());
     }

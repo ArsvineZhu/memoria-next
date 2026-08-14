@@ -6,6 +6,7 @@ mod embedding;
 mod enrichment;
 mod gc;
 mod lease;
+mod lexical_artifact;
 mod manifest;
 mod projection;
 mod scheduler;
@@ -23,8 +24,8 @@ pub use artifact::{
     SEMANTIC_ARTIFACT_VERSION,
 };
 pub use catalog::{
-    AnnSegmentRecord, DerivedCatalog, TagMembershipRecord, VectorMembershipRecord,
-    VectorPayloadRecord,
+    AnnSegmentRecord, DerivedCatalog, LexicalArtifactRecord, TagMembershipRecord,
+    VectorMembershipRecord, VectorPayloadRecord,
 };
 pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
@@ -39,6 +40,9 @@ pub use enrichment::{
 };
 pub use gc::{DerivedGc, GcReport};
 pub use lease::ManifestLease;
+pub use lexical_artifact::{
+    LEXICAL_ARTIFACT_VERSION, LexicalArtifactHandle, LexicalArtifactHash, LexicalArtifactV1,
+};
 pub use manifest::{CapabilityStatus, DerivedManifest, ManifestId};
 pub use memoria_types::AuthorityGeneration;
 pub use projection::PROJECTION_SCHEMA_VERSION;

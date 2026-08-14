@@ -8,8 +8,8 @@ use crate::enrichment::{ENRICHMENT_PROJECTION_VERSION, EnrichmentProjection};
 use crate::projection::ProjectionTarget;
 use crate::{
     AnnSegmentEntry, AnnSegmentRecord, AnnSegmentV1, ArtifactId, DerivedCatalog, DerivedError,
-    DerivedManifest, EntityObservationBuilder, ExplicitTagBuilder, LexicalDocument,
-    RelationBuilder, ServingRecord, StructuralBuilder, TemporalBuilder,
+    DerivedManifest, EntityObservationBuilder, ExplicitTagBuilder, LexicalArtifactV1,
+    LexicalDocument, RelationBuilder, ServingRecord, StructuralBuilder, TemporalBuilder,
 };
 
 pub const BASE_ARTIFACT_KINDS: [&str; 7] = [
@@ -133,7 +133,6 @@ impl DerivedCompiler {
             let _ = RelationBuilder::build_for(document.ir(), target)?;
             let _ = EntityObservationBuilder::build_for(document.ir(), target)?;
             let _ = ExplicitTagBuilder::build_for(document.ir(), target)?;
-            let _ = crate::build_lexical(document)?;
             serving_by_space
                 .entry(document.space_id())
                 .or_default()
@@ -143,10 +142,21 @@ impl DerivedCompiler {
             catalog.replace_serving_records(space_id, &records)?;
         }
 
+        let lexical_artifact =
+            LexicalArtifactV1::build(catalog.derived_dir(), generation, &documents)?;
+
         let mut artifact_ids = Vec::with_capacity(BASE_ARTIFACT_KINDS.len());
         for kind in BASE_ARTIFACT_KINDS {
             let artifact =
                 catalog.stage_artifact(kind, crate::PROJECTION_SCHEMA_VERSION, generation)?;
+            if kind == "lexical" {
+                catalog.register_lexical_artifact(
+                    artifact.id(),
+                    *lexical_artifact.hash().as_bytes(),
+                    lexical_artifact.object_path(),
+                    u64::try_from(lexical_artifact.document_count())?,
+                )?;
+            }
             catalog.validate_artifact(artifact.id())?;
             artifact_ids.push(artifact.id());
         }

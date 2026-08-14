@@ -11,6 +11,7 @@ mod executor;
 mod fusion;
 mod history;
 mod lexical;
+mod lexical_operator;
 mod model;
 mod planner;
 mod relation_expand;
@@ -57,6 +58,7 @@ pub use fusion::{
 };
 pub use history::execute_history;
 pub use lexical::{LexicalCandidate, LexicalCandidateIndex, execute_lexical};
+pub use lexical_operator::LexicalOperator;
 pub use model::{
     AuthorityConsistency, EntityRef, EntityRefParseError, MemoryQuery, MemoryQueryBuilder,
     QueryBudget, QueryConsistency, QueryConstraints, QueryCue, QueryHistory, QueryHistoryMode,
