@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use thiserror::Error;
 
@@ -80,7 +80,7 @@ where
     }
     let mut results = groups
         .into_iter()
-        .map(|(target, candidates)| consolidate_group(target, candidates))
+        .map(|(target, candidates)| consolidate_group(target, candidates, budget))
         .collect::<Vec<_>>();
     results.sort_by(|left, right| {
         right
@@ -96,20 +96,32 @@ where
 fn consolidate_group(
     target: CandidateTarget,
     mut candidates: Vec<ConsolidationCandidate>,
+    budget: QueryBudget,
 ) -> MemoryResult {
     candidates.sort_by(|left, right| right.score.total_cmp(&left.score));
     let primary = candidates.first().map_or(0.0, |candidate| candidate.score);
-    let support = candidates
-        .iter()
-        .skip(1)
-        .map(|candidate| candidate.score.max(0.0))
-        .sum::<f32>();
+    let mut independent_families = candidates
+        .first()
+        .map(|candidate| evidence_families(&candidate.evidence))
+        .unwrap_or_default();
+    let mut support = 0.0;
+    for candidate in candidates.iter().skip(1) {
+        let families = evidence_families(&candidate.evidence);
+        if families
+            .iter()
+            .any(|family| !independent_families.contains(family))
+        {
+            support += candidate.score.max(0.0);
+            independent_families.extend(families);
+        }
+    }
     let score = primary + 0.5 * (1.0 - (-support).exp());
     let mut matches = Vec::with_capacity(1);
     let mut merged = candidates.remove(0).evidence;
     for candidate in candidates {
         merge_evidence(&mut merged, candidate.evidence);
     }
+    trim_evidence(&mut merged, budget.max_evidence_tokens);
     matches.push(MemoryMatch {
         evidence: merged,
         score,
@@ -149,19 +161,79 @@ fn evidence_strength(evidence: &CandidateEvidence) -> f32 {
 }
 
 fn merge_evidence(target: &mut CandidateEvidence, source: CandidateEvidence) {
-    target.exact.extend(source.exact);
-    target.lexical.extend(source.lexical);
-    target.semantic.extend(source.semantic);
-    target.tags.extend(source.tags);
-    target.propagation.extend(source.propagation);
-    target.relations.extend(source.relations);
-    target.history.extend(source.history);
+    extend_unique(&mut target.exact, source.exact);
+    extend_unique(&mut target.lexical, source.lexical);
+    extend_unique(&mut target.semantic, source.semantic);
+    extend_unique(&mut target.tags, source.tags);
+    extend_unique(&mut target.propagation, source.propagation);
+    extend_unique(&mut target.relations, source.relations);
+    extend_unique(&mut target.history, source.history);
     if target.text.is_empty() {
         target.text = source.text;
     }
     for entity in source.entity_refs {
         if !target.entity_refs.contains(&entity) {
             target.entity_refs.push(entity);
+        }
+    }
+}
+
+fn evidence_families(evidence: &CandidateEvidence) -> BTreeSet<&'static str> {
+    let mut families = BTreeSet::new();
+    if !evidence.exact.is_empty() {
+        families.insert("exact");
+    }
+    if !evidence.lexical.is_empty() {
+        families.insert("lexical");
+    }
+    for semantic in &evidence.semantic {
+        families.insert(match semantic.channel {
+            crate::SemanticChannel::Direct => "semantic-direct",
+            crate::SemanticChannel::Residual => "semantic-residual",
+        });
+    }
+    if !evidence.tags.is_empty() {
+        families.insert("tags");
+    }
+    if !evidence.propagation.is_empty() {
+        families.insert("propagation");
+    }
+    if !evidence.relations.is_empty() {
+        families.insert("relations");
+    }
+    if !evidence.history.is_empty() {
+        families.insert("history");
+    }
+    families
+}
+
+fn trim_evidence(evidence: &mut CandidateEvidence, max_entries: usize) {
+    let mut remaining = max_entries;
+    trim_vec(&mut evidence.exact, &mut remaining);
+    trim_vec(&mut evidence.lexical, &mut remaining);
+    trim_vec(&mut evidence.semantic, &mut remaining);
+    trim_vec(&mut evidence.tags, &mut remaining);
+    trim_vec(&mut evidence.propagation, &mut remaining);
+    trim_vec(&mut evidence.relations, &mut remaining);
+    trim_vec(&mut evidence.history, &mut remaining);
+    if remaining == 0 {
+        evidence.entity_refs.clear();
+    }
+}
+
+fn trim_vec<T>(values: &mut Vec<T>, remaining: &mut usize) {
+    if *remaining >= values.len() {
+        *remaining -= values.len();
+    } else {
+        values.truncate(*remaining);
+        *remaining = 0;
+    }
+}
+
+fn extend_unique<T: PartialEq>(target: &mut Vec<T>, source: impl IntoIterator<Item = T>) {
+    for item in source {
+        if !target.contains(&item) {
+            target.push(item);
         }
     }
 }

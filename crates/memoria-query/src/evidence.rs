@@ -3,7 +3,7 @@ use memoria_types::{MemoryId, RevisionId, SpaceId};
 use crate::EntityRef;
 use crate::semantic::SemanticResolution;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CandidateTarget {
     pub space_id: SpaceId,
     pub memory_id: MemoryId,

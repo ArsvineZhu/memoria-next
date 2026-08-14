@@ -55,7 +55,8 @@ pub use executor::{
     SemanticResidualOperator, execute_algorithm_channels,
 };
 pub use fusion::{
-    FusedCandidate, RRF_K, fuse_channels, fuse_channels_scoped, fuse_channels_with_adaptive, rrf,
+    FusedCandidate, RRF_K, fuse_candidate_pool, fuse_channels, fuse_channels_scoped,
+    fuse_channels_with_adaptive, rrf,
 };
 pub use history::execute_history;
 pub use lexical::{LexicalCandidate, LexicalCandidateIndex, execute_lexical};

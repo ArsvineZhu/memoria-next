@@ -25,7 +25,7 @@ use memoria_query::{
     ReadSession, ReadinessBehavior, RetrievalResponse, SemanticCandidateIndex, SemanticChannel,
     SemanticResidualOperator, SemanticResolution, TagSeedProvenance, TagVectorCandidate, assess,
     build_response, execute_algorithm_channels, execute_exact, execute_lexical, execute_semantic,
-    rank_with_adaptive, resolve_explicit_tag_seeds,
+    fuse_candidate_pool, rank_with_adaptive, resolve_explicit_tag_seeds,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
@@ -1164,7 +1164,20 @@ impl MemoriaRuntime {
             )?);
         }
 
-        let candidates = pool.candidates();
+        let fused = fuse_candidate_pool(
+            &pool,
+            compiled.query.budget.max_candidates,
+            &compiled.query.scope.spaces,
+        );
+        trace.independent_support_count = fused
+            .iter()
+            .map(|candidate| candidate.independent_support_count)
+            .sum();
+        trace.correlation_suppressed_evidence = fused
+            .iter()
+            .map(|candidate| candidate.correlation_suppressed_evidence)
+            .sum();
+        let candidates = fused;
         self.next_retrieval_id = self.next_retrieval_id.saturating_add(1);
         let mut response = build_response(
             format!("RET_{}", self.next_retrieval_id),
