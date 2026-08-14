@@ -1,14 +1,55 @@
 use std::path::{Path, PathBuf};
 use std::{collections::BTreeSet, fs, time::Duration};
 
-use memoria_types::AuthorityGeneration;
+use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::artifact::{ArtifactDescriptor, ArtifactId, ArtifactState};
+use crate::artifact::{ArtifactDescriptor, ArtifactId, ArtifactState, BuildJob, BuildJobState};
 use crate::gc::DerivedGc;
 use crate::lease::{ManifestLease, unix_now};
 use crate::manifest::{DerivedManifest, ManifestId};
-use crate::{DerivedError, generation_to_sql};
+use crate::{
+    DerivedError, EmbeddingNormalization, ProjectionInputHash, VectorPayloadHash, generation_to_sql,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VectorPayloadRecord {
+    pub payload_hash: VectorPayloadHash,
+    pub dimension: u32,
+    pub normalization: EmbeddingNormalization,
+    pub producer_signature: String,
+    pub projection_input_hash: ProjectionInputHash,
+    pub object_path: String,
+    pub byte_length: u64,
+    pub checksum: [u8; 32],
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VectorMembershipRecord {
+    pub membership_id: i64,
+    pub artifact_id: ArtifactId,
+    pub space_id: SpaceId,
+    pub memory_id: MemoryId,
+    pub revision_id: RevisionId,
+    pub derived_unit_id: String,
+    pub semantic_node_id: Option<String>,
+    pub resolution: String,
+    pub payload_hash: VectorPayloadHash,
+    pub live_from_artifact_generation: AuthorityGeneration,
+    pub live_to_artifact_generation: Option<AuthorityGeneration>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnnSegmentRecord {
+    pub segment_id: i64,
+    pub artifact_id: ArtifactId,
+    pub object_hash: [u8; 32],
+    pub vector_count: u64,
+    pub dimension: u32,
+    pub producer_signature: String,
+    pub created_at: i64,
+}
 
 pub struct DerivedCatalog {
     connection: Connection,
@@ -55,10 +96,61 @@ impl DerivedCatalog {
                 capability TEXT NOT NULL,
                 PRIMARY KEY (manifest_id, capability)
             );
+            CREATE TABLE IF NOT EXISTS vector_payloads (
+                payload_hash BLOB PRIMARY KEY CHECK (length(payload_hash) = 32),
+                dimension INTEGER NOT NULL CHECK (dimension > 0),
+                normalization INTEGER NOT NULL CHECK (normalization IN (0, 1)),
+                producer_signature TEXT NOT NULL,
+                projection_input_hash BLOB NOT NULL CHECK (length(projection_input_hash) = 32),
+                object_path TEXT NOT NULL,
+                byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+                checksum BLOB NOT NULL CHECK (length(checksum) = 32),
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS vector_memberships (
+                membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+                derived_unit_id TEXT NOT NULL,
+                semantic_node_id TEXT,
+                resolution TEXT NOT NULL,
+                payload_hash BLOB NOT NULL REFERENCES vector_payloads(payload_hash),
+                live_from_artifact_generation INTEGER NOT NULL,
+                live_to_artifact_generation INTEGER,
+                UNIQUE (artifact_id, space_id, memory_id, revision_id, derived_unit_id, resolution)
+            );
+            CREATE TABLE IF NOT EXISTS ann_segments (
+                segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+                object_hash BLOB NOT NULL CHECK (length(object_hash) = 32),
+                vector_count INTEGER NOT NULL CHECK (vector_count >= 0),
+                dimension INTEGER NOT NULL CHECK (dimension > 0),
+                producer_signature TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ann_tombstones (
+                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+                target_key TEXT NOT NULL,
+                PRIMARY KEY (artifact_id, target_key)
+            );
             CREATE TABLE IF NOT EXISTS build_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                artifact_id INTEGER REFERENCES artifacts(id),
-                state TEXT NOT NULL
+                job_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                producer_signature TEXT NOT NULL,
+                authority_generation INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN (
+                    'queued', 'running', 'succeeded', 'failed', 'superseded'
+                )),
+                attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+                next_attempt_at INTEGER NOT NULL,
+                last_error_code TEXT,
+                last_error_message TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE (kind, input_hash, producer_signature)
             );
             CREATE TABLE IF NOT EXISTS leases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +164,10 @@ impl DerivedCatalog {
             INSERT OR IGNORE INTO serving_pointer(singleton, manifest_id)
                 VALUES (1, NULL);
             ",
+        )?;
+        connection.execute(
+            "UPDATE build_jobs SET state = 'queued', updated_at = ?1 WHERE state = 'running'",
+            params![unix_now()],
         )?;
         Ok(Self {
             connection,
@@ -163,6 +259,263 @@ impl DerivedCatalog {
             )
             .optional()?
             .ok_or(DerivedError::ArtifactNotFound { id })
+    }
+
+    pub fn register_vector_payload(
+        &mut self,
+        record: &VectorPayloadRecord,
+    ) -> Result<VectorPayloadRecord, DerivedError> {
+        let dimension = i64::from(record.dimension);
+        let byte_length = i64::try_from(record.byte_length)?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO vector_payloads(
+                payload_hash, dimension, normalization, producer_signature,
+                projection_input_hash, object_path, byte_length, checksum, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.payload_hash.as_bytes().as_slice(),
+                dimension,
+                normalization_to_sql(record.normalization),
+                record.producer_signature,
+                record.projection_input_hash.as_bytes().as_slice(),
+                record.object_path,
+                byte_length,
+                record.checksum.as_slice(),
+                record.created_at,
+            ],
+        )?;
+        let stored = self.vector_payload(record.payload_hash)?;
+        if stored != *record {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "vector payload identity already contains different metadata".to_owned(),
+            });
+        }
+        Ok(stored)
+    }
+
+    pub fn vector_payload(
+        &self,
+        payload_hash: VectorPayloadHash,
+    ) -> Result<VectorPayloadRecord, DerivedError> {
+        self.connection
+            .query_row(
+                "SELECT payload_hash, dimension, normalization, producer_signature,
+                        projection_input_hash, object_path, byte_length, checksum, created_at
+                 FROM vector_payloads WHERE payload_hash = ?1",
+                params![payload_hash.as_bytes().as_slice()],
+                decode_vector_payload_record,
+            )
+            .optional()?
+            .ok_or_else(|| DerivedError::InvalidProjectionValue {
+                value: format!("vector payload {payload_hash} was not found"),
+            })
+    }
+
+    pub fn vector_payload_count(&self) -> Result<usize, DerivedError> {
+        let count =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM vector_payloads", [], |row| {
+                    row.get::<_, i64>(0)
+                })?;
+        usize::try_from(count).map_err(DerivedError::from)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_vector_membership(
+        &mut self,
+        artifact_id: ArtifactId,
+        space_id: SpaceId,
+        memory_id: MemoryId,
+        revision_id: RevisionId,
+        derived_unit_id: impl AsRef<str>,
+        semantic_node_id: Option<&str>,
+        resolution: impl AsRef<str>,
+        payload_hash: VectorPayloadHash,
+        live_from_artifact_generation: AuthorityGeneration,
+    ) -> Result<VectorMembershipRecord, DerivedError> {
+        self.vector_payload(payload_hash)?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO vector_memberships(
+                artifact_id, space_id, memory_id, revision_id, derived_unit_id,
+                semantic_node_id, resolution, payload_hash, live_from_artifact_generation
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                artifact_id.value(),
+                space_id.as_bytes().as_slice(),
+                memory_id.as_bytes().as_slice(),
+                revision_id.as_bytes().as_slice(),
+                derived_unit_id.as_ref(),
+                semantic_node_id,
+                resolution.as_ref(),
+                payload_hash.as_bytes().as_slice(),
+                generation_to_sql(live_from_artifact_generation)?,
+            ],
+        )?;
+        self.connection
+            .query_row(
+                "SELECT membership_id, artifact_id, space_id, memory_id, revision_id,
+                        derived_unit_id, semantic_node_id, resolution, payload_hash,
+                        live_from_artifact_generation, live_to_artifact_generation
+                 FROM vector_memberships
+                 WHERE artifact_id = ?1 AND space_id = ?2 AND memory_id = ?3
+                   AND revision_id = ?4 AND derived_unit_id = ?5 AND resolution = ?6",
+                params![
+                    artifact_id.value(),
+                    space_id.as_bytes().as_slice(),
+                    memory_id.as_bytes().as_slice(),
+                    revision_id.as_bytes().as_slice(),
+                    derived_unit_id.as_ref(),
+                    resolution.as_ref(),
+                ],
+                decode_vector_membership_record,
+            )
+            .map_err(DerivedError::from)
+    }
+
+    pub fn vector_memberships_for_artifact(
+        &self,
+        artifact_id: ArtifactId,
+    ) -> Result<Vec<VectorMembershipRecord>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT membership_id, artifact_id, space_id, memory_id, revision_id,
+                    derived_unit_id, semantic_node_id, resolution, payload_hash,
+                    live_from_artifact_generation, live_to_artifact_generation
+             FROM vector_memberships WHERE artifact_id = ?1 ORDER BY membership_id",
+        )?;
+        let rows = statement.query_map(
+            params![artifact_id.value()],
+            decode_vector_membership_record,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DerivedError::from)
+    }
+
+    pub fn register_ann_segment(
+        &mut self,
+        artifact_id: ArtifactId,
+        object_hash: [u8; 32],
+        vector_count: u64,
+        dimension: u32,
+        producer_signature: impl AsRef<str>,
+    ) -> Result<AnnSegmentRecord, DerivedError> {
+        let created_at = unix_now();
+        self.connection.execute(
+            "INSERT INTO ann_segments(
+                artifact_id, object_hash, vector_count, dimension, producer_signature, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                artifact_id.value(),
+                object_hash.as_slice(),
+                i64::try_from(vector_count)?,
+                i64::from(dimension),
+                producer_signature.as_ref(),
+                created_at,
+            ],
+        )?;
+        let segment_id = self.connection.last_insert_rowid();
+        self.ann_segment(segment_id)
+    }
+
+    pub fn ann_segment(&self, segment_id: i64) -> Result<AnnSegmentRecord, DerivedError> {
+        self.connection
+            .query_row(
+                "SELECT segment_id, artifact_id, object_hash, vector_count, dimension,
+                        producer_signature, created_at
+                 FROM ann_segments WHERE segment_id = ?1",
+                params![segment_id],
+                decode_ann_segment_record,
+            )
+            .map_err(DerivedError::from)
+    }
+
+    pub fn add_ann_tombstone(
+        &mut self,
+        artifact_id: ArtifactId,
+        target_key: impl AsRef<str>,
+    ) -> Result<(), DerivedError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO ann_tombstones(artifact_id, target_key)
+             VALUES (?1, ?2)",
+            params![artifact_id.value(), target_key.as_ref()],
+        )?;
+        Ok(())
+    }
+
+    pub fn ann_tombstones(&self, artifact_id: ArtifactId) -> Result<Vec<String>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT target_key FROM ann_tombstones
+             WHERE artifact_id = ?1 ORDER BY target_key",
+        )?;
+        let rows = statement.query_map(params![artifact_id.value()], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DerivedError::from)
+    }
+
+    pub fn enqueue_build_job(
+        &mut self,
+        kind: impl AsRef<str>,
+        input_hash: impl AsRef<str>,
+        producer_signature: impl AsRef<str>,
+        authority_generation: AuthorityGeneration,
+    ) -> Result<BuildJob, DerivedError> {
+        let kind = kind.as_ref();
+        let input_hash = input_hash.as_ref();
+        let producer_signature = producer_signature.as_ref();
+        let job_id = format!("BJ:{kind}:{input_hash}:{producer_signature}");
+        let now = unix_now();
+        self.connection.execute(
+            "INSERT OR IGNORE INTO build_jobs(
+                job_id, kind, input_hash, producer_signature, authority_generation,
+                state, attempt_count, next_attempt_at, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'queued', 0, ?6, ?6, ?6)",
+            params![
+                job_id,
+                kind,
+                input_hash,
+                producer_signature,
+                generation_to_sql(authority_generation)?,
+                now,
+            ],
+        )?;
+        self.build_job(&format!("BJ:{kind}:{input_hash}:{producer_signature}"))
+    }
+
+    pub fn build_job(&self, job_id: &str) -> Result<BuildJob, DerivedError> {
+        self.connection
+            .query_row(
+                "SELECT job_id, kind, input_hash, producer_signature, authority_generation,
+                        state, attempt_count, next_attempt_at, last_error_code,
+                        last_error_message, created_at, updated_at
+                 FROM build_jobs WHERE job_id = ?1",
+                params![job_id],
+                decode_build_job,
+            )
+            .map_err(DerivedError::from)
+    }
+
+    pub fn mark_build_job_running(&mut self, job_id: &str) -> Result<BuildJob, DerivedError> {
+        self.connection.execute(
+            "UPDATE build_jobs SET state = 'running', attempt_count = attempt_count + 1,
+                    updated_at = ?1 WHERE job_id = ?2",
+            params![unix_now(), job_id],
+        )?;
+        self.build_job(job_id)
+    }
+
+    pub fn mark_build_job_succeeded(&mut self, job_id: &str) -> Result<BuildJob, DerivedError> {
+        self.connection.execute(
+            "UPDATE build_jobs SET state = 'succeeded', updated_at = ?1 WHERE job_id = ?2",
+            params![unix_now(), job_id],
+        )?;
+        self.build_job(job_id)
+    }
+
+    pub fn requeue_running_build_jobs(&mut self) -> Result<usize, DerivedError> {
+        let changed = self.connection.execute(
+            "UPDATE build_jobs SET state = 'queued', updated_at = ?1 WHERE state = 'running'",
+            params![unix_now()],
+        )?;
+        Ok(changed)
     }
 
     pub fn publish_manifest(
@@ -401,6 +754,125 @@ impl DerivedCatalog {
     pub(crate) fn connection_mut(&mut self) -> &mut Connection {
         &mut self.connection
     }
+}
+
+fn decode_vector_payload_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<VectorPayloadRecord> {
+    let dimension = u32::try_from(row.get::<_, i64>(1)?).map_err(|_| conversion_error(1))?;
+    let byte_length = u64::try_from(row.get::<_, i64>(6)?).map_err(|_| conversion_error(6))?;
+    Ok(VectorPayloadRecord {
+        payload_hash: VectorPayloadHash::from_bytes(blob_array(row, 0)?),
+        dimension,
+        normalization: normalization_from_sql(row.get::<_, i64>(2)?)?,
+        producer_signature: row.get(3)?,
+        projection_input_hash: ProjectionInputHash::from_bytes(blob_array(row, 4)?),
+        object_path: row.get(5)?,
+        byte_length,
+        checksum: blob_array(row, 7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+fn decode_vector_membership_record(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<VectorMembershipRecord> {
+    let live_from = generation_from_sql(row.get(9)?, 9)?;
+    let live_to = row
+        .get::<_, Option<i64>>(10)?
+        .map(|value| generation_from_sql(value, 10))
+        .transpose()?;
+    Ok(VectorMembershipRecord {
+        membership_id: row.get(0)?,
+        artifact_id: ArtifactId::from_raw(row.get(1)?),
+        space_id: SpaceId::from_bytes(blob_array(row, 2)?),
+        memory_id: MemoryId::from_bytes(blob_array(row, 3)?),
+        revision_id: RevisionId::from_bytes(blob_array(row, 4)?),
+        derived_unit_id: row.get(5)?,
+        semantic_node_id: row.get(6)?,
+        resolution: row.get(7)?,
+        payload_hash: VectorPayloadHash::from_bytes(blob_array(row, 8)?),
+        live_from_artifact_generation: live_from,
+        live_to_artifact_generation: live_to,
+    })
+}
+
+fn decode_ann_segment_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnnSegmentRecord> {
+    let vector_count = u64::try_from(row.get::<_, i64>(3)?).map_err(|_| conversion_error(3))?;
+    let dimension = u32::try_from(row.get::<_, i64>(4)?).map_err(|_| conversion_error(4))?;
+    Ok(AnnSegmentRecord {
+        segment_id: row.get(0)?,
+        artifact_id: ArtifactId::from_raw(row.get(1)?),
+        object_hash: blob_array(row, 2)?,
+        vector_count,
+        dimension,
+        producer_signature: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+fn decode_build_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BuildJob> {
+    let authority_generation = generation_from_sql(row.get(4)?, 4)?;
+    let attempt_count = u32::try_from(row.get::<_, i64>(6)?).map_err(|_| conversion_error(6))?;
+    let state = BuildJobState::parse(&row.get::<_, String>(5)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            5,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                error.to_string(),
+            )),
+        )
+    })?;
+    Ok(BuildJob {
+        job_id: row.get(0)?,
+        kind: row.get(1)?,
+        input_hash: row.get(2)?,
+        producer_signature: row.get(3)?,
+        authority_generation,
+        state,
+        attempt_count,
+        next_attempt_at: row.get(7)?,
+        last_error_code: row.get(8)?,
+        last_error_message: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+fn blob_array<const N: usize>(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<[u8; N]> {
+    let bytes = row.get::<_, Vec<u8>>(index)?;
+    bytes.try_into().map_err(|_| conversion_error(index))
+}
+
+fn generation_from_sql(value: i64, index: usize) -> rusqlite::Result<AuthorityGeneration> {
+    u64::try_from(value)
+        .map(AuthorityGeneration::new)
+        .map_err(|_| conversion_error(index))
+}
+
+fn normalization_to_sql(normalization: EmbeddingNormalization) -> i64 {
+    match normalization {
+        EmbeddingNormalization::None => 0,
+        EmbeddingNormalization::L2 => 1,
+    }
+}
+
+fn normalization_from_sql(value: i64) -> rusqlite::Result<EmbeddingNormalization> {
+    match value {
+        0 => Ok(EmbeddingNormalization::None),
+        1 => Ok(EmbeddingNormalization::L2),
+        _ => Err(conversion_error(2)),
+    }
+}
+
+fn conversion_error(index: usize) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        index,
+        rusqlite::types::Type::Blob,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "derived catalog value has an invalid representation",
+        )),
+    )
 }
 
 fn capabilities_for_kinds(

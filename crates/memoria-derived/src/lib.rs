@@ -19,10 +19,10 @@ use std::num::TryFromIntError;
 use thiserror::Error;
 
 pub use artifact::{
-    ArtifactDescriptor, ArtifactId, ArtifactState, SEMANTIC_ARTIFACT_KIND,
+    ArtifactDescriptor, ArtifactId, ArtifactState, BuildJob, BuildJobState, SEMANTIC_ARTIFACT_KIND,
     SEMANTIC_ARTIFACT_VERSION,
 };
-pub use catalog::DerivedCatalog;
+pub use catalog::{AnnSegmentRecord, DerivedCatalog, VectorMembershipRecord, VectorPayloadRecord};
 pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 pub use embedding::{

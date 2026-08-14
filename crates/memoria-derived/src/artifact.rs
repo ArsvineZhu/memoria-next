@@ -7,6 +7,57 @@ use crate::DerivedError;
 pub const SEMANTIC_ARTIFACT_KIND: &str = "semantic";
 pub const SEMANTIC_ARTIFACT_VERSION: u32 = 1;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuildJobState {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Superseded,
+}
+
+impl BuildJobState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Result<Self, DerivedError> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "superseded" => Ok(Self::Superseded),
+            _ => Err(DerivedError::InvalidCatalogState {
+                value: value.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BuildJob {
+    pub job_id: String,
+    pub kind: String,
+    pub input_hash: String,
+    pub producer_signature: String,
+    pub authority_generation: memoria_types::AuthorityGeneration,
+    pub state: BuildJobState,
+    pub attempt_count: u32,
+    pub next_attempt_at: i64,
+    pub last_error_code: Option<String>,
+    pub last_error_message: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ArtifactId(i64);
 

@@ -109,10 +109,9 @@ impl<'a> DerivedGc<'a> {
             let active_build = transaction.query_row(
                 "SELECT EXISTS (
                     SELECT 1 FROM build_jobs
-                    WHERE artifact_id = ?1
-                      AND state IN ('queued', 'building', 'validating')
+                    WHERE state IN ('queued', 'running')
                 )",
-                [artifact_id.value()],
+                [],
                 |row| row.get::<_, bool>(0),
             )?;
             if active_build {
