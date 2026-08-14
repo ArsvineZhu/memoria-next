@@ -1,5 +1,7 @@
 use memoria_derived::EnrichmentProjection;
 
+use crate::privacy::ProviderCapability;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmbeddingItem {
     pub key: String,
@@ -34,6 +36,17 @@ pub enum NeedWork {
     Embeddings(EmbeddingBatchRequest),
     Rerank(RerankBatchRequest),
     Enrichment(EnrichmentBatchRequest),
+}
+
+impl NeedWork {
+    #[must_use]
+    pub const fn capability(&self) -> ProviderCapability {
+        match self {
+            Self::Embeddings(_) => ProviderCapability::Embedding,
+            Self::Rerank(_) => ProviderCapability::Rerank,
+            Self::Enrichment(_) => ProviderCapability::Enrichment,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

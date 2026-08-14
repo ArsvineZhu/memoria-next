@@ -9,6 +9,9 @@ export interface RuntimePolicy {
 
 export interface PrivacyPolicy {
   allowProviderDataEgress?: boolean;
+  allowEmbeddingDataEgress?: boolean;
+  allowRerankDataEgress?: boolean;
+  allowEnrichmentDataEgress?: boolean;
 }
 
 export interface ResourceLimits {
@@ -93,6 +96,18 @@ export function validateMemoriaConfig(config: MemoriaConfig): MemoriaConfig {
     assertPositiveInteger(
       "config.runtime.backgroundWorkBatchSize",
       config.runtime.backgroundWorkBatchSize,
+    );
+  }
+  if (config.privacy) {
+    assertAllowedKeys(
+      config.privacy,
+      [
+        "allowProviderDataEgress",
+        "allowEmbeddingDataEgress",
+        "allowRerankDataEgress",
+        "allowEnrichmentDataEgress",
+      ],
+      "config.privacy",
     );
   }
   return config;

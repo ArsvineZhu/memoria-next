@@ -1,4 +1,5 @@
 import type { NeedWork } from "../native/protocol.js";
+import { MemoriaError } from "../domain/errors.js";
 import {
   ProviderExecutionError,
   type EmbeddingPayload,
@@ -10,6 +11,26 @@ import {
   type RerankScore,
   type RerankWork,
 } from "./types.js";
+
+export interface ProviderEgressPolicy {
+  embedding: boolean;
+  rerank: boolean;
+  enrichment: boolean;
+}
+
+export function createProviderEgressGuard(
+  policy: ProviderEgressPolicy,
+): NonNullable<ProviderHostOptions["onDataEgress"]> {
+  return (work) => {
+    if (!policy[work.type]) {
+      throw new MemoriaError(
+        "CAPABILITY_NOT_READY",
+        "CAPABILITY_NOT_READY: " + work.type + " provider data egress is denied",
+      );
+    }
+    return work;
+  };
+}
 
 export class ProviderHost {
   readonly #providers: ProviderSet;

@@ -18,6 +18,7 @@ use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, Spa
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::privacy::{ProviderCapability, ProviderEgressPolicy};
 use crate::provider::{NeedWork, ProviderWorkResult};
 use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
@@ -54,6 +55,9 @@ pub enum RuntimeError {
     #[error("adaptive error: {0}")]
     Adaptive(#[from] memoria_adaptive::AdaptiveError),
 
+    #[error("CAPABILITY_NOT_READY: provider data egress denied for {capability}")]
+    ProviderEgressDenied { capability: ProviderCapability },
+
     #[error("feedback receipt error: {0}")]
     Receipt(#[from] ReceiptError),
 }
@@ -69,6 +73,7 @@ impl RuntimeError {
             Self::Query(_) | Self::Consolidation(_) => "QUERY_ERROR",
             Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
             Self::Adaptive(_) => "ADAPTIVE_ERROR",
+            Self::ProviderEgressDenied { .. } => "CAPABILITY_NOT_READY",
             Self::Receipt(ReceiptError::NotFound { .. }) => "NOT_FOUND",
             Self::Receipt(ReceiptError::Expired { .. }) => "FEEDBACK_RECEIPT_EXPIRED",
             Self::Receipt(_) => "ADAPTIVE_ERROR",
@@ -90,6 +95,7 @@ pub struct MemoriaRuntime {
     tag_dictionary: TagDictionary,
     generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
     adaptive_log: AdaptiveEventLog,
+    provider_egress_policy: ProviderEgressPolicy,
     receipts: BTreeMap<String, RetrievalReceipt>,
     next_retrieval_id: u64,
     closed: bool,
@@ -117,6 +123,13 @@ pub struct MemoryMutation {
 
 impl MemoriaRuntime {
     pub fn open(data_dir: impl AsRef<std::path::Path>) -> Result<Self, RuntimeError> {
+        Self::open_with_provider_egress_policy(data_dir, ProviderEgressPolicy::default())
+    }
+
+    pub fn open_with_provider_egress_policy(
+        data_dir: impl AsRef<std::path::Path>,
+        provider_egress_policy: ProviderEgressPolicy,
+    ) -> Result<Self, RuntimeError> {
         let layout = StoreLayout::create(data_dir)?;
         let writer_lock = StoreWriterLock::acquire(layout.store_dir())?;
         let authority = AuthorityDb::open(layout.authority_database()).map_err(|error| {
@@ -139,6 +152,7 @@ impl MemoriaRuntime {
             tag_dictionary: TagDictionary::new(),
             generated_tag_artifacts: BTreeMap::new(),
             adaptive_log: AdaptiveEventLog::new(),
+            provider_egress_policy,
             receipts: BTreeMap::new(),
             next_retrieval_id: 0,
             closed: false,
@@ -360,6 +374,15 @@ impl MemoriaRuntime {
 
     pub fn provider_poll_work(&mut self) -> Result<Option<NeedWork>, RuntimeError> {
         self.ensure_open()?;
+        if let Some(pending) = self.pending_provider_work.front()
+            && !self
+                .provider_egress_policy
+                .allows(pending.work.capability())
+        {
+            return Err(RuntimeError::ProviderEgressDenied {
+                capability: pending.work.capability(),
+            });
+        }
         let Some(pending) = self.pending_provider_work.pop_front() else {
             return Ok(None);
         };

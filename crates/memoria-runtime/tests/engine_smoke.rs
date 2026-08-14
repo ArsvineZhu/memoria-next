@@ -1,5 +1,8 @@
 use memoria_query::MemoryQuery;
-use memoria_runtime::{MemoriaRuntime, NeedWork, ProviderWorkResult};
+use memoria_runtime::{
+    MemoriaRuntime, NeedWork, ProviderCapability, ProviderEgressPolicy, ProviderWorkResult,
+    RuntimeError,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -60,4 +63,30 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
         .unwrap();
 
     assert_eq!(runtime.status().semantic_coverage.value(), 2);
+}
+
+#[test]
+fn denied_provider_egress_is_blocked_before_work_is_emitted() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open_with_provider_egress_policy(
+        directory.path(),
+        ProviderEgressPolicy {
+            allow_embedding: false,
+            allow_rerank: true,
+            allow_enrichment: true,
+        },
+    )
+    .unwrap();
+    let space = runtime.create_space("local-only").unwrap();
+    runtime
+        .create_memory(space, Some("private"), b"# Private\nLocal")
+        .unwrap();
+
+    let error = runtime.provider_poll_work().unwrap_err();
+    assert!(matches!(
+        error,
+        RuntimeError::ProviderEgressDenied {
+            capability: ProviderCapability::Embedding
+        }
+    ));
 }
