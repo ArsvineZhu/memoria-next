@@ -34,3 +34,4 @@ export {
   serializeRestrictedMdx,
   type AuthoringDocument,
 } from "./authoring/serialize.js";
+export * from "./agent/index.js";

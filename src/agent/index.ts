@@ -1,0 +1,37 @@
+export {
+  createIdentityResolver,
+  type ConversationBinding,
+  type EntityObservation,
+  type HostIdentity,
+  type IdentityCandidate,
+  type IdentityDirectory,
+  type IdentityResolution,
+  type IdentityResolutionRequest,
+  type IdentityResolver,
+  type IdentityResolverOptions,
+  type ObservationSource,
+} from "./identity.js";
+export {
+  discoverMemoryOwner,
+  type AgentMemory,
+  type AgentQueryHit,
+  type AgentSpace,
+  type DiscoverMemoryOwnerInput,
+  type MemoryOwnerCandidate,
+  type MemoryOwnerResult,
+  type OwnerDiscoveryBackend,
+} from "./memory-owner.js";
+export {
+  createAgentTools,
+  type AgentBackend,
+  type AgentConflict,
+  type AgentFeedbackInput,
+  type AgentFeedbackResult,
+  type AgentMutationResult,
+  type AgentMutationSuccess,
+  type AgentPermission,
+  type AgentPermissionPolicy,
+  type AgentTools,
+  type AgentToolsOptions,
+  type MemoryPatchOperation,
+} from "./tools.js";
