@@ -47,6 +47,28 @@ test("readiness pending uses an abortable timer and queryContinue", async () => 
   }
 });
 
+test("text-only public query does not infer semantic capability", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-query-contract-"));
+  const harness = createBindingHarness();
+  const memoria = await createMemoria({
+    dataDir,
+    binding: harness.binding,
+  });
+
+  try {
+    await memoria.query({
+      scope: { spaces: [asSpaceId("SP_contract")] },
+      cue: { text: "lexical only" },
+    });
+    assert.equal(harness.queryRequests.length, 1);
+    assert.deepEqual(harness.queryRequests[0]?.consistency.required, []);
+    assert.deepEqual(harness.queryRequests[0]?.consistency.preferred, []);
+  } finally {
+    await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("required semantic wait returns readiness pending for continuation", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-readiness-"));
   const binding = loadNativeBinding();

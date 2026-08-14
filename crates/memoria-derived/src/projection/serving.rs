@@ -4,6 +4,7 @@ use crate::DerivedError;
 use crate::projection::ProjectionTarget;
 use crate::projection::entities::EntityObservationBuilder;
 use crate::projection::lexical::LexicalDocument;
+use crate::projection::relations::RelationBuilder;
 use crate::projection::tags::ExplicitTagBuilder;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,6 +17,7 @@ pub struct ServingRecord {
     pub entity_refs: Vec<String>,
     pub tags: Vec<String>,
     pub node_ids: Vec<String>,
+    pub relations: Vec<String>,
     pub current: bool,
     pub retired: bool,
 }
@@ -45,6 +47,24 @@ impl ServingRecord {
             .nodes()
             .filter_map(|node| node.id().map(ToString::to_string))
             .collect();
+        let relations = RelationBuilder::build_for(document.ir(), target)?
+            .relations()
+            .iter()
+            .map(|relation| relation.kind.clone())
+            .chain(document.ir().nodes().filter_map(|node| {
+                if node.kind() != memoria_mdx::SemanticKind::MemoryRef {
+                    return None;
+                }
+                ["memoryId", "memory_id", "ref"]
+                    .into_iter()
+                    .find_map(|name| {
+                        node.attributes()
+                            .iter()
+                            .find(|(candidate, _)| candidate == name)
+                            .map(|(_, value)| format!("memory-ref:{value}"))
+                    })
+            }))
+            .collect();
         Ok(Self {
             space_id: document.space_id(),
             memory_id: document.memory_id(),
@@ -54,6 +74,7 @@ impl ServingRecord {
             entity_refs,
             tags,
             node_ids,
+            relations,
             current: true,
             retired: false,
         })

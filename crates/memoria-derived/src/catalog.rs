@@ -205,6 +205,13 @@ impl DerivedCatalog {
                 retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
                 PRIMARY KEY (space_id, memory_id)
             );
+            CREATE TABLE IF NOT EXISTS serving_relations (
+                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+                relation TEXT NOT NULL,
+                PRIMARY KEY (space_id, memory_id, revision_id, relation)
+            );
             CREATE TABLE IF NOT EXISTS tag_dictionary (
                 tag_id BLOB PRIMARY KEY CHECK (length(tag_id) = 32),
                 normalized_value TEXT NOT NULL UNIQUE
@@ -417,6 +424,10 @@ impl DerivedCatalog {
             "DELETE FROM serving_records WHERE space_id = ?1",
             params![space_id.as_bytes().as_slice()],
         )?;
+        transaction.execute(
+            "DELETE FROM serving_relations WHERE space_id = ?1",
+            params![space_id.as_bytes().as_slice()],
+        )?;
         for record in records {
             if record.space_id != space_id {
                 return Err(DerivedError::InvalidProjectionValue {
@@ -441,6 +452,19 @@ impl DerivedCatalog {
                     i64::from(u8::from(record.retired)),
                 ],
             )?;
+            for relation in &record.relations {
+                transaction.execute(
+                    "INSERT INTO serving_relations(
+                        space_id, memory_id, revision_id, relation
+                     ) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        record.space_id.as_bytes().as_slice(),
+                        record.memory_id.as_bytes().as_slice(),
+                        record.revision_id.as_bytes().as_slice(),
+                        relation,
+                    ],
+                )?;
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -457,13 +481,30 @@ impl DerivedCatalog {
              FROM serving_records ORDER BY space_id, memory_id",
         )?;
         let rows = statement.query_map([], decode_serving_record)?;
-        let records = rows.collect::<Result<Vec<_>, _>>()?;
-        Ok(records
+        let mut records = rows
+            .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .filter(|record| {
                 space_ids.contains(&record.space_id) && record.authority_generation <= generation
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let mut relation_statement = self.connection.prepare(
+            "SELECT relation FROM serving_relations
+             WHERE space_id = ?1 AND memory_id = ?2 AND revision_id = ?3
+             ORDER BY relation",
+        )?;
+        for record in &mut records {
+            let rows = relation_statement.query_map(
+                params![
+                    record.space_id.as_bytes().as_slice(),
+                    record.memory_id.as_bytes().as_slice(),
+                    record.revision_id.as_bytes().as_slice(),
+                ],
+                |row| row.get(0),
+            )?;
+            record.relations = rows.collect::<Result<Vec<_>, _>>()?;
+        }
+        Ok(records)
     }
 
     pub fn register_tag_dictionary_value(
@@ -1367,6 +1408,7 @@ fn decode_serving_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ServingRec
         entity_refs: decode_strings(&row.get::<_, Vec<u8>>(5)?)?,
         tags: decode_strings(&row.get::<_, Vec<u8>>(6)?)?,
         node_ids: decode_strings(&row.get::<_, Vec<u8>>(7)?)?,
+        relations: Vec::new(),
         current,
         retired,
     })

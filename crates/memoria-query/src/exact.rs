@@ -102,6 +102,12 @@ impl ExactRecord {
         self.relations = relations;
         self
     }
+
+    pub fn memory_reference_ids(&self) -> impl Iterator<Item = &str> {
+        self.relations
+            .iter()
+            .filter_map(|relation| relation.strip_prefix("memory-ref:"))
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -349,6 +355,7 @@ fn to_evidence(record: &ExactRecord) -> CandidateEvidence {
         relations: record
             .relations
             .iter()
+            .filter(|relation| !relation.starts_with("memory-ref:"))
             .cloned()
             .map(|relation| RelationEvidence { relation })
             .collect(),

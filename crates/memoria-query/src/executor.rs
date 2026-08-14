@@ -442,6 +442,7 @@ fn record_evidence(record: &ExactRecord) -> CandidateEvidence {
         relations: record
             .relations
             .iter()
+            .filter(|relation| !relation.starts_with("memory-ref:"))
             .cloned()
             .map(|relation| RelationEvidence { relation })
             .collect(),

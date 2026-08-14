@@ -24,7 +24,7 @@ use memoria_query::{
     AdaptiveSnapshotIdentity, AlgorithmChannelInputs, CandidateEvidence, CandidatePool, ExactIndex,
     ExactRecord, LexicalCandidate, LexicalCandidateIndex, LexicalOperator, MemoryQuery,
     PhysicalChannel, PhysicalQueryPlanner, QueryCompiler, QueryError, QueryOperatorTrace,
-    ReadSession, ReadinessBehavior, RerankBatch, RerankScore as QueryRerankScore,
+    ReadSession, ReadinessBehavior, RelationLink, RerankBatch, RerankScore as QueryRerankScore,
     RetrievalResponse, SemanticCandidateIndex, SemanticChannel, SemanticResidualOperator,
     SemanticResolution, TagSeedProvenance, TagVectorCandidate, apply_rerank, assess,
     build_rerank_batch, build_response, execute_algorithm_channels, execute_exact, execute_lexical,
@@ -1363,12 +1363,55 @@ impl MemoriaRuntime {
         }
         let tag_seeds = resolve_explicit_tag_seeds(&mut tag_dictionary, &compiled.query.cue.tags)?;
         let tag_vectors = self.tag_vector_candidates(compiled, exact, &memberships)?;
+        let exact_candidates = execute_exact(compiled, exact).results;
+        let relation_links = exact
+            .records()
+            .iter()
+            .flat_map(|record| {
+                let local_relations = record
+                    .relations
+                    .iter()
+                    .filter(|relation| !relation.starts_with("memory-ref:"))
+                    .filter_map(|relation| {
+                        let candidate = exact_candidates
+                            .iter()
+                            .find(|candidate| candidate.target == record.target)?;
+                        let mut evidence = candidate.clone();
+                        evidence.relations.clear();
+                        Some(RelationLink::new(
+                            record.target,
+                            record.target,
+                            relation.clone(),
+                            evidence,
+                        ))
+                    });
+                let memory_relations = record.memory_reference_ids().filter_map(|memory_id| {
+                    let target_memory = memory_id.parse::<MemoryId>().ok()?;
+                    let target_record = exact
+                        .records()
+                        .iter()
+                        .find(|candidate| candidate.target.memory_id == target_memory)?;
+                    let mut evidence = exact_candidates
+                        .iter()
+                        .find(|candidate| candidate.target == target_record.target)?
+                        .clone();
+                    evidence.relations.clear();
+                    Some(RelationLink::new(
+                        record.target,
+                        target_record.target,
+                        "references",
+                        evidence,
+                    ))
+                });
+                local_relations.chain(memory_relations).collect::<Vec<_>>()
+            })
+            .collect();
         Ok(AlgorithmChannelInputs {
             tag_dictionary,
             tag_graph,
             tag_vectors,
             tag_seeds,
-            relation_links: Vec::new(),
+            relation_links,
         })
     }
 
@@ -2307,6 +2350,7 @@ impl MemoriaRuntime {
                     .with_entities(entities)
                     .with_tags(record.tags)
                     .with_node_ids(record.node_ids)
+                    .with_relations(record.relations)
                     .with_authority_generation(record.authority_generation)
                     .with_current(record.current)
                     .with_retired(record.retired))
@@ -2347,6 +2391,24 @@ impl MemoriaRuntime {
                     .nodes()
                     .filter_map(|node| node.id().map(ToString::to_string))
                     .collect();
+                let relations = memoria_derived::RelationBuilder::build_for(&ir, target)?
+                    .relations()
+                    .iter()
+                    .map(|relation| relation.kind.clone())
+                    .chain(ir.nodes().filter_map(|node| {
+                        if node.kind() != memoria_mdx::SemanticKind::MemoryRef {
+                            return None;
+                        }
+                        ["memoryId", "memory_id", "ref"]
+                            .into_iter()
+                            .find_map(|name| {
+                                node.attributes()
+                                    .iter()
+                                    .find(|(candidate, _)| candidate == name)
+                                    .map(|(_, value)| format!("memory-ref:{value}"))
+                            })
+                    }))
+                    .collect();
                 records.push(
                     ExactRecord::new(
                         *space_id,
@@ -2357,6 +2419,7 @@ impl MemoriaRuntime {
                     .with_entities(entities)
                     .with_tags(tags)
                     .with_node_ids(node_ids)
+                    .with_relations(relations)
                     .with_authority_generation(read.memory.generation)
                     .with_retired(read.memory.lifecycle == MemoryLifecycle::Retired),
                 );
