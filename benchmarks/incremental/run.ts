@@ -170,7 +170,14 @@ async function runRevisionCase(
       embedding: {
         async execute(work) {
           counts.embedding += 1;
-          return work.items.map(() => [1, 0, 0]);
+          return {
+            vectors: work.items.map((item) => ({
+              key: item.key,
+              values: Array.from({ length: work.dimensions }, (_, index) =>
+                index === 0 ? 1 : 0,
+              ),
+            })),
+          };
         },
       },
       enrichment: {

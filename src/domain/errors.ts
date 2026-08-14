@@ -14,6 +14,7 @@ export type MemoriaErrorCode =
   | "PROVIDER_UNAVAILABLE"
   | "STORE_LOCKED"
   | "STORE_CORRUPT"
+  | "CORRUPTION"
   | "IDEMPOTENCY_CONFLICT"
   | "PURGE_CONFLICT"
   | "RESOURCE_LIMIT"
@@ -44,6 +45,7 @@ const knownCodes: readonly MemoriaErrorCode[] = [
   "PROVIDER_UNAVAILABLE",
   "STORE_LOCKED",
   "STORE_CORRUPT",
+  "CORRUPTION",
   "IDEMPOTENCY_CONFLICT",
   "PURGE_CONFLICT",
   "RESOURCE_LIMIT",

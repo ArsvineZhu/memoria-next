@@ -11,6 +11,10 @@ export declare function authorityMutate(store: NativeStore, request: JsCreateMem
 
 export declare function authorityRevise(store: NativeStore, request: JsReviseMemoryRequest): JsMemoryMutation
 
+export declare function backupCreate(store: NativeStore, outputPath: string | undefined | null, includeAdaptive: boolean): JsBackupResult
+
+export declare function backupRestore(backupPath: string, targetPath: string): JsBackupResult
+
 export declare function cancelOperation(store: NativeStore, operationId: string): void
 
 export declare function closeStore(store: NativeStore): void
@@ -18,6 +22,18 @@ export declare function closeStore(store: NativeStore): void
 export declare function exportMemories(store: NativeStore, scope: Array<string>): Array<JsPortableMemory>
 
 export declare function feedbackSubmit(store: NativeStore, request: JsFeedbackSubmission): JsFeedbackCommit
+
+export declare function importPortable(store: NativeStore, request: JsPortableImportRequest): JsPortableImportResult
+
+export interface JsBackupResult {
+  path: string
+  storeId: string
+  authorityGeneration: string
+  includeAdaptive: boolean
+  fileCount: number
+  sourceObjectCount: number
+  manifestHash: string
+}
 
 export interface JsCreateMemoryRequest {
   spaceId: string
@@ -75,6 +91,25 @@ export interface JsMemoryMutation {
   spaceId: string
   revisionId: string
   authorityGeneration: string
+}
+
+export interface JsPortableImportMapping {
+  sourceId: string
+  targetId: string
+}
+
+export interface JsPortableImportRequest {
+  targetSpaceKey: string
+  idempotencyKey: string
+  requestFingerprint: string
+  originStoreId?: string
+  memories: Array<JsPortableMemory>
+}
+
+export interface JsPortableImportResult {
+  targetSpaceId: string
+  mappings: Array<JsPortableImportMapping>
+  unresolvedExternalReferences: Array<string>
 }
 
 export interface JsPortableMemory {

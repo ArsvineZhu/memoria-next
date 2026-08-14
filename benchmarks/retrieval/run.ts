@@ -573,6 +573,18 @@ function compareReranked(left: Candidate, right: Candidate): number {
   );
 }
 
+function percentile(values: number[], quantile: number): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  if (sorted.length === 0) {
+    return 0;
+  }
+  const index = Math.min(
+    sorted.length - 1,
+    Math.ceil(sorted.length * quantile) - 1,
+  );
+  return Number(sorted[index].toFixed(3));
+}
+
 function mean(values: number[]): number {
   return values.length === 0
     ? 0

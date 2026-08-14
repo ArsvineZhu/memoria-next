@@ -59,7 +59,7 @@
     {
       "id": "relation",
       "description": "an explicit relation is added",
-      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n<Relation id=\"r\" from=\"#career\" to=\"#person\" kind=\"association\"/>\n",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n<Relation id=\"r\" from=\"#career\" to=\"#person\" kind=\"associated-with\"/>\n",
       "expected": {
         "embeddingCalls": 0,
         "contentEmbeddingReused": true
