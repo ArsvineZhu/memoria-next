@@ -6,11 +6,12 @@ import { test } from "node:test";
 
 import { createMemoria } from "../../src/engine/create-memoria.js";
 import { asSpaceId } from "../../src/domain/ids.js";
+import { loadNativeBinding } from "../../src/native/binding.js";
 import type {
   NativeBinding,
-  NativeProviderResult,
   NativeQueryRequest,
   NativeQueryResponse,
+  NativeQueryWorkResult,
 } from "../../src/native/protocol.js";
 import type { ProviderResult } from "../../src/providers/types.js";
 
@@ -23,8 +24,15 @@ const response: NativeQueryResponse = {
 };
 
 test("Memoria.query hides start/resume loop from caller", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-query-operation-"));
-  const observed: { result?: ProviderResult; resumed?: NativeProviderResult } = {};
+  const dataDir = await mkdtemp(
+    join(tmpdir(), "memoria-next-query-operation-"),
+  );
+  const observed: {
+    result?: ProviderResult;
+    resumed?: NativeQueryWorkResult;
+    resumedOperationId?: string;
+    providerPollCalls: number;
+  } = { providerPollCalls: 0 };
   const store = {
     close() {},
     status() {
@@ -75,26 +83,27 @@ test("Memoria.query hides start/resume loop from caller", async () => {
     },
     queryStart(_store: unknown, _request: NativeQueryRequest) {
       return {
-        type: "pending",
+        state: "pending",
         operationId: "QO_query_operation",
         work: {
-          type: "embedding",
+          type: "query-embedding",
           workId: "QW_query_operation",
           signature: "query-embedding-v1",
-          dimensions: 3,
-          items: [{ key: "query", text: "career" }],
+          input: { key: "query", text: "career" },
         },
       };
     },
     queryResume(
       _store: unknown,
-      _operationId: string,
-      result: NativeProviderResult,
+      operationId: string,
+      result: NativeQueryWorkResult,
     ) {
+      observed.resumedOperationId = operationId;
       observed.resumed = result;
-      return { type: "complete", response };
+      return { state: "complete", response };
     },
     providerPollWork() {
+      observed.providerPollCalls += 1;
       return null;
     },
     providerSubmitResult() {},
@@ -118,6 +127,7 @@ test("Memoria.query hides start/resume loop from caller", async () => {
       },
     },
   });
+  observed.providerPollCalls = 0;
 
   try {
     const result = await memoria.query({
@@ -130,9 +140,68 @@ test("Memoria.query hides start/resume loop from caller", async () => {
       accepted: true,
     };
     assert.deepEqual(result, response);
+    assert.equal(observed.resumedOperationId, "QO_query_operation");
+    assert.equal(observed.providerPollCalls, 0);
     assert.deepEqual(observed.resumed, observed.result);
   } finally {
     await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("real native query operation exposes query work and cancellation", async () => {
+  const dataDir = await mkdtemp(
+    join(tmpdir(), "memoria-next-native-query-op-"),
+  );
+  const binding = loadNativeBinding();
+  const store = binding.openStore(dataDir);
+
+  try {
+    const spaceId = binding.authorityCreateSpace(
+      store,
+      "query-operation-native",
+    );
+    binding.authorityMutate(store, {
+      spaceId,
+      documentKey: "career",
+      mdx: "# Career\nRust systems work",
+    });
+    const step = await binding.queryStart(store, {
+      scope: [spaceId],
+      cue: { text: "career" },
+      history: { mode: "current" },
+      consistency: {
+        authority: { mode: "latest" },
+        required: ["semantic"],
+        preferred: [],
+        onNotReady: "wait",
+        timeoutMs: 1000,
+      },
+      budget: {
+        maxResults: 10,
+        maxMatchesPerResult: 3,
+        maxEvidenceTokens: 1500,
+      },
+      quality: "balanced",
+    });
+
+    assert("state" in step);
+    if (step.state !== "pending") {
+      throw new Error("expected native query operation to be pending");
+    }
+    assert.equal(step.work.type, "query-embedding");
+    assert.equal(step.work.input.key, "query");
+    binding.cancelOperation(store, step.operationId);
+    assert.throws(
+      () =>
+        binding.queryResume(store, step.operationId, {
+          workId: step.work.workId,
+          accepted: true,
+        }),
+      /ABORTED/,
+    );
+  } finally {
+    binding.closeStore(store);
     await rm(dataDir, { recursive: true, force: true });
   }
 });

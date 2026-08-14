@@ -119,6 +119,11 @@ export interface JsQueryBudget {
   maxEvidenceTokens: number
 }
 
+export interface JsQueryCandidate {
+  handle: string
+  text: string
+}
+
 export interface JsQueryConsistency {
   authority: JsQueryAuthority
   required: Array<string>
@@ -180,14 +185,23 @@ export interface JsQueryResult {
 }
 
 export interface JsQueryStep {
-  type: string
+  state: string
   response?: JsQueryResponse
   operationId?: string
-  work?: JsProviderWork
+  work?: JsQueryWork
 }
 
 export interface JsQueryTemporal {
   validAt?: string
+}
+
+export interface JsQueryWork {
+  type: string
+  workId: string
+  signature: string
+  input?: JsProviderItem
+  query?: string
+  candidates: Array<JsQueryCandidate>
 }
 
 export interface JsRerankScore {

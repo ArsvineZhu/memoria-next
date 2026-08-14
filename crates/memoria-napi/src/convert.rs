@@ -464,10 +464,28 @@ pub struct JsQueryResponse {
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsQueryStep {
-    pub r#type: String,
+    pub state: String,
     pub response: Option<JsQueryResponse>,
     pub operation_id: Option<String>,
-    pub work: Option<JsProviderWork>,
+    pub work: Option<JsQueryWork>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsQueryWork {
+    pub r#type: String,
+    pub work_id: String,
+    pub signature: String,
+    pub input: Option<JsProviderItem>,
+    pub query: Option<String>,
+    pub candidates: Vec<JsQueryCandidate>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsQueryCandidate {
+    pub handle: String,
+    pub text: String,
 }
 
 #[napi(object)]
@@ -721,10 +739,37 @@ impl From<NeedWork> for JsProviderWork {
     }
 }
 
-fn query_work_to_js(work: QueryWork) -> JsProviderWork {
+fn query_work_to_js(work: QueryWork) -> JsQueryWork {
     match work {
-        QueryWork::Embedding(request) => JsProviderWork::from(NeedWork::Embeddings(request)),
-        QueryWork::Rerank(request) => JsProviderWork::from(NeedWork::Rerank(request)),
+        QueryWork::Embedding(request) => {
+            let item = request.items.into_iter().next();
+            JsQueryWork {
+                r#type: "query-embedding".to_owned(),
+                work_id: request.work_id,
+                signature: request.signature,
+                input: item.map(|item| JsProviderItem {
+                    key: item.key,
+                    text: item.text,
+                }),
+                query: None,
+                candidates: Vec::new(),
+            }
+        }
+        QueryWork::Rerank(request) => JsQueryWork {
+            r#type: "query-rerank".to_owned(),
+            work_id: request.work_id,
+            signature: request.signature,
+            input: None,
+            query: Some(request.query),
+            candidates: request
+                .candidates
+                .into_iter()
+                .map(|handle| JsQueryCandidate {
+                    handle,
+                    text: String::new(),
+                })
+                .collect(),
+        },
     }
 }
 
@@ -750,13 +795,13 @@ fn response_to_js(response: memoria_runtime::RetrievalResponse) -> Result<JsQuer
 pub fn query_step_to_js(step: QueryStep) -> Result<JsQueryStep> {
     match step {
         QueryStep::Complete(response) => Ok(JsQueryStep {
-            r#type: "complete".to_owned(),
+            state: "complete".to_owned(),
             response: Some(response_to_js(response)?),
             operation_id: None,
             work: None,
         }),
         QueryStep::Pending { operation_id, work } => Ok(JsQueryStep {
-            r#type: "pending".to_owned(),
+            state: "pending".to_owned(),
             response: None,
             operation_id: Some(operation_id),
             work: Some(query_work_to_js(work)),

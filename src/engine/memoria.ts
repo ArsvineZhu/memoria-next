@@ -4,9 +4,9 @@ import type {
   NativeBinding,
   NativeCreateMemoryRequest,
   NativeMemoryMutation,
-  NativeProviderResult,
   NativeQueryRequest,
   NativeQueryResponse,
+  NativeQueryWorkResult,
   NativePortableMemory,
   NativePurgePlan,
   NativeStatus,
@@ -158,7 +158,6 @@ export class Memoria {
     try {
       const normalized = normalizeQuery(query);
       this.assertNotAborted(options.signal);
-      const store = this.store();
       operationId = this.startOperation();
       const request: NativeQueryRequest = {
         scope: normalized.scope.spaces,
@@ -195,12 +194,17 @@ export class Memoria {
     request: NativeQueryRequest,
     signal: AbortSignal | undefined,
   ): Promise<NativeQueryResponse> {
-    let step = asQueryStep(await this.#binding.queryStart(this.store(), request));
-    while (step.type === "pending") {
+    let step = asQueryStep(
+      await this.#binding.queryStart(this.store(), request),
+    );
+    const providerSignal = signal
+      ? AbortSignal.any([signal, this.#providerAbort.signal])
+      : this.#providerAbort.signal;
+    while (step.state === "pending") {
       this.#operations.set(operationId, step.operationId);
       this.assertNotAborted(signal);
       const work = decodeNeedWork(step.work);
-      let result: NativeProviderResult;
+      let result: NativeQueryWorkResult;
       try {
         if (!this.#providerHost) {
           throw new MemoriaError(
@@ -210,7 +214,7 @@ export class Memoria {
         }
         const providerResult = await this.#providerHost.execute(
           work,
-          signal ?? this.#providerAbort.signal,
+          providerSignal,
         );
         result = {
           workId: providerResult.workId,
@@ -223,12 +227,14 @@ export class Memoria {
             : { tags: providerResult.tags }),
         };
       } catch (error) {
-        if (signal?.aborted) {
+        if (providerSignal.aborted) {
           throw new MemoriaError("ABORTED", "The operation was aborted");
         }
         throw error;
       }
-      this.assertNotAborted(signal);
+      if (providerSignal.aborted) {
+        throw new MemoriaError("ABORTED", "The operation was aborted");
+      }
       step = asQueryStep(
         await this.#binding.queryResume(this.store(), step.operationId, result),
       );
@@ -433,12 +439,19 @@ export class Memoria {
           clearTimeout(timer);
         }
         options.signal?.removeEventListener("abort", onAbort);
+        this.#providerAbort.signal.removeEventListener("abort", onClose);
         callback();
       };
       const onAbort = () => {
         this.cancelOperationHandle(store, operationId);
         finish(() =>
           reject(new MemoriaError("ABORTED", "The operation was aborted")),
+        );
+      };
+      const onClose = () => {
+        this.cancelOperationHandle(store, operationId);
+        finish(() =>
+          reject(new MemoriaError("STORE_CLOSED", "The store was closed")),
         );
       };
       if (options.signal) {
@@ -448,6 +461,13 @@ export class Memoria {
         }
         options.signal.addEventListener("abort", onAbort, { once: true });
       }
+      if (this.#providerAbort.signal.aborted) {
+        onClose();
+        return;
+      }
+      this.#providerAbort.signal.addEventListener("abort", onClose, {
+        once: true,
+      });
       if (options.timeoutMs !== undefined) {
         timer = setTimeout(() => {
           this.cancelOperationHandle(store, operationId);

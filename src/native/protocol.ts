@@ -108,6 +108,8 @@ export interface NativeProviderResult {
   tags?: string[];
 }
 
+export type NativeQueryWorkResult = NativeProviderResult;
+
 export interface NativeFeedbackSubmission {
   retrievalId: string;
   idempotencyKey: string;
@@ -169,11 +171,24 @@ export interface NativeProviderWork {
   projection?: NativeEnrichmentProjection;
 }
 
-export type NativeQueryWork = NativeProviderWork | NeedWork;
+export type NativeQueryWork =
+  | {
+      type: "query-embedding";
+      workId: string;
+      signature: string;
+      input: { key: string; text: string };
+    }
+  | {
+      type: "query-rerank";
+      workId: string;
+      signature: string;
+      query: string;
+      candidates: Array<{ handle: string; text: string }>;
+    };
 
 export type NativeQueryStep =
-  | { type: "complete"; response: NativeQueryResponse }
-  | { type: "pending"; operationId: string; work: NativeQueryWork };
+  | { state: "complete"; response: NativeQueryResponse }
+  | { state: "pending"; operationId: string; work: NativeQueryWork };
 
 export interface NativeStoreHandle {
   close(): void;
@@ -196,7 +211,7 @@ export interface NativeBinding {
   queryResume(
     store: NativeStoreHandle,
     operationId: string,
-    result: NativeProviderResult,
+    result: NativeQueryWorkResult,
   ): NativeQueryResponse | NativeQueryStep | Promise<NativeQueryResponse | NativeQueryStep>;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
   providerSubmitResult(store: NativeStoreHandle, result: NativeProviderResult): void;
@@ -231,47 +246,64 @@ export type NeedWork =
       projection: NativeEnrichmentProjection;
     };
 
-export function toNeedWork(work: NativeQueryWork): NeedWork {
-  if ("type" in work) {
-    return work;
+export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork {
+  if ("workType" in work) {
+    switch (work.workType) {
+      case "embedding":
+        return {
+          type: "embedding",
+          workId: work.workId,
+          signature: work.signature,
+          dimensions: work.dimensions,
+          items: work.items,
+        };
+      case "rerank":
+        return {
+          type: "rerank",
+          workId: work.workId,
+          signature: work.signature,
+          query: work.query ?? "",
+          candidates: work.candidates,
+        };
+      case "enrichment":
+        if (!work.projection) {
+          throw new Error("Enrichment provider work is missing its projection");
+        }
+        return {
+          type: "enrichment",
+          workId: work.workId,
+          signature: work.signature,
+          projection: work.projection,
+        };
+      default:
+        throw new Error(`Unsupported native provider work type: ${work.workType}`);
+    }
   }
-  switch (work.workType) {
-    case "embedding":
+  switch (work.type) {
+    case "query-embedding":
       return {
         type: "embedding",
         workId: work.workId,
         signature: work.signature,
-        dimensions: work.dimensions,
-        items: work.items,
+        dimensions: 3,
+        items: [work.input],
       };
-    case "rerank":
+    case "query-rerank":
       return {
         type: "rerank",
         workId: work.workId,
         signature: work.signature,
-        query: work.query ?? "",
-        candidates: work.candidates,
+        query: work.query,
+        candidates: work.candidates.map((candidate) => candidate.handle),
       };
-    case "enrichment":
-      if (!work.projection) {
-        throw new Error("Enrichment provider work is missing its projection");
-      }
-      return {
-        type: "enrichment",
-        workId: work.workId,
-        signature: work.signature,
-        projection: work.projection,
-      };
-    default:
-      throw new Error(`Unsupported native provider work type: ${work.workType}`);
   }
 }
 
 export function asQueryStep(
   result: NativeQueryResponse | NativeQueryStep,
 ): NativeQueryStep {
-  if ("type" in result && (result.type === "complete" || result.type === "pending")) {
+  if ("state" in result && (result.state === "complete" || result.state === "pending")) {
     return result;
   }
-  return { type: "complete", response: result };
+  return { state: "complete", response: result };
 }

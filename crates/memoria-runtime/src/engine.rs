@@ -106,12 +106,13 @@ impl RuntimeError {
             Self::Mdx(_) | Self::Utf8(_) => "INVALID_MDX",
             Self::Query(_) | Self::Consolidation(_) => "QUERY_ERROR",
             Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
-            Self::UnexpectedQueryWork { .. }
-            | Self::QueryOperationNotFound { .. }
-            | Self::QueryOperationCancelled { .. }
-            | Self::QueryOperationExpired { .. }
-            | Self::QueryProviderRejected { .. }
-            | Self::QueryOperationPending { .. } => "QUERY_ERROR",
+            Self::UnexpectedQueryWork { .. } | Self::QueryProviderRejected { .. } => {
+                "PROVIDER_UNAVAILABLE"
+            }
+            Self::QueryOperationNotFound { .. } => "SNAPSHOT_UNAVAILABLE",
+            Self::QueryOperationCancelled { .. } => "ABORTED",
+            Self::QueryOperationExpired { .. } => "CONTINUATION_EXPIRED",
+            Self::QueryOperationPending { .. } => "QUERY_ERROR",
             Self::Adaptive(_) => "ADAPTIVE_ERROR",
             Self::ProviderEgressDenied { .. } => "CAPABILITY_NOT_READY",
             Self::PurgeConflict { .. } => "PURGE_CONFLICT",
@@ -441,9 +442,23 @@ impl MemoriaRuntime {
         };
 
         let semantic_ready = compiled.execution.used("semantic");
-        if requested_semantic && (semantic_required || semantic_ready) {
-            let work = query_work(&query);
-            let operation_id = self.query_operations.insert(compiled, work.clone());
+        let semantic_pending = requested_semantic && (semantic_required || semantic_ready);
+        let rerank_candidates = if compiled.execution.used("reranking") {
+            query_rerank_candidates(&query)
+        } else {
+            Vec::new()
+        };
+        let work = if semantic_pending {
+            Some(query_embedding_work(&query))
+        } else if !rerank_candidates.is_empty() {
+            Some(query_rerank_work(&query, rerank_candidates.clone()))
+        } else {
+            None
+        };
+        if let Some(work) = work {
+            let operation_id =
+                self.query_operations
+                    .insert(compiled, work.clone(), rerank_candidates);
             return Ok(QueryStep::Pending { operation_id, work });
         }
 
@@ -490,6 +505,21 @@ impl MemoriaRuntime {
                 work_id: operation.work.work_id().to_owned(),
             });
         }
+        if matches!(operation.work, QueryWork::Embedding(_))
+            && !operation.rerank_candidates.is_empty()
+        {
+            let mut operation = operation;
+            let candidates = std::mem::take(&mut operation.rerank_candidates);
+            let work = query_rerank_work(&operation.compiled.query, candidates);
+            operation.work = work.clone();
+            self.query_operations
+                .replace(operation_id.to_owned(), operation);
+            self.query_operations.cleanup(now);
+            return Ok(QueryStep::Pending {
+                operation_id: operation_id.to_owned(),
+                work,
+            });
+        }
         self.query_operations.cleanup(now);
         Ok(QueryStep::Complete(
             self.execute_compiled_query(operation.compiled)?,
@@ -521,17 +551,24 @@ impl MemoriaRuntime {
                 message: error.to_string(),
             }
         })?;
-        let manifest = self.derived.serving_manifest()?.unwrap_or_else(|| {
+        let serving_manifest = self.derived.serving_manifest()?;
+        let has_real_manifest = serving_manifest.is_some();
+        let manifest = serving_manifest.unwrap_or_else(|| {
             memoria_derived::DerivedManifest::empty_for_lexical_query(generation)
         });
-        QueryCompiler::new(generation, Some(manifest))
-            .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Enabled {
+        let semantic_artifact_ready = manifest.capability("semantic").is_ready();
+        let compiler = QueryCompiler::new(generation, Some(manifest)).with_adaptive_snapshot(
+            AdaptiveSnapshotIdentity::Enabled {
                 generation: self.adaptive_log.current_generation(),
                 model_version: "adaptive-v1".to_owned(),
-            })
-            .with_semantic_coverage(self.semantic_coverage)
-            .compile(query)
-            .map_err(RuntimeError::from)
+            },
+        );
+        let compiler = if has_real_manifest && semantic_artifact_ready {
+            compiler.with_semantic_coverage(self.semantic_coverage)
+        } else {
+            compiler
+        };
+        compiler.compile(query).map_err(RuntimeError::from)
     }
 
     fn execute_compiled_query(
@@ -629,6 +666,7 @@ impl MemoriaRuntime {
 
     #[must_use]
     pub fn status(&self) -> RuntimeStatus {
+        self.query_operations.cleanup(std::time::Instant::now());
         let authority_generation = self
             .authority
             .current_generation()
@@ -928,32 +966,37 @@ fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
         .count() as f32
 }
 
-fn query_work(query: &MemoryQuery) -> QueryWork {
-    let work_id = format!("QW_{}", MemoryId::new());
-    let text = query.cue.text.join("\n");
-    if query
-        .required_capabilities
+fn query_embedding_work(query: &MemoryQuery) -> QueryWork {
+    QueryWork::Embedding(EmbeddingBatchRequest {
+        work_id: format!("QW_{}", MemoryId::new()),
+        signature: "query-embedding-v1".to_owned(),
+        dimensions: 3,
+        items: vec![EmbeddingItem {
+            key: "query".to_owned(),
+            text: query.cue.text.join("\n"),
+        }],
+    })
+}
+
+fn query_rerank_work(query: &MemoryQuery, candidates: Vec<String>) -> QueryWork {
+    QueryWork::Rerank(RerankBatchRequest {
+        work_id: format!("QW_{}", MemoryId::new()),
+        signature: "query-rerank-v1".to_owned(),
+        query: query.cue.text.join("\n"),
+        candidates,
+    })
+}
+
+fn query_rerank_candidates(query: &MemoryQuery) -> Vec<String> {
+    let mut candidates = query
+        .cue
+        .memories
         .iter()
-        .chain(query.preferred_capabilities.iter())
-        .any(|capability| capability == "reranking")
-    {
-        QueryWork::Rerank(RerankBatchRequest {
-            work_id,
-            signature: "query-rerank-v1".to_owned(),
-            query: text,
-            candidates: Vec::new(),
-        })
-    } else {
-        QueryWork::Embedding(EmbeddingBatchRequest {
-            work_id,
-            signature: "query-embedding-v1".to_owned(),
-            dimensions: 3,
-            items: vec![EmbeddingItem {
-                key: "query".to_owned(),
-                text,
-            }],
-        })
-    }
+        .map(|memory| memory.memory_id.to_string())
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+    candidates
 }
 
 fn adaptive_signature(query: &MemoryQuery) -> QueryAdaptiveSignature {

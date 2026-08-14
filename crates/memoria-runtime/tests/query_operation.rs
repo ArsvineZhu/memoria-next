@@ -46,7 +46,7 @@ fn semantic_query_returns_pending_query_embedding_work() {
     // Query-time work is not placed on the background Derived provider queue.
     assert!(matches!(
         runtime.provider_poll_work().unwrap(),
-        Some(NeedWork::Embeddings(_))
+        Some(NeedWork::Embeddings(request)) if request.work_id.starts_with("EW_")
     ));
 }
 
@@ -71,7 +71,8 @@ fn wrong_work_id_cannot_resume_operation() {
             },
         )
         .unwrap_err();
-    assert!(matches!(error, RuntimeError::UnexpectedQueryWork { .. }));
+    assert!(matches!(&error, RuntimeError::UnexpectedQueryWork { .. }));
+    assert_eq!(error.code(), "PROVIDER_UNAVAILABLE");
 }
 
 #[test]
@@ -97,9 +98,10 @@ fn cancelled_operation_cannot_resume() {
         )
         .unwrap_err();
     assert!(matches!(
-        error,
+        &error,
         RuntimeError::QueryOperationCancelled { .. }
     ));
+    assert_eq!(error.code(), "ABORTED");
 }
 
 #[test]
@@ -124,5 +126,36 @@ fn expired_operation_returns_query_operation_expired() {
             },
         )
         .unwrap_err();
-    assert!(matches!(error, RuntimeError::QueryOperationExpired { .. }));
+    assert!(matches!(&error, RuntimeError::QueryOperationExpired { .. }));
+    assert_eq!(error.code(), "CONTINUATION_EXPIRED");
+}
+
+#[test]
+fn status_cleanup_removes_expired_operation() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    runtime
+        .create_memory(space, Some("career"), b"# Career\nRust systems work")
+        .unwrap();
+    let (operation_id, work_id) = pending_embedding(&mut runtime, space);
+    runtime.expire_query_operation_for_test(&operation_id);
+    let _ = runtime.status();
+
+    let error = runtime
+        .query_resume(
+            &operation_id,
+            ProviderWorkResult {
+                work_id,
+                accepted: true,
+                scores: Vec::new(),
+                tags: Vec::new(),
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        &error,
+        RuntimeError::QueryOperationNotFound { .. }
+    ));
+    assert_eq!(error.code(), "SNAPSHOT_UNAVAILABLE");
 }

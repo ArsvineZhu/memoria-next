@@ -159,3 +159,24 @@ test("query timeout is distinct from capability-not-ready", async () => {
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("closing the engine rejects an unresolved query", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-close-query-"));
+  const memoria = await createMemoria({
+    dataDir,
+    binding: fakeBinding(neverCompletes),
+  });
+  const promise = memoria.query({
+    scope: { spaces: [asSpaceId("SP_fake")] },
+  });
+
+  try {
+    await memoria.close();
+    await assert.rejects(
+      () => promise,
+      (error: unknown) => isMemoriaError(error, "STORE_CLOSED"),
+    );
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -33,10 +34,11 @@ pub enum QueryStep {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct QueryOperation {
     pub(crate) compiled: CompiledQuery,
     pub(crate) work: QueryWork,
+    pub(crate) rerank_candidates: Vec<String>,
     pub(crate) created_at: Instant,
     pub(crate) expires_at: Instant,
     pub(crate) cancelled: bool,
@@ -52,20 +54,27 @@ impl QueryOperation {
 
 #[derive(Debug, Default)]
 pub struct QueryOperationTable {
-    operations: BTreeMap<String, QueryOperation>,
+    operations: RefCell<BTreeMap<String, QueryOperation>>,
 }
 
 impl QueryOperationTable {
-    pub fn insert(&mut self, compiled: CompiledQuery, work: QueryWork) -> String {
+    pub fn insert(
+        &self,
+        compiled: CompiledQuery,
+        work: QueryWork,
+        rerank_candidates: Vec<String>,
+    ) -> String {
         let now = Instant::now();
+        let mut operations = self.operations.borrow_mut();
         loop {
             let operation_id = MemoryId::new().to_string();
-            if !self.operations.contains_key(&operation_id) {
-                self.operations.insert(
+            if !operations.contains_key(&operation_id) {
+                operations.insert(
                     operation_id.clone(),
                     QueryOperation {
                         compiled,
                         work,
+                        rerank_candidates,
                         created_at: now,
                         expires_at: now + QUERY_OPERATION_TTL,
                         cancelled: false,
@@ -76,16 +85,20 @@ impl QueryOperationTable {
         }
     }
 
-    pub fn get(&self, operation_id: &str) -> Option<&QueryOperation> {
-        self.operations.get(operation_id)
+    pub fn get(&self, operation_id: &str) -> Option<QueryOperation> {
+        self.operations.borrow().get(operation_id).cloned()
     }
 
-    pub fn remove(&mut self, operation_id: &str) -> Option<QueryOperation> {
-        self.operations.remove(operation_id)
+    pub fn remove(&self, operation_id: &str) -> Option<QueryOperation> {
+        self.operations.borrow_mut().remove(operation_id)
     }
 
-    pub fn cancel(&mut self, operation_id: &str) -> bool {
-        if let Some(operation) = self.operations.get_mut(operation_id) {
+    pub fn replace(&self, operation_id: String, operation: QueryOperation) {
+        self.operations.borrow_mut().insert(operation_id, operation);
+    }
+
+    pub fn cancel(&self, operation_id: &str) -> bool {
+        if let Some(operation) = self.operations.borrow_mut().get_mut(operation_id) {
             operation.cancelled = true;
             true
         } else {
@@ -93,13 +106,14 @@ impl QueryOperationTable {
         }
     }
 
-    pub fn cleanup(&mut self, now: Instant) {
+    pub fn cleanup(&self, now: Instant) {
         self.operations
+            .borrow_mut()
             .retain(|_, operation| !operation.is_expired(now));
     }
 
-    pub fn expire_for_test(&mut self, operation_id: &str) {
-        if let Some(operation) = self.operations.get_mut(operation_id) {
+    pub fn expire_for_test(&self, operation_id: &str) {
+        if let Some(operation) = self.operations.borrow_mut().get_mut(operation_id) {
             operation.expires_at = Instant::now() - Duration::from_secs(1);
         }
     }

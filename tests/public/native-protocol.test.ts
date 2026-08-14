@@ -5,11 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createMemoria } from "../../src/engine/create-memoria.js";
-import {
-  asMemoryId,
-  asRevisionId,
-  asSpaceId,
-} from "../../src/domain/ids.js";
+import { asMemoryId, asRevisionId, asSpaceId } from "../../src/domain/ids.js";
 import { createBindingHarness } from "../support/remediation.js";
 
 test("native request serializes the complete structured query", async () => {
@@ -99,7 +95,9 @@ test("native request serializes the complete structured query", async () => {
 });
 
 test("text-only native request does not infer semantic capability", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-native-text-query-"));
+  const dataDir = await mkdtemp(
+    join(tmpdir(), "memoria-next-native-text-query-"),
+  );
   const harness = createBindingHarness();
   const memoria = await createMemoria({ dataDir, binding: harness.binding });
 
@@ -134,7 +132,9 @@ test("text-only native request does not infer semantic capability", async () => 
 });
 
 test("default native loader carries structured cue into the real artifact", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-native-artifact-query-"));
+  const dataDir = await mkdtemp(
+    join(tmpdir(), "memoria-next-native-artifact-query-"),
+  );
   const memoria = await createMemoria({ dataDir });
 
   try {
