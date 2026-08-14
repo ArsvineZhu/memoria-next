@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use memoria_query::{CompiledQuery, MemoryQuery, RetrievalResponse};
+use memoria_query::{CompiledQuery, MemoryQuery, RerankBatch, RerankScore, RetrievalResponse};
 use memoria_types::MemoryId;
 
 use crate::provider::{EmbeddingBatchRequest, NeedWork, RerankBatchRequest};
@@ -75,7 +75,9 @@ pub struct QueryOperation {
     pub(crate) compiled: Option<CompiledQuery>,
     pub(crate) stage: QueryOperationStage,
     pub(crate) work: Option<QueryWork>,
-    pub(crate) rerank_candidates: Vec<String>,
+    pub(crate) pending_response: Option<RetrievalResponse>,
+    pub(crate) rerank_batch: Option<RerankBatch>,
+    pub(crate) rerank_scores: Option<Vec<RerankScore>>,
     pub(crate) query_vector: Option<Vec<f32>>,
     pub(crate) created_at: Instant,
     pub(crate) expires_at: Instant,
@@ -103,7 +105,8 @@ impl QueryOperationTable {
         query: MemoryQuery,
         compiled: CompiledQuery,
         work: QueryWork,
-        rerank_candidates: Vec<String>,
+        pending_response: Option<RetrievalResponse>,
+        rerank_batch: Option<RerankBatch>,
     ) -> String {
         let now = Instant::now();
         let mut operations = self.operations.borrow_mut();
@@ -122,7 +125,9 @@ impl QueryOperationTable {
                             QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
                         },
                         work: Some(work),
-                        rerank_candidates,
+                        pending_response,
+                        rerank_batch,
+                        rerank_scores: None,
                         query_vector: None,
                         created_at: now,
                         expires_at: now + QUERY_OPERATION_TTL,
@@ -151,7 +156,9 @@ impl QueryOperationTable {
                         compiled: None,
                         stage: QueryOperationStage::WaitingForCapabilities,
                         work: None,
-                        rerank_candidates: Vec::new(),
+                        pending_response: None,
+                        rerank_batch: None,
+                        rerank_scores: None,
                         query_vector: None,
                         created_at: now,
                         expires_at: now + QUERY_OPERATION_TTL,
@@ -170,7 +177,8 @@ impl QueryOperationTable {
         operation_id: &str,
         compiled: CompiledQuery,
         work: QueryWork,
-        rerank_candidates: Vec<String>,
+        pending_response: Option<RetrievalResponse>,
+        rerank_batch: Option<RerankBatch>,
     ) {
         let mut operations = self.operations.borrow_mut();
         let operation = operations
@@ -183,7 +191,9 @@ impl QueryOperationTable {
             QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
         };
         operation.work = Some(work);
-        operation.rerank_candidates = rerank_candidates;
+        operation.pending_response = pending_response;
+        operation.rerank_batch = rerank_batch;
+        operation.rerank_scores = None;
         operation.query_vector = None;
         operation.readiness_deadline = None;
         operation.deadline_unix_ms = None;
