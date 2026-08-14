@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createMemoria } from "../../src/engine/create-memoria.js";
+import { asSpaceId } from "../../src/domain/ids.js";
 import {
   createBindingHarness,
   deferredObservedEmbeddingProvider,
@@ -29,8 +30,8 @@ test("text-only query performs zero provider calls", async () => {
 
     const callsBeforeQuery = provider.callCount();
     const response = await memoria.query({
-      scope: [spaceId],
-      text: "career",
+      scope: { spaces: [asSpaceId(spaceId)] },
+      cue: { text: "career" },
     });
 
     assert.equal(provider.callCount(), callsBeforeQuery);
@@ -65,8 +66,8 @@ test("semantic preferred is explicit and may request provider work", async () =>
       "# Career\nRust systems work",
     );
     const degraded = await memoria.query({
-      scope: [spaceId],
-      text: "career",
+      scope: { spaces: [asSpaceId(spaceId)] },
+      cue: { text: "career" },
     });
     assert.equal(provider.callCount(), 1);
     assert.equal(degraded.degraded, true);
@@ -79,8 +80,8 @@ test("semantic preferred is explicit and may request provider work", async () =>
       );
     });
     const ready = await memoria.query({
-      scope: [spaceId],
-      text: "career",
+      scope: { spaces: [asSpaceId(spaceId)] },
+      cue: { text: "career" },
     });
     assert.equal(ready.degraded, false);
   } finally {
@@ -147,8 +148,8 @@ test("normal current query does not reparse every Authority source", async () =>
     });
 
     const response = await memoria.query({
-      scope: [spaceId],
-      text: "Rust",
+      scope: { spaces: [asSpaceId(spaceId)] },
+      cue: { text: "Rust" },
     });
     assert.equal(response.resultCount, 2);
   } finally {

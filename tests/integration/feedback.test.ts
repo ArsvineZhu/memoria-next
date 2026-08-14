@@ -18,8 +18,8 @@ test("feedback pins the revision returned by retrieval", async () => {
       mdx: "# Career\nRust systems work",
     });
     const query = await memoria.query({
-      scope: [space.id],
-      text: "career",
+      scope: { spaces: [space.id] },
+      cue: { text: "career" },
     });
     const original = query.results.find(
       (result) => result.memoryId === created.memoryId,

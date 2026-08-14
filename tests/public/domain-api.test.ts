@@ -53,3 +53,29 @@ test("restricted authoring serializer emits declarative MDX", () => {
     '# Career\n<Tag value="work"/>\nRust systems\n',
   );
 });
+
+test("query accepts structured scope and cue intent", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-query-api-"));
+  const memoria = await createMemoria({ dataDir });
+  try {
+    const space = await memoria.spaces.create({ key: "personal" });
+    const created = await memoria.documents.create({
+      space: { id: space.id },
+      documentKey: "career",
+      mdx: "# Career\nRust systems",
+    });
+
+    const response = await memoria.query({
+      scope: { spaces: [{ id: space.id }] },
+      cue: { text: "career" },
+    });
+
+    assert.equal(
+      response.results.some((result) => result.memoryId === created.memoryId),
+      true,
+    );
+  } finally {
+    await memoria.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

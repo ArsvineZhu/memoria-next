@@ -4,8 +4,14 @@ export {
 } from "./engine/create-memoria.js";
 export { type MemoriaConfig, type RuntimePolicy } from "./domain/config.js";
 export {
+  type EntityRef,
+  type MemoryQueryInput,
+  type MemoryReferenceInput,
+  type NormalizedMemoryQuery,
+  type QueryOptionalCapability,
+} from "./domain/query.js";
+export {
   Memoria,
-  type MemoriaQuery,
   type MemoriaStatus,
   type QueryOptions,
 } from "./engine/memoria.js";

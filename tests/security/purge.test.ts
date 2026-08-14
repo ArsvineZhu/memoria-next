@@ -23,8 +23,8 @@ test("logical purge makes the target inaccessible immediately", async () => {
 
     assert.equal(completed.state, "completed");
     const response = await memoria.query({
-      scope: [space.id],
-      text: "Purge",
+      scope: { spaces: [space.id] },
+      cue: { text: "Purge" },
     });
     assert.equal(response.results.length, 0);
   } finally {

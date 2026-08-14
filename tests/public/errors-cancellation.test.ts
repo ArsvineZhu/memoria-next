@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import { createMemoria } from "../../src/engine/create-memoria.js";
 import { isMemoriaError } from "../../src/domain/errors.js";
+import { asSpaceId } from "../../src/domain/ids.js";
 import type {
   NativeBinding,
   NativeCreateMemoryRequest,
@@ -121,7 +122,10 @@ test("cancelled query returns ABORTED and releases its snapshot lease", async ()
   });
   try {
     const controller = new AbortController();
-    const promise = memoria.query({ scope: [] }, { signal: controller.signal });
+    const promise = memoria.query(
+      { scope: { spaces: [asSpaceId("SP_fake")] } },
+      { signal: controller.signal },
+    );
     controller.abort();
 
     await assert.rejects(
@@ -143,7 +147,11 @@ test("query timeout is distinct from capability-not-ready", async () => {
   });
   try {
     await assert.rejects(
-      () => memoria.query({ scope: [] }, { timeoutMs: 1 }),
+      () =>
+        memoria.query(
+          { scope: { spaces: [asSpaceId("SP_fake")] } },
+          { timeoutMs: 1 },
+        ),
       (error: unknown) => isMemoriaError(error, "QUERY_TIMEOUT"),
     );
   } finally {

@@ -23,11 +23,7 @@ import {
 } from "../domain/feedback.js";
 import { createSpacesApi, type SpacesApi } from "../domain/spaces.js";
 import type { ResourceLimits } from "../domain/config.js";
-
-export interface MemoriaQuery {
-  scope: string[];
-  text?: string;
-}
+import { normalizeQuery, type MemoryQueryInput } from "../domain/query.js";
 
 export interface MemoriaStatus {
   authorityGeneration: string;
@@ -149,15 +145,18 @@ export class Memoria {
   }
 
   async query(
-    query: MemoriaQuery,
+    query: MemoryQueryInput,
     options: QueryOptions = {},
   ): Promise<NativeQueryResponse> {
+    const normalized = normalizeQuery(query);
     this.assertNotAborted(options.signal);
     const store = this.store();
     const operationId = this.startOperation();
     const request: NativeQueryRequest = {
-      scope: query.scope,
-      ...(query.text === undefined ? {} : { text: query.text }),
+      scope: normalized.scope.spaces,
+      ...(normalized.cue?.text === undefined
+        ? {}
+        : { text: normalized.cue.text }),
     };
     try {
       const response = await this.awaitOperation(
@@ -232,10 +231,13 @@ export class Memoria {
     return mutation;
   }
 
-  async openReadSession(query: MemoriaQuery): Promise<string> {
+  async openReadSession(query: MemoryQueryInput): Promise<string> {
+    const normalized = normalizeQuery(query);
     const sessionId = this.#binding.readSessionOpen(this.store(), {
-      scope: query.scope,
-      ...(query.text === undefined ? {} : { text: query.text }),
+      scope: normalized.scope.spaces,
+      ...(normalized.cue?.text === undefined
+        ? {}
+        : { text: normalized.cue.text }),
     });
     this.#readSessions.add(sessionId);
     return sessionId;
