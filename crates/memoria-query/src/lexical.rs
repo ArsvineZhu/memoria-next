@@ -101,7 +101,7 @@ fn matches_query(compiled: &CompiledQuery, candidate: &LexicalCandidate) -> bool
             .constraints
             .memories
             .iter()
-            .all(|memory| memory == &candidate.target.memory_id)
+            .all(|memory| memory.memory_id == candidate.target.memory_id)
         && query
             .constraints
             .entities

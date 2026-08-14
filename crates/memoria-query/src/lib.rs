@@ -50,8 +50,8 @@ pub use history::execute_history;
 pub use lexical::{LexicalCandidate, LexicalCandidateIndex, execute_lexical};
 pub use model::{
     AuthorityConsistency, EntityRef, EntityRefParseError, MemoryQuery, MemoryQueryBuilder,
-    QueryBudget, QueryConsistency, QueryConstraints, QueryCue, QueryQuality, QueryScope,
-    ReadinessBehavior,
+    QueryBudget, QueryConsistency, QueryConstraints, QueryCue, QueryHistory, QueryHistoryMode,
+    QueryLifecycle, QueryQuality, QueryQualityLevel, QueryScope, ReadinessBehavior,
 };
 pub use planner::{CapabilityExecution, CapabilityPlanner, CapabilityTarget};
 pub use relation_expand::{

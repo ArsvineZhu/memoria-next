@@ -840,6 +840,7 @@ name = "memoria-napi"
 version = "0.1.0"
 dependencies = [
  "memoria-adaptive",
+ "memoria-mdx",
  "memoria-query",
  "memoria-runtime",
  "memoria-types",

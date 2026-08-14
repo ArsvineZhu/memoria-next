@@ -38,6 +38,9 @@ pub enum QueryError {
     #[error("minimum relevance must be finite and between 0 and 1")]
     InvalidQuality,
 
+    #[error("invalid query value for {field}: {value}")]
+    InvalidQueryValue { field: String, value: String },
+
     #[error("Authority generation {actual} is below required generation {required}")]
     AuthorityNotReady {
         required: AuthorityGeneration,
@@ -97,7 +100,11 @@ pub(crate) fn validate_query(query: &MemoryQuery) -> Result<(), QueryError> {
     {
         return Err(QueryError::CapabilityOverlap);
     }
-    if query.budget.max_results == 0 || query.budget.max_candidates == 0 {
+    if query.budget.max_results == 0
+        || query.budget.max_candidates == 0
+        || query.budget.max_matches_per_result == 0
+        || query.budget.max_evidence_tokens == 0
+    {
         return Err(QueryError::InvalidBudget);
     }
     if query

@@ -42,7 +42,7 @@ fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
             .constraints
             .memories
             .iter()
-            .all(|memory| memory == &record.target.memory_id)
+            .all(|memory| memory.memory_id == record.target.memory_id)
         && query
             .constraints
             .entities

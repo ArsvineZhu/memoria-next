@@ -156,9 +156,17 @@ export class Memoria {
       operationId = this.startOperation();
       const request: NativeQueryRequest = {
         scope: normalized.scope.spaces,
-        ...(normalized.cue?.text === undefined
+        ...(normalized.cue === undefined ? {} : { cue: normalized.cue }),
+        ...(normalized.constraints === undefined
           ? {}
-          : { text: normalized.cue.text }),
+          : { constraints: normalized.constraints }),
+        ...(normalized.temporal === undefined
+          ? {}
+          : { temporal: normalized.temporal }),
+        history: normalized.history,
+        consistency: normalized.consistency,
+        budget: normalized.budget,
+        quality: normalized.quality,
       };
       const response = await this.awaitOperation(
         operationId,
@@ -239,9 +247,17 @@ export class Memoria {
       const normalized = normalizeQuery(query);
       const sessionId = this.#binding.readSessionOpen(this.store(), {
         scope: normalized.scope.spaces,
-        ...(normalized.cue?.text === undefined
+        ...(normalized.cue === undefined ? {} : { cue: normalized.cue }),
+        ...(normalized.constraints === undefined
           ? {}
-          : { text: normalized.cue.text }),
+          : { constraints: normalized.constraints }),
+        ...(normalized.temporal === undefined
+          ? {}
+          : { temporal: normalized.temporal }),
+        history: normalized.history,
+        consistency: normalized.consistency,
+        budget: normalized.budget,
+        quality: normalized.quality,
       });
       this.#readSessions.add(sessionId);
       return sessionId;

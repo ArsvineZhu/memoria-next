@@ -1,6 +1,61 @@
+export interface NativeQueryMemoryReference {
+  memoryId: string;
+  revisionId?: string;
+  nodeId?: string;
+}
+
+export interface NativeQueryCue {
+  text?: string;
+  tags?: string[];
+  entities?: string[];
+  memories?: NativeQueryMemoryReference[];
+}
+
+export interface NativeQueryConstraints {
+  tags?: string[];
+  entities?: string[];
+  memories?: NativeQueryMemoryReference[];
+  lifecycle?: "active" | "retired" | "any";
+}
+
+export interface NativeQueryTemporal {
+  validAt?: string;
+}
+
+export interface NativeQueryHistory {
+  mode: "current" | "all-revisions" | "changes";
+  fromAuthorityGeneration?: string;
+  toAuthorityGeneration?: string;
+}
+
+export type NativeQueryAuthorityConsistency =
+  | { mode: "latest" }
+  | { mode: "at-least"; generation: string }
+  | { mode: "exact"; generation: string };
+
+export interface NativeQueryConsistency {
+  authority: NativeQueryAuthorityConsistency;
+  required: string[];
+  preferred: string[];
+  onNotReady: "fail" | "wait";
+  timeoutMs: number;
+}
+
+export interface NativeQueryBudget {
+  maxResults: number;
+  maxMatchesPerResult: number;
+  maxEvidenceTokens: number;
+}
+
 export interface NativeQueryRequest {
   scope: string[];
-  text?: string;
+  cue?: NativeQueryCue;
+  constraints?: NativeQueryConstraints;
+  temporal?: NativeQueryTemporal;
+  history: NativeQueryHistory;
+  consistency: NativeQueryConsistency;
+  budget: NativeQueryBudget;
+  quality: "fast" | "balanced" | "thorough";
 }
 
 export interface NativeQueryResponse {
