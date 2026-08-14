@@ -53,12 +53,7 @@ export async function createRuntimeFixture(
   let memoria: Memoria | undefined;
 
   try {
-    memoria = await createMemoria({
-      dataDir,
-      providers: createDeterministicProviders(counts, {
-        generatedTagsByMemoryId,
-      }),
-    });
+    memoria = await createMemoria({ dataDir });
     const spaceIds = new Map<string, SpaceId>();
     const externalIdByMemoryId = new Map<string, string>();
     const documentByExternalId = new Map(
@@ -90,7 +85,7 @@ export async function createRuntimeFixture(
         document.tags.slice(0, 1).map((tag) => `generated-${tag}`),
       );
     }
-    await waitForCoverage(memoria, generation);
+    await waitForBaseCoverage(memoria, generation);
 
     const heads = await memoria.query({
       scope: { spaces: [...spaceIds.values()] },
@@ -138,8 +133,16 @@ export async function createRuntimeFixture(
         ),
       });
       generation = revised.authorityGeneration;
-      await waitForCoverage(memoria, generation);
+      await waitForBaseCoverage(memoria, generation);
     }
+
+    await memoria.close();
+    memoria = await createMemoria({
+      dataDir,
+      providers: createDeterministicProviders(counts, {
+        generatedTagsByMemoryId,
+      }),
+    });
     await waitForCoverage(memoria, generation);
 
     return {
@@ -209,6 +212,27 @@ export async function waitForCoverage(
       status.semanticCoverage +
       " semanticBuild=" +
       status.semanticBuildCoverage,
+  );
+}
+
+async function waitForBaseCoverage(
+  memoria: Memoria,
+  generation: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const target = BigInt(generation);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await memoria.status();
+    if (BigInt(status.baseCoverage) >= target) return;
+    await delay(2);
+  }
+  const status = await memoria.status();
+  throw new Error(
+    "runtime-backed retrieval fixture did not converge base coverage: target=" +
+      generation +
+      " base=" +
+      status.baseCoverage,
   );
 }
 

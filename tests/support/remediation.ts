@@ -34,7 +34,9 @@ export interface DeferredObservedEmbeddingProvider extends EmbeddingProvider {
 }
 
 export function deferredObservedEmbeddingProvider(
-  defaultValues: number[] = [0.25, 0.5, 0.25],
+  defaultValues: number[] = Array.from({ length: 64 }, (_, index) =>
+    index === 0 ? 0.25 : index === 1 ? 0.5 : index === 2 ? 0.25 : 0,
+  ),
 ): DeferredObservedEmbeddingProvider {
   const calls: DeferredObservedEmbeddingProvider["calls"] = [];
   const pending: PendingEmbeddingResolution[] = [];

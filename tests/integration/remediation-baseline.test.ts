@@ -97,13 +97,16 @@ test("semantic preferred is explicit and may request provider work", async () =>
 
 test("provider embedding result preserves vector values across native resume", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-remediation-a1-"));
+  const remediationVector = Array.from({ length: 64 }, (_, index) =>
+    index === 0 ? 0.25 : index === 1 ? 0.5 : index === 2 ? 0.25 : 0,
+  );
   const harness = createBindingHarness({
     providerWork: [
       {
         workId: "EW_remediation",
         workType: "embedding",
         signature: "embedding-v1",
-        dimensions: 3,
+        dimensions: 64,
         items: [{ key: "M_remediation", text: "career" }],
         candidates: [],
       },
@@ -117,7 +120,7 @@ test("provider embedding result preserves vector values across native resume", a
         trust: "external",
         async execute() {
           return {
-            vectors: [{ key: "M_remediation", values: [0.25, 0.5, 0.25] }],
+            vectors: [{ key: "M_remediation", values: [...remediationVector] }],
           };
         },
       },
@@ -128,7 +131,7 @@ test("provider embedding result preserves vector values across native resume", a
     const submission = harness.providerSubmissions[0];
     assert(submission);
     assert.deepEqual(Reflect.get(submission, "vectors"), [
-      { key: "M_remediation", values: [0.25, 0.5, 0.25] },
+      { key: "M_remediation", values: remediationVector },
     ]);
   } finally {
     await memoria.close();

@@ -49,6 +49,7 @@ test("retrieval benchmark calls the public Memoria runtime path", async () => {
       (line) =>
         JSON.parse(line) as {
           scenario: string;
+          operator: string;
           queryId: string;
           expectedChannels: string[];
         },
@@ -66,20 +67,33 @@ test("retrieval benchmark calls the public Memoria runtime path", async () => {
   )
     .split(/\r?\n/)
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { id: string; scenario: string });
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          id: string;
+          scenario: string;
+          text: string;
+          scope: string[];
+          tags?: string[];
+          entities?: string[];
+          state?: "current" | "historical";
+          profile: string;
+        },
+    );
   const preservationCase = preservationCases.find(
     (item) => item.scenario === "runtime-serving-path",
   );
   assert(preservationCase);
-  assert(
-    preservationQueries.some(
-      (item) => item.scenario === preservationCase.scenario,
-    ),
+  const preservationQuery = preservationQueries.find(
+    (item) => item.scenario === preservationCase.scenario,
   );
+  assert(preservationQuery);
+  assert.equal(preservationQuery.profile, preservationCase.operator);
 
   const evalScript =
     "import { runSingleBenchmarkQuery } from './benchmarks/retrieval/run.ts'; " +
-    "const result = await runSingleBenchmarkQuery({ fixture: 'tag-association-01' }); " +
+    `const query = ${JSON.stringify(preservationQuery)}; ` +
+    "const result = await runSingleBenchmarkQuery({ fixture: query.id, query }); " +
     "console.log(JSON.stringify(result));";
   const { stdout } = await execFileAsync(
     process.execPath,
@@ -88,9 +102,11 @@ test("retrieval benchmark calls the public Memoria runtime path", async () => {
   );
   const result = JSON.parse(stdout) as {
     source?: string;
+    queryId?: string;
     trace?: { channelsExecuted: string[] };
   };
   assert.equal(result.source, "runtime");
+  assert.equal(result.queryId, preservationQuery.id);
   assert(result.trace);
   assert(result.trace.channelsExecuted.length > 0);
   for (const expectedChannel of preservationCase.expectedChannels) {

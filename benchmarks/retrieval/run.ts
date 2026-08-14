@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { type QueryOptionalCapability, type SpaceId } from "../../src/index.js";
+import { evaluateAcceptance } from "./acceptance.js";
 import {
   calculateQueryMetrics,
   providerCounterDelta,
@@ -67,6 +68,16 @@ export interface AblationDefinition extends ProfileDefinition {
   fixture: string;
 }
 
+export interface RuntimeQueryOverride {
+  id: string;
+  text: string;
+  scope: string[];
+  tags?: string[];
+  entities?: string[];
+  state?: "current" | "historical";
+  profile: Profile;
+}
+
 interface ProfileConfig {
   version: number;
   queryProfiles: Record<Profile, ProfileDefinition>;
@@ -100,14 +111,23 @@ const queries = await readJsonLines<QueryCase>(
 
 export async function runSingleBenchmarkQuery(options: {
   fixture: string;
+  query?: RuntimeQueryOverride;
 }): Promise<{
   source: "runtime";
   queryId: string;
   trace: NonNullable<Awaited<ReturnType<Fixture["memoria"]["query"]>>["trace"]>;
   resultIds: string[];
 }> {
-  const query = resolveFixtureQuery(options.fixture);
-  const profile = PROFILE_DEFINITIONS[profileForQuery(query)];
+  const query =
+    options.query === undefined
+      ? resolveFixtureQuery(options.fixture)
+      : {
+          ...options.query,
+          case: "runtime-override",
+          relevant: {},
+        };
+  const profile =
+    PROFILE_DEFINITIONS[options.query?.profile ?? profileForQuery(query)];
   const fixture = await createRuntimeFixture(corpus);
   try {
     const response = await fixture.memoria.query(
@@ -202,6 +222,10 @@ async function main(): Promise<void> {
     );
     return;
   }
+  if (process.argv.includes("--evaluate-acceptance")) {
+    console.log(JSON.stringify(await evaluateRuntimeAcceptance(), null, 2));
+    return;
+  }
   let reports: BenchmarkProfileReport[];
   if (requested === "all") {
     reports = [];
@@ -222,6 +246,69 @@ async function main(): Promise<void> {
   );
 }
 
+async function evaluateRuntimeAcceptance() {
+  const baseline = await runProfile("balanced", queries.length, {
+    allQueries: true,
+  });
+  const candidates: Profile[] = [
+    "lexical+semantic",
+    "tag-basis-residual",
+    "activation",
+    "diffusion",
+    "rerank",
+  ];
+  const evaluated = [];
+  for (const profile of candidates) {
+    const candidate = await runProfile(profile, queries.length, {
+      allQueries: true,
+    });
+    const definition = PROFILE_DEFINITIONS[profile];
+    const requestedCapabilities = [
+      ...new Set([...definition.required, ...definition.preferred]),
+    ];
+    const targetBaseline = baseline.queries.find(
+      (query) => query.queryId === "q-current-career",
+    );
+    const targetCandidate = candidate.queries.find(
+      (query) => query.queryId === "q-current-career",
+    );
+    const targetRecallImprovement =
+      targetBaseline && targetCandidate
+        ? targetCandidate.recallAtK - targetBaseline.recallAtK
+        : undefined;
+    evaluated.push({
+      profile,
+      acceptance: evaluateAcceptance(
+        {
+          baseline: baseline.metrics,
+          candidate: candidate.metrics,
+          targetRecallImprovement,
+          requestedCapabilities,
+        },
+        PROFILE_ACCEPTANCE,
+      ),
+      observedChannels: candidate.observedChannels,
+      metrics: candidate.metrics,
+    });
+  }
+  const promotedProfiles = evaluated
+    .filter((candidate) => candidate.acceptance.accepted)
+    .map((candidate) => candidate.profile);
+  return {
+    runtimeBacked: true,
+    baseline: {
+      profile: baseline.profile,
+      metrics: baseline.metrics,
+    },
+    acceptanceLimits: PROFILE_ACCEPTANCE,
+    balancedDefaultProfiles: ["lexical", ...promotedProfiles],
+    thoroughOnlyProfiles: evaluated
+      .filter((candidate) => !candidate.acceptance.accepted)
+      .map((candidate) => candidate.profile),
+    candidates: evaluated,
+  };
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -239,6 +326,7 @@ if (
 export async function runProfile(
   profile: Profile,
   limit: number,
+  options: { allQueries?: boolean } = {},
 ): Promise<BenchmarkProfileReport> {
   const definition = PROFILE_DEFINITIONS[profile];
   const fixture = await createRuntimeFixture(corpus);
@@ -248,7 +336,11 @@ export async function runProfile(
     queryMatchesProfile(query, profile),
   );
   const selectedQueries = (
-    profileQueries.length > 0 ? profileQueries : queries
+    options.allQueries
+      ? queries
+      : profileQueries.length > 0
+        ? profileQueries
+        : queries
   ).slice(0, limit);
 
   try {
@@ -397,6 +489,8 @@ function queryMatchesProfile(query: QueryCase, profile: Profile): boolean {
     case "activation":
     case "diffusion":
       return query.id === "q-relation-support";
+    case "rerank":
+      return query.id === "q-entity-alex";
     default:
       return false;
   }
