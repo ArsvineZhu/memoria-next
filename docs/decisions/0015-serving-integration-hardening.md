@@ -64,9 +64,9 @@ substitute for end-to-end runtime metrics or hard-constraint acceptance tests.
 ## Evidence
 
 The integrated Phase 2 regression suite is
-`crates/memoria-runtime/tests/phase2_integration.rs`. Existing focused tests
-cover the individual semantic rebase, provenance, planner budget, provider
-trust, and trace contracts; the integrated suite exercises their serving
-boundary together. Phase 3 must add the real runtime benchmark fixture,
-opt-in diagnostics, metrics, ablations, acceptance rules, and final report.
-
+`crates/memoria-runtime/tests/phase2_integration.rs`. It exercises semantic
+publication, generated-versus-explicit Tag ranking, runtime Diffusion,
+provider work emission, and the serving trace. The same runtime-selected
+quality levels are checked against the locked planner budgets. Phase 3 must
+add the real runtime benchmark fixture, opt-in diagnostics, metrics, ablations,
+acceptance rules, and final report.
