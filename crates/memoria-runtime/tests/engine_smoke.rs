@@ -66,6 +66,73 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
 }
 
 #[test]
+fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    let memory_id = runtime
+        .create_memory(
+            space,
+            Some("career"),
+            br#"# Career
+<State id="s" validFrom="2025">Rust systems work</State>
+<Tag value="work"/>
+"#,
+        )
+        .unwrap();
+
+    let embedding = runtime.provider_poll_work().unwrap().unwrap();
+    let embedding_work_id = match embedding {
+        NeedWork::Embeddings(request) => request.work_id,
+        other => panic!("expected initial embedding work, got {other:?}"),
+    };
+    runtime
+        .provider_submit_result(ProviderWorkResult {
+            work_id: embedding_work_id,
+            accepted: true,
+            scores: Vec::new(),
+            tags: Vec::new(),
+        })
+        .unwrap();
+    while let Some(work) = runtime.provider_poll_work().unwrap() {
+        let work_id = match &work {
+            NeedWork::Embeddings(request) => request.work_id.clone(),
+            NeedWork::Rerank(request) => request.work_id.clone(),
+            NeedWork::Enrichment(request) => request.work_id.clone(),
+        };
+        runtime
+            .provider_submit_result(ProviderWorkResult {
+                work_id,
+                accepted: true,
+                scores: Vec::new(),
+                tags: vec!["derived".to_owned()],
+            })
+            .unwrap();
+    }
+
+    let query = MemoryQuery::builder()
+        .spaces(vec![space])
+        .text_cue("Rust")
+        .build()
+        .unwrap();
+    let revision_id = runtime.query(query).unwrap().results[0].revision_id;
+    let mutation = runtime
+        .revise_memory(
+            memory_id,
+            revision_id,
+            br#"# Career
+<State id="s" validFrom="2025" validTo="2026">Rust systems work</State>
+<Tag value="work"/>
+"#,
+        )
+        .unwrap();
+    let work = runtime.provider_poll_work().unwrap().unwrap();
+    assert!(matches!(work, NeedWork::Enrichment(_)));
+    assert_eq!(mutation.memory_id, memory_id);
+    assert_eq!(runtime.status().semantic_coverage, mutation.generation,);
+}
+
+#[test]
 fn denied_provider_egress_is_blocked_before_work_is_emitted() {
     let directory = tempdir().unwrap();
     let mut runtime = MemoriaRuntime::open_with_provider_egress_policy(

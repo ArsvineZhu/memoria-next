@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "baseline": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n",
+  "cases": [
+    {
+      "id": "format-comment-only",
+      "description": "newline and Markdown comment changes only",
+      "next": "# Career\r\n<State   id=\"career\" validFrom=\"2025\">Rust systems work</State>\r\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\r\n<Tag value=\"work\"/>\r\n<!-- formatting note -->\r\n",
+      "expected": {
+        "embeddingCalls": 0,
+        "contentEmbeddingReused": true
+      }
+    },
+    {
+      "id": "prose",
+      "description": "visible prose changes",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work on embedded runtimes</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n",
+      "expected": {
+        "embeddingCalls": 1,
+        "contentEmbeddingReused": false
+      }
+    },
+    {
+      "id": "entity-surface",
+      "description": "entity display surface changes while its reference stays stable",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alexander</Entity>\n<Tag value=\"work\"/>\n",
+      "expected": {
+        "embeddingCalls": 1,
+        "contentEmbeddingReused": false
+      }
+    },
+    {
+      "id": "entity-ref-only",
+      "description": "EntityRef changes while the visible surface stays stable",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex-2\">Alex</Entity>\n<Tag value=\"work\"/>\n",
+      "expected": {
+        "embeddingCalls": 0,
+        "contentEmbeddingReused": true
+      }
+    },
+    {
+      "id": "explicit-tag",
+      "description": "explicit Tag membership changes",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"career\"/>\n",
+      "expected": {
+        "embeddingCalls": 0,
+        "contentEmbeddingReused": true
+      }
+    },
+    {
+      "id": "valid-to",
+      "description": "only the temporal validTo boundary changes",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\" validTo=\"2026\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n",
+      "expected": {
+        "embeddingCalls": 0,
+        "contentEmbeddingReused": true
+      }
+    },
+    {
+      "id": "relation",
+      "description": "an explicit relation is added",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n<Relation id=\"r\" from=\"#career\" to=\"#person\" kind=\"association\"/>\n",
+      "expected": {
+        "embeddingCalls": 0,
+        "contentEmbeddingReused": true
+      }
+    },
+    {
+      "id": "source-locator",
+      "description": "a source provenance locator is added",
+      "next": "# Career\n<State id=\"career\" validFrom=\"2025\">Rust systems work</State>\n<Entity id=\"person\" ref=\"person:alex\">Alex</Entity>\n<Tag value=\"work\"/>\n<Source id=\"src\" ref=\"host-message:career-1\"/>\n",
+      "expected": {
+        "embeddingCalls": 0,
+        "contentEmbeddingReused": true
+      }
+    },
+    {
+      "id": "space-move",
+      "description": "Authority membership moves to another Space",
+      "operation": "move-space",
+      "expected": {
+        "embeddingCalls": 0,
+        "vectorPayloadReused": true
+      }
+    }
+  ]
+}

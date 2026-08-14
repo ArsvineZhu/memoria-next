@@ -6,9 +6,9 @@ use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, St
 use memoria_derived::{
     BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
     EntityObservationBuilder, ExplicitTagBuilder, GeneratedTagArtifact, LexicalDocument,
-    ProjectionInputHash, TagDictionary,
+    ProjectionInputHash, ProjectionKind, TagDictionary,
 };
-use memoria_mdx::compile_ir;
+use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
     AdaptiveSnapshotIdentity, ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex,
     MemoryQuery, QueryCompiler, ReadSession, RetrievalResponse, assess, build_response,
@@ -335,11 +335,17 @@ impl MemoriaRuntime {
                 maximum: error.maximum,
             }
         })?;
+        let previous_source = self.authority.read_memory(&self.cas, memory_id)?.source;
+        let requires_content_embedding = self.requires_content_embedding(&previous_source, source);
         let result = self
             .authority
             .revise_memory(&self.cas, memory_id, expected_head, source)?;
         let record = result.value();
-        self.enqueue_embedding_work(record.memory_id, result.generation(), source);
+        if requires_content_embedding {
+            self.enqueue_embedding_work(record.memory_id, result.generation(), source);
+        } else {
+            self.advance_semantic_coverage();
+        }
         self.rebuild_base_for_space(record.space_id, result.generation());
         Ok(MemoryMutation {
             memory_id: record.memory_id,
@@ -567,6 +573,25 @@ impl MemoriaRuntime {
                 self.last_error = Some(error.to_string());
             }
         }
+    }
+
+    fn requires_content_embedding(&self, previous_source: &[u8], source: &[u8]) -> bool {
+        let Ok(previous_source) = std::str::from_utf8(previous_source) else {
+            return true;
+        };
+        let Ok(previous_ir) = compile_ir(previous_source) else {
+            return true;
+        };
+        let Ok(source) = std::str::from_utf8(source) else {
+            return true;
+        };
+        let Ok(source_ir) = compile_ir(source) else {
+            return true;
+        };
+        let diff = SemanticDiff::between(&previous_ir, &source_ir);
+        self.compiler
+            .plan(&diff)
+            .rebuilds(ProjectionKind::LocalEmbedding)
     }
 
     fn enqueue_enrichment_work(
