@@ -179,6 +179,13 @@ export interface JsQueryResult {
   revisionId: string
 }
 
+export interface JsQueryStep {
+  type: string
+  response?: JsQueryResponse
+  operationId?: string
+  work?: JsProviderWork
+}
+
 export interface JsQueryTemporal {
   validAt?: string
 }
@@ -212,9 +219,9 @@ export declare function purgeExecute(store: NativeStore, planId: string): JsPurg
 
 export declare function purgePlan(store: NativeStore, memoryId: string): JsPurgePlan
 
-export declare function queryResume(store: NativeStore, operationId: string): JsQueryResponse
+export declare function queryResume(store: NativeStore, operationId: string, result: JsProviderResult): JsQueryStep
 
-export declare function queryStart(store: NativeStore, request: JsQueryRequest): JsQueryResponse
+export declare function queryStart(store: NativeStore, request: JsQueryRequest): JsQueryStep
 
 export declare function readSessionClose(store: NativeStore, sessionId: string): void
 

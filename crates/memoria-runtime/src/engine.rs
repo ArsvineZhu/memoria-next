@@ -11,8 +11,8 @@ use memoria_derived::{
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
     AdaptiveSnapshotIdentity, ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex,
-    MemoryQuery, QueryCompiler, ReadSession, RetrievalResponse, assess, build_response,
-    execute_exact, execute_lexical, rank_with_adaptive,
+    MemoryQuery, QueryCompiler, QueryError, ReadSession, ReadinessBehavior, RetrievalResponse,
+    assess, build_response, execute_exact, execute_lexical, rank_with_adaptive,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
@@ -20,8 +20,11 @@ use thiserror::Error;
 
 use crate::limits::{ResourceLimits, check_source_bytes};
 use crate::privacy::{ProviderCapability, ProviderEgressPolicy};
-use crate::provider::{NeedWork, ProviderWorkResult};
+use crate::provider::{
+    EmbeddingBatchRequest, EmbeddingItem, NeedWork, ProviderWorkResult, RerankBatchRequest,
+};
 use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
+use crate::query_operation::{QueryOperationTable, QueryStep, QueryWork};
 use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
 use crate::transfer::PortableMemory;
@@ -55,6 +58,24 @@ pub enum RuntimeError {
     #[error("provider result `{work_id}` was not expected")]
     UnexpectedProviderWork { work_id: String },
 
+    #[error("query provider result `{work_id}` was not expected")]
+    UnexpectedQueryWork { work_id: String },
+
+    #[error("query operation `{operation_id}` was not found")]
+    QueryOperationNotFound { operation_id: String },
+
+    #[error("query operation `{operation_id}` was cancelled")]
+    QueryOperationCancelled { operation_id: String },
+
+    #[error("query operation `{operation_id}` expired")]
+    QueryOperationExpired { operation_id: String },
+
+    #[error("query provider rejected work `{work_id}`")]
+    QueryProviderRejected { work_id: String },
+
+    #[error("query operation `{operation_id}` is pending provider work")]
+    QueryOperationPending { operation_id: String },
+
     #[error("adaptive error: {0}")]
     Adaptive(#[from] memoria_adaptive::AdaptiveError),
 
@@ -85,6 +106,12 @@ impl RuntimeError {
             Self::Mdx(_) | Self::Utf8(_) => "INVALID_MDX",
             Self::Query(_) | Self::Consolidation(_) => "QUERY_ERROR",
             Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
+            Self::UnexpectedQueryWork { .. }
+            | Self::QueryOperationNotFound { .. }
+            | Self::QueryOperationCancelled { .. }
+            | Self::QueryOperationExpired { .. }
+            | Self::QueryProviderRejected { .. }
+            | Self::QueryOperationPending { .. } => "QUERY_ERROR",
             Self::Adaptive(_) => "ADAPTIVE_ERROR",
             Self::ProviderEgressDenied { .. } => "CAPABILITY_NOT_READY",
             Self::PurgeConflict { .. } => "PURGE_CONFLICT",
@@ -106,6 +133,7 @@ pub struct MemoriaRuntime {
     pending_provider_work: VecDeque<PendingProviderWork>,
     inflight_provider_work: BTreeMap<String, InflightProviderWork>,
     pending_by_generation: BTreeMap<AuthorityGeneration, usize>,
+    query_operations: QueryOperationTable,
     semantic_coverage: AuthorityGeneration,
     tag_dictionary: TagDictionary,
     generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
@@ -165,6 +193,7 @@ impl MemoriaRuntime {
             pending_provider_work: VecDeque::new(),
             inflight_provider_work: BTreeMap::new(),
             pending_by_generation: BTreeMap::new(),
+            query_operations: QueryOperationTable::default(),
             semantic_coverage: AuthorityGeneration::initial(),
             tag_dictionary: TagDictionary::new(),
             generated_tag_artifacts: BTreeMap::new(),
@@ -181,6 +210,7 @@ impl MemoriaRuntime {
 
     pub fn close(&mut self) -> Result<(), RuntimeError> {
         self.closed = true;
+        self.query_operations = QueryOperationTable::default();
         Ok(())
     }
 
@@ -356,28 +386,161 @@ impl MemoriaRuntime {
     }
 
     pub fn query(&mut self, query: MemoryQuery) -> Result<RetrievalResponse, RuntimeError> {
+        match self.query_start(query)? {
+            QueryStep::Complete(response) => Ok(response),
+            QueryStep::Pending { operation_id, .. } => {
+                Err(RuntimeError::QueryOperationPending { operation_id })
+            }
+        }
+    }
+
+    pub fn query_start(&mut self, query: MemoryQuery) -> Result<QueryStep, RuntimeError> {
         self.ensure_open()?;
+        self.query_operations.cleanup(std::time::Instant::now());
         query.validate()?;
-        let query_signature = adaptive_signature(&query);
+
+        let semantic_required = query
+            .required_capabilities
+            .iter()
+            .any(|capability| capability == "semantic");
+        let requested_semantic = semantic_required
+            || query
+                .preferred_capabilities
+                .iter()
+                .any(|capability| capability == "semantic");
+        let compiled = match self.compile_query(query.clone()) {
+            Ok(compiled) => compiled,
+            Err(RuntimeError::Query(QueryError::CapabilityNotReady { capability, .. }))
+                if capability == "semantic"
+                    && semantic_required
+                    && matches!(query.consistency.readiness, ReadinessBehavior::Wait(_)) =>
+            {
+                let mut fallback = query.clone();
+                fallback
+                    .required_capabilities
+                    .retain(|capability| capability != "semantic");
+                fallback
+                    .preferred_capabilities
+                    .retain(|capability| capability != "semantic");
+                let mut compiled = self.compile_query(fallback)?;
+                compiled.execution.degraded = true;
+                if !compiled
+                    .execution
+                    .degraded_capabilities
+                    .iter()
+                    .any(|item| item == "semantic")
+                {
+                    compiled
+                        .execution
+                        .degraded_capabilities
+                        .push("semantic".to_owned());
+                }
+                compiled
+            }
+            Err(error) => return Err(error),
+        };
+
+        let semantic_ready = compiled.execution.used("semantic");
+        if requested_semantic && (semantic_required || semantic_ready) {
+            let work = query_work(&query);
+            let operation_id = self.query_operations.insert(compiled, work.clone());
+            return Ok(QueryStep::Pending { operation_id, work });
+        }
+
+        Ok(QueryStep::Complete(self.execute_compiled_query(compiled)?))
+    }
+
+    pub fn query_resume(
+        &mut self,
+        operation_id: &str,
+        result: ProviderWorkResult,
+    ) -> Result<QueryStep, RuntimeError> {
+        self.ensure_open()?;
+        let now = std::time::Instant::now();
+        let Some(operation) = self.query_operations.get(operation_id) else {
+            return Err(RuntimeError::QueryOperationNotFound {
+                operation_id: operation_id.to_owned(),
+            });
+        };
+        if operation.is_expired(now) {
+            self.query_operations.remove(operation_id);
+            self.query_operations.cleanup(now);
+            return Err(RuntimeError::QueryOperationExpired {
+                operation_id: operation_id.to_owned(),
+            });
+        }
+        if operation.cancelled {
+            self.query_operations.remove(operation_id);
+            return Err(RuntimeError::QueryOperationCancelled {
+                operation_id: operation_id.to_owned(),
+            });
+        }
+        if operation.work.work_id() != result.work_id {
+            return Err(RuntimeError::UnexpectedQueryWork {
+                work_id: result.work_id,
+            });
+        }
+        let operation = self.query_operations.remove(operation_id).ok_or_else(|| {
+            RuntimeError::QueryOperationNotFound {
+                operation_id: operation_id.to_owned(),
+            }
+        })?;
+        if !result.accepted {
+            return Err(RuntimeError::QueryProviderRejected {
+                work_id: operation.work.work_id().to_owned(),
+            });
+        }
+        self.query_operations.cleanup(now);
+        Ok(QueryStep::Complete(
+            self.execute_compiled_query(operation.compiled)?,
+        ))
+    }
+
+    pub fn cancel_operation(&mut self, operation_id: &str) -> Result<(), RuntimeError> {
+        self.ensure_open()?;
+        self.query_operations.cleanup(std::time::Instant::now());
+        if self.query_operations.cancel(operation_id) {
+            Ok(())
+        } else {
+            Err(RuntimeError::QueryOperationNotFound {
+                operation_id: operation_id.to_owned(),
+            })
+        }
+    }
+
+    pub fn expire_query_operation_for_test(&mut self, operation_id: &str) {
+        self.query_operations.expire_for_test(operation_id);
+    }
+
+    fn compile_query(
+        &self,
+        query: MemoryQuery,
+    ) -> Result<memoria_query::CompiledQuery, RuntimeError> {
         let generation = self.authority.current_generation().map_err(|error| {
             RuntimeError::AuthorityDatabase {
                 message: error.to_string(),
             }
         })?;
-        let records = self.records_for_query(&query, generation)?;
-        let manifest = self
-            .derived
-            .serving_manifest()?
-            .ok_or(RuntimeError::AuthorityDatabase {
-                message: "no Derived Manifest is serving".to_owned(),
-            })?;
-        let compiled = QueryCompiler::new(generation, Some(manifest))
+        let manifest = self.derived.serving_manifest()?.unwrap_or_else(|| {
+            memoria_derived::DerivedManifest::empty_for_lexical_query(generation)
+        });
+        QueryCompiler::new(generation, Some(manifest))
             .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Enabled {
                 generation: self.adaptive_log.current_generation(),
                 model_version: "adaptive-v1".to_owned(),
             })
             .with_semantic_coverage(self.semantic_coverage)
-            .compile(query)?;
+            .compile(query)
+            .map_err(RuntimeError::from)
+    }
+
+    fn execute_compiled_query(
+        &mut self,
+        compiled: memoria_query::CompiledQuery,
+    ) -> Result<RetrievalResponse, RuntimeError> {
+        let query_signature = adaptive_signature(&compiled.query);
+        let records =
+            self.records_for_query(&compiled.query, compiled.snapshot.authority_generation)?;
         let candidates = if compiled.query.cue.text.is_empty() {
             execute_exact(&compiled, &ExactIndex::new(records)).results
         } else {
@@ -763,6 +926,34 @@ fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
                 .contains(&cue.to_ascii_lowercase())
         })
         .count() as f32
+}
+
+fn query_work(query: &MemoryQuery) -> QueryWork {
+    let work_id = format!("QW_{}", MemoryId::new());
+    let text = query.cue.text.join("\n");
+    if query
+        .required_capabilities
+        .iter()
+        .chain(query.preferred_capabilities.iter())
+        .any(|capability| capability == "reranking")
+    {
+        QueryWork::Rerank(RerankBatchRequest {
+            work_id,
+            signature: "query-rerank-v1".to_owned(),
+            query: text,
+            candidates: Vec::new(),
+        })
+    } else {
+        QueryWork::Embedding(EmbeddingBatchRequest {
+            work_id,
+            signature: "query-embedding-v1".to_owned(),
+            dimensions: 3,
+            items: vec![EmbeddingItem {
+                key: "query".to_owned(),
+                text,
+            }],
+        })
+    }
 }
 
 fn adaptive_signature(query: &MemoryQuery) -> QueryAdaptiveSignature {

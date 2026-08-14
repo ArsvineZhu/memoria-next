@@ -13,8 +13,8 @@ use napi_derive::napi;
 
 use crate::convert::{
     JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission, JsMemoryMutation,
-    JsPortableMemory, JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest,
-    JsQueryResponse, JsQueryResult, JsReviseMemoryRequest, JsStatus, QueryRequest,
+    JsPortableMemory, JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest, JsQueryStep,
+    JsReviseMemoryRequest, JsStatus, QueryRequest, query_step_to_js,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -150,9 +150,9 @@ pub fn export_memories(store: &NativeStore, scope: Vec<String>) -> Result<Vec<Js
         .into_iter()
         .map(|space| space.parse::<SpaceId>().map_err(to_napi_error))
         .collect::<Result<Vec<_>>>()?;
-    let runtime = store.runtime()?;
+    let mut runtime = store.runtime()?;
     let runtime = runtime
-        .as_ref()
+        .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
     runtime
         .export_memories(&scope)
@@ -186,29 +186,17 @@ pub fn purge_execute(store: &NativeStore, plan_id: String) -> Result<JsPurgePlan
 }
 
 #[napi]
-pub fn query_start(store: &NativeStore, request: JsQueryRequest) -> Result<JsQueryResponse> {
+pub fn query_start(store: &NativeStore, request: JsQueryRequest) -> Result<JsQueryStep> {
     let core_request = QueryRequest::try_from(request)?;
     let query: MemoryQuery = core_request.into_core()?;
     let mut runtime = store.runtime()?;
     let runtime = runtime
         .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
-    let response = runtime.query(query).map_err(runtime_error)?;
-    let retrieval_id = response.retrieval_id.clone();
-    Ok(JsQueryResponse {
-        result_count: u32::try_from(response.results.len()).map_err(to_napi_error)?,
-        authority_generation: response.snapshot.authority_generation.to_string(),
-        degraded: response.execution.degraded,
-        retrieval_id: retrieval_id.clone(),
-        results: response
-            .results
-            .into_iter()
-            .enumerate()
-            .map(|(index, result)| {
-                JsQueryResult::from((memoria_query::result_id_for(&retrieval_id, index), result))
-            })
-            .collect(),
-    })
+    runtime
+        .query_start(query)
+        .map_err(runtime_error)
+        .and_then(query_step_to_js)
 }
 
 #[napi]
@@ -229,10 +217,46 @@ pub fn feedback_submit(
 }
 
 #[napi]
-pub fn query_resume(_store: &NativeStore, _operation_id: String) -> Result<JsQueryResponse> {
-    Err(napi::Error::from_reason(
-        "query operation is already complete or unavailable",
-    ))
+pub fn query_resume(
+    store: &NativeStore,
+    operation_id: String,
+    result: JsProviderResult,
+) -> Result<JsQueryStep> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .query_resume(
+            &operation_id,
+            ProviderWorkResult {
+                work_id: result.work_id,
+                accepted: result.accepted,
+                scores: result
+                    .scores
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|score| RerankScore {
+                        handle: score.handle,
+                        score: score.score as f32,
+                    })
+                    .collect(),
+                tags: result.tags.unwrap_or_default(),
+            },
+        )
+        .map_err(runtime_error)
+        .and_then(query_step_to_js)
+}
+
+#[napi]
+pub fn cancel_operation(store: &NativeStore, operation_id: String) -> Result<()> {
+    let mut runtime = store.runtime()?;
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
+    runtime
+        .cancel_operation(&operation_id)
+        .map_err(runtime_error)
 }
 
 #[napi]
@@ -303,9 +327,4 @@ pub fn provider_submit_result(store: &NativeStore, result: JsProviderResult) -> 
             tags: result.tags.unwrap_or_default(),
         })
         .map_err(runtime_error)
-}
-
-#[napi]
-pub fn cancel_operation(_store: &NativeStore, _operation_id: String) -> Result<()> {
-    Ok(())
 }

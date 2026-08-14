@@ -6,6 +6,7 @@ mod limits;
 mod privacy;
 mod provider;
 mod purge;
+mod query_operation;
 mod receipt;
 mod status;
 mod transfer;
@@ -22,6 +23,7 @@ pub use provider::{
     RerankBatchRequest, RerankScore,
 };
 pub use purge::{PurgeCoordinator, PurgePlan, PurgeState, PurgeTransitionError};
+pub use query_operation::{QueryStep, QueryWork};
 pub use receipt::{
     FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, ReceiptError, RetrievalReceipt,
 };

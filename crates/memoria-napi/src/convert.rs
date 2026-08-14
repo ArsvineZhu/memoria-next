@@ -8,7 +8,7 @@ use memoria_query::{
 };
 use memoria_runtime::{
     FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork, PortableMemory,
-    PurgePlan, PurgeState,
+    PurgePlan, PurgeState, QueryStep, QueryWork,
 };
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
@@ -463,6 +463,15 @@ pub struct JsQueryResponse {
 
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq)]
+pub struct JsQueryStep {
+    pub r#type: String,
+    pub response: Option<JsQueryResponse>,
+    pub operation_id: Option<String>,
+    pub work: Option<JsProviderWork>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct JsQueryResult {
     pub result_id: String,
     pub space_id: String,
@@ -709,6 +718,49 @@ impl From<NeedWork> for JsProviderWork {
                 }),
             },
         }
+    }
+}
+
+fn query_work_to_js(work: QueryWork) -> JsProviderWork {
+    match work {
+        QueryWork::Embedding(request) => JsProviderWork::from(NeedWork::Embeddings(request)),
+        QueryWork::Rerank(request) => JsProviderWork::from(NeedWork::Rerank(request)),
+    }
+}
+
+fn response_to_js(response: memoria_runtime::RetrievalResponse) -> Result<JsQueryResponse> {
+    let retrieval_id = response.retrieval_id.clone();
+    Ok(JsQueryResponse {
+        result_count: u32::try_from(response.results.len())
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?,
+        authority_generation: response.snapshot.authority_generation.to_string(),
+        degraded: response.execution.degraded,
+        retrieval_id: retrieval_id.clone(),
+        results: response
+            .results
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| {
+                JsQueryResult::from((memoria_query::result_id_for(&retrieval_id, index), result))
+            })
+            .collect(),
+    })
+}
+
+pub fn query_step_to_js(step: QueryStep) -> Result<JsQueryStep> {
+    match step {
+        QueryStep::Complete(response) => Ok(JsQueryStep {
+            r#type: "complete".to_owned(),
+            response: Some(response_to_js(response)?),
+            operation_id: None,
+            work: None,
+        }),
+        QueryStep::Pending { operation_id, work } => Ok(JsQueryStep {
+            r#type: "pending".to_owned(),
+            response: None,
+            operation_id: Some(operation_id),
+            work: Some(query_work_to_js(work)),
+        }),
     }
 }
 

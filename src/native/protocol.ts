@@ -169,6 +169,12 @@ export interface NativeProviderWork {
   projection?: NativeEnrichmentProjection;
 }
 
+export type NativeQueryWork = NativeProviderWork | NeedWork;
+
+export type NativeQueryStep =
+  | { type: "complete"; response: NativeQueryResponse }
+  | { type: "pending"; operationId: string; work: NativeQueryWork };
+
 export interface NativeStoreHandle {
   close(): void;
   status(): NativeStatus;
@@ -186,11 +192,12 @@ export interface NativeBinding {
   queryStart(
     store: NativeStoreHandle,
     request: NativeQueryRequest,
-  ): NativeQueryResponse | Promise<NativeQueryResponse>;
+  ): NativeQueryResponse | NativeQueryStep | Promise<NativeQueryResponse | NativeQueryStep>;
   queryResume(
     store: NativeStoreHandle,
     operationId: string,
-  ): NativeQueryResponse | Promise<NativeQueryResponse>;
+    result: NativeProviderResult,
+  ): NativeQueryResponse | NativeQueryStep | Promise<NativeQueryResponse | NativeQueryStep>;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
   providerSubmitResult(store: NativeStoreHandle, result: NativeProviderResult): void;
   feedbackSubmit(
@@ -224,7 +231,10 @@ export type NeedWork =
       projection: NativeEnrichmentProjection;
     };
 
-export function toNeedWork(work: NativeProviderWork): NeedWork {
+export function toNeedWork(work: NativeQueryWork): NeedWork {
+  if ("type" in work) {
+    return work;
+  }
   switch (work.workType) {
     case "embedding":
       return {
@@ -257,13 +267,11 @@ export function toNeedWork(work: NativeProviderWork): NeedWork {
   }
 }
 
-export type QueryStartResult =
-  | { type: "final"; response: NativeQueryResponse }
-  | { type: "need-work"; operationId: string; work: NeedWork };
-
-export function asQueryStartResult(result: NativeQueryResponse | QueryStartResult): QueryStartResult {
-  if ("type" in result && (result.type === "final" || result.type === "need-work")) {
+export function asQueryStep(
+  result: NativeQueryResponse | NativeQueryStep,
+): NativeQueryStep {
+  if ("type" in result && (result.type === "complete" || result.type === "pending")) {
     return result;
   }
-  return { type: "final", response: result };
+  return { type: "complete", response: result };
 }

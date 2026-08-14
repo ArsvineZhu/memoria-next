@@ -54,6 +54,16 @@ pub struct DerivedManifest {
 }
 
 impl DerivedManifest {
+    #[must_use]
+    pub fn empty_for_lexical_query(authority_generation: AuthorityGeneration) -> Self {
+        Self {
+            id: ManifestId::from_raw(0),
+            authority_generation,
+            artifacts: Vec::new(),
+            capabilities: Vec::new(),
+        }
+    }
+
     pub(crate) fn new(
         id: ManifestId,
         authority_generation: AuthorityGeneration,

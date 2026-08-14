@@ -4,6 +4,7 @@ import type {
   NativeBinding,
   NativeCreateMemoryRequest,
   NativeMemoryMutation,
+  NativeProviderResult,
   NativeQueryRequest,
   NativeQueryResponse,
   NativePortableMemory,
@@ -11,7 +12,10 @@ import type {
   NativeStatus,
   NativeStoreHandle,
 } from "../native/protocol.js";
-import { toNeedWork as decodeNeedWork } from "../native/protocol.js";
+import {
+  asQueryStep,
+  toNeedWork as decodeNeedWork,
+} from "../native/protocol.js";
 import { ProviderHost } from "../providers/host.js";
 import { createAdminApi, type AdminApi } from "../admin/index.js";
 import { createDocumentsApi, type DocumentsApi } from "../domain/documents.js";
@@ -75,7 +79,7 @@ export class Memoria {
   #providerAbort = new AbortController();
   #wakeProviderPump: (() => void) | undefined;
   #nextOperation = 0;
-  #operations = new Set<string>();
+  #operations = new Map<string, string | undefined>();
   #readSessions = new Set<string>();
   #closed = false;
   #resourceLimits: ResourceLimits;
@@ -110,8 +114,10 @@ export class Memoria {
     this.#wakeProviderPump?.();
     this.#wakeProviderPump = undefined;
     if (store) {
-      for (const operationId of this.#operations) {
-        this.cancelNativeOperation(store, operationId);
+      for (const nativeOperationId of this.#operations.values()) {
+        if (nativeOperationId !== undefined) {
+          this.cancelNativeOperation(store, nativeOperationId);
+        }
       }
       for (const sessionId of this.#readSessions) {
         try {
@@ -170,7 +176,7 @@ export class Memoria {
       };
       const response = await this.awaitOperation(
         operationId,
-        Promise.resolve().then(() => this.#binding.queryStart(store, request)),
+        this.runQuerySteps(operationId, request, options.signal),
         options,
       );
       this.assertNotAborted(options.signal);
@@ -182,6 +188,52 @@ export class Memoria {
         this.#operations.delete(operationId);
       }
     }
+  }
+
+  private async runQuerySteps(
+    operationId: string,
+    request: NativeQueryRequest,
+    signal: AbortSignal | undefined,
+  ): Promise<NativeQueryResponse> {
+    let step = asQueryStep(await this.#binding.queryStart(this.store(), request));
+    while (step.type === "pending") {
+      this.#operations.set(operationId, step.operationId);
+      this.assertNotAborted(signal);
+      const work = decodeNeedWork(step.work);
+      let result: NativeProviderResult;
+      try {
+        if (!this.#providerHost) {
+          throw new MemoriaError(
+            "CAPABILITY_NOT_READY",
+            "CAPABILITY_NOT_READY: query provider is not configured",
+          );
+        }
+        const providerResult = await this.#providerHost.execute(
+          work,
+          signal ?? this.#providerAbort.signal,
+        );
+        result = {
+          workId: providerResult.workId,
+          accepted: providerResult.accepted,
+          ...(providerResult.scores === undefined
+            ? {}
+            : { scores: providerResult.scores }),
+          ...(providerResult.tags === undefined
+            ? {}
+            : { tags: providerResult.tags }),
+        };
+      } catch (error) {
+        if (signal?.aborted) {
+          throw new MemoriaError("ABORTED", "The operation was aborted");
+        }
+        throw error;
+      }
+      this.assertNotAborted(signal);
+      step = asQueryStep(
+        await this.#binding.queryResume(this.store(), step.operationId, result),
+      );
+    }
+    return mapResponse(step.response);
   }
 
   async submitFeedback(input: FeedbackInput): Promise<NativeFeedbackCommit> {
@@ -329,7 +381,7 @@ export class Memoria {
   private startOperation(): string {
     this.#nextOperation += 1;
     const operationId = `OP_${this.#nextOperation}`;
-    this.#operations.add(operationId);
+    this.#operations.set(operationId, undefined);
     return operationId;
   }
 
@@ -342,6 +394,14 @@ export class Memoria {
     } catch {
       // Cancellation is best effort after a terminal close boundary.
     }
+  }
+
+  private cancelOperationHandle(
+    store: NativeStoreHandle,
+    operationHandle: string,
+  ): void {
+    const nativeOperationId = this.#operations.get(operationHandle);
+    this.cancelNativeOperation(store, nativeOperationId ?? operationHandle);
   }
 
   private awaitOperation<T>(
@@ -376,7 +436,7 @@ export class Memoria {
         callback();
       };
       const onAbort = () => {
-        this.cancelNativeOperation(store, operationId);
+        this.cancelOperationHandle(store, operationId);
         finish(() =>
           reject(new MemoriaError("ABORTED", "The operation was aborted")),
         );
@@ -390,7 +450,7 @@ export class Memoria {
       }
       if (options.timeoutMs !== undefined) {
         timer = setTimeout(() => {
-          this.cancelNativeOperation(store, operationId);
+          this.cancelOperationHandle(store, operationId);
           finish(() =>
             reject(new MemoriaError("QUERY_TIMEOUT", "The query timed out")),
           );
