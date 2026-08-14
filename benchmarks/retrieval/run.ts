@@ -36,6 +36,16 @@ export type Profile =
   | "balanced"
   | "thorough";
 
+export type Ablation =
+  | "lexical"
+  | "lexical+semantic"
+  | "tag-basis-residual"
+  | "activation"
+  | "diffusion"
+  | "relation"
+  | "rerank"
+  | "adaptive";
+
 interface QueryCase extends BenchmarkQueryLabel {
   case: string;
   text: string;
@@ -53,9 +63,14 @@ export interface ProfileDefinition {
   expectedChannels: string[];
 }
 
+export interface AblationDefinition extends ProfileDefinition {
+  fixture: string;
+}
+
 interface ProfileConfig {
   version: number;
   queryProfiles: Record<Profile, ProfileDefinition>;
+  ablations: Record<Ablation, AblationDefinition>;
   acceptance: {
     maxHardConstraintViolations: number;
     maxNdcgDrop: number;
@@ -71,6 +86,8 @@ const profileConfig = JSON.parse(
 
 export const PROFILES = Object.keys(profileConfig.queryProfiles) as Profile[];
 export const PROFILE_DEFINITIONS = profileConfig.queryProfiles;
+export const ABLATIONS = Object.keys(profileConfig.ablations) as Ablation[];
+export const ABLATION_DEFINITIONS = profileConfig.ablations;
 export const PROFILE_ACCEPTANCE = profileConfig.acceptance;
 
 const TOP_K = 10;
@@ -114,9 +131,77 @@ export async function runSingleBenchmarkQuery(options: {
   }
 }
 
+export async function runSingleAblation(ablation: Ablation): Promise<{
+  source: "runtime";
+  ablation: Ablation;
+  queryId: string;
+  trace: NonNullable<Awaited<ReturnType<Fixture["memoria"]["query"]>>["trace"]>;
+  resultIds: string[];
+  providerCalls: ReturnType<typeof providerCounterDelta>;
+}> {
+  const definition = ABLATION_DEFINITIONS[ablation];
+  const query = resolveFixtureQuery(definition.fixture);
+  const fixture = await createRuntimeFixture(corpus);
+  try {
+    const request = buildQuery(query, definition, fixture.spaceIds);
+    if (ablation === "adaptive") {
+      const seed = await fixture.memoria.query(request);
+      const result = seed.results[0];
+      if (!result) {
+        throw new Error("adaptive ablation requires a seed retrieval result");
+      }
+      await fixture.memoria.feedback.submit({
+        retrievalId: seed.retrievalId,
+        idempotencyKey: `benchmark-ablation-${ablation}`,
+        events: [{ resultId: result.resultId, outcome: "used" }],
+      });
+    }
+    const before = snapshotProviderCounts(fixture.counts);
+    const response = await fixture.memoria.query(request, {
+      diagnostics: { operatorTrace: true },
+    });
+    if (!response.trace) {
+      throw new Error(
+        "real native response did not include QueryOperatorTrace",
+      );
+    }
+    for (const expectedChannel of definition.expectedChannels) {
+      if (!response.trace.channelsExecuted.includes(expectedChannel)) {
+        throw new Error(
+          `${ablation}: runtime trace did not observe expected channel ${expectedChannel}`,
+        );
+      }
+    }
+    return {
+      source: "runtime",
+      ablation,
+      queryId: query.id,
+      trace: response.trace,
+      resultIds: response.results.map((result) => result.memoryId),
+      providerCalls: providerCounterDelta(before, fixture.counts),
+    };
+  } finally {
+    await fixture.memoria.close();
+    await rm(fixture.dataDir, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const requested = requestedProfile();
   const limit = requestedLimit();
+  const requestedAblation = requestedAblationName();
+  if (requestedAblation !== undefined) {
+    const ablations =
+      requestedAblation === "all" ? ABLATIONS : [requestedAblation];
+    const results = [];
+    for (const ablation of ablations) {
+      results.push(await runSingleAblation(ablation));
+    }
+    console.log(
+      JSON.stringify(results.length === 1 ? results[0] : results, null, 2),
+    );
+    return;
+  }
   let reports: BenchmarkProfileReport[];
   if (requested === "all") {
     reports = [];
@@ -324,6 +409,22 @@ function requestedProfile(): string {
     argument?.slice("--profile=".length) ??
     (index >= 0 ? process.argv[index + 1] : "") ??
     ""
+  );
+}
+
+function requestedAblationName(): Ablation | "all" | undefined {
+  const argument = process.argv.find((value) =>
+    value.startsWith("--ablation="),
+  );
+  const index = process.argv.indexOf("--ablation");
+  const value =
+    argument?.slice("--ablation=".length) ??
+    (index >= 0 ? process.argv[index + 1] : undefined);
+  if (value === undefined) return undefined;
+  if (value === "all") return "all";
+  if (ABLATIONS.includes(value as Ablation)) return value as Ablation;
+  throw new Error(
+    "usage: run.ts --ablation=" + [...ABLATIONS, "all"].join("|"),
   );
 }
 

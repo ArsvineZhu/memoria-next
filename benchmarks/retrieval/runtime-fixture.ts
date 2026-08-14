@@ -138,6 +138,7 @@ export async function createRuntimeFixture(
         ),
       });
       generation = revised.authorityGeneration;
+      await waitForCoverage(memoria, generation);
     }
     await waitForCoverage(memoria, generation);
 

@@ -69,6 +69,64 @@
       ]
     }
   },
+  "ablations": {
+    "lexical": {
+      "fixture": "q-current-career",
+      "quality": "balanced",
+      "required": [],
+      "preferred": [],
+      "expectedChannels": ["lexical"]
+    },
+    "lexical+semantic": {
+      "fixture": "q-current-career",
+      "quality": "balanced",
+      "required": [],
+      "preferred": ["semantic"],
+      "expectedChannels": ["lexical", "semantic-direct"]
+    },
+    "tag-basis-residual": {
+      "fixture": "q-current-career",
+      "quality": "balanced",
+      "required": ["semantic", "associative"],
+      "preferred": [],
+      "expectedChannels": ["semantic-direct", "semantic-residual"]
+    },
+    "activation": {
+      "fixture": "q-relation-support",
+      "quality": "balanced",
+      "required": ["semantic", "associative"],
+      "preferred": [],
+      "expectedChannels": ["activation"]
+    },
+    "diffusion": {
+      "fixture": "q-relation-support",
+      "quality": "thorough",
+      "required": ["semantic", "associative"],
+      "preferred": [],
+      "expectedChannels": ["diffusion"]
+    },
+    "relation": {
+      "fixture": "q-relation-support",
+      "quality": "balanced",
+      "required": ["associative"],
+      "preferred": [],
+      "expectedChannels": ["relation"]
+    },
+    "rerank": {
+      "fixture": "q-entity-alex",
+      "quality": "balanced",
+      "required": [],
+      "preferred": ["reranking"],
+      "expectedChannels": ["lexical"]
+    },
+    "adaptive": {
+      "fixture": "q-entity-alex",
+      "quality": "balanced",
+      "required": [],
+      "preferred": ["adaptive"],
+      "expectedChannels": ["adaptive"]
+    }
+  },
   "profiles": {
     "fast": {
       "tagBasisVectors": 12,
