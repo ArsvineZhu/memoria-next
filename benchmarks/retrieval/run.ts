@@ -1,13 +1,21 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { type QueryOptionalCapability, type SpaceId } from "../../src/index.js";
 import {
-  asSpaceId,
-  type QueryOptionalCapability,
-  type SpaceId,
-} from "../../src/index.js";
+  calculateQueryMetrics,
+  providerCounterDelta,
+  snapshotProviderCounts,
+  summarizeProfileMetrics,
+  type BenchmarkQueryLabel,
+  type QueryMetrics,
+} from "./metrics.js";
+import {
+  writeBenchmarkReports,
+  type BenchmarkProfileReport,
+} from "./report.js";
 import {
   createRuntimeFixture,
   directorySize,
@@ -16,7 +24,7 @@ import {
   type Fixture,
 } from "./runtime-fixture.js";
 
-type Profile =
+export type Profile =
   | "lexical"
   | "lexical+semantic"
   | "tag-association"
@@ -28,8 +36,7 @@ type Profile =
   | "balanced"
   | "thorough";
 
-interface QueryCase {
-  id: string;
+interface QueryCase extends BenchmarkQueryLabel {
   case: string;
   text: string;
   scope: string[];
@@ -37,130 +44,36 @@ interface QueryCase {
   entities?: string[];
   tags?: string[];
   relationKinds?: string[];
-  relevant: Record<string, number>;
 }
 
-interface ProfileDefinition {
+export interface ProfileDefinition {
   quality: "fast" | "balanced" | "thorough";
   required: QueryOptionalCapability[];
   preferred: QueryOptionalCapability[];
   expectedChannels: string[];
 }
 
-interface QueryMetrics {
-  queryId: string;
-  case: string;
-  top: string[];
-  recallAtK: number;
-  mrr: number;
-  ndcgAtK: number;
-  duplicateEvidence: number;
-  graphVisits: number;
-  providerCalls: number;
-  annSearches: number;
-  diffusionIterations: number;
-  rerankCalls: number;
-  rerankApplied: boolean;
-  basisRank?: number;
-  latencyMs: number;
-  hardConstraintViolations: number;
-  trace: {
-    channelsExecuted: string[];
-    candidateCounts: Array<{ channel: string; count: number }>;
-    activationEdgeVisits: number;
-    diffusionIterations: number;
-    relationExpansions: number;
-    rerankRequested: boolean;
-    rerankApplied: boolean;
-    capabilityDegraded: boolean;
-    authorityGeneration: string;
+interface ProfileConfig {
+  version: number;
+  queryProfiles: Record<Profile, ProfileDefinition>;
+  acceptance: {
+    maxHardConstraintViolations: number;
+    maxNdcgDrop: number;
+    minRecallImprovement: number;
+    maxP95LatencyIncreaseRatio: number;
+    maxUnrequestedProviderCalls: number;
   };
 }
 
-export const PROFILES: Profile[] = [
-  "lexical",
-  "lexical+semantic",
-  "tag-association",
-  "tag-basis-residual",
-  "activation",
-  "diffusion",
-  "rerank",
-  "fast",
-  "balanced",
-  "thorough",
-];
+const profileConfig = JSON.parse(
+  await readFile(new URL("./profiles.json", import.meta.url), "utf8"),
+) as ProfileConfig;
 
-export const PROFILE_DEFINITIONS: Record<Profile, ProfileDefinition> = {
-  lexical: {
-    quality: "balanced",
-    required: [],
-    preferred: [],
-    expectedChannels: ["lexical"],
-  },
-  "lexical+semantic": {
-    quality: "balanced",
-    required: ["semantic"],
-    preferred: [],
-    expectedChannels: ["lexical", "semantic-direct"],
-  },
-  "tag-association": {
-    quality: "balanced",
-    required: ["associative"],
-    preferred: [],
-    expectedChannels: ["tag-readout"],
-  },
-  "tag-basis-residual": {
-    quality: "balanced",
-    required: ["semantic", "associative"],
-    preferred: [],
-    expectedChannels: ["semantic-direct", "semantic-residual"],
-  },
-  activation: {
-    quality: "balanced",
-    required: ["associative"],
-    preferred: [],
-    expectedChannels: ["activation"],
-  },
-  diffusion: {
-    quality: "thorough",
-    required: ["associative"],
-    preferred: [],
-    expectedChannels: ["diffusion"],
-  },
-  rerank: {
-    quality: "balanced",
-    required: [],
-    preferred: ["reranking"],
-    expectedChannels: ["lexical"],
-  },
-  fast: {
-    quality: "fast",
-    required: [],
-    preferred: [],
-    expectedChannels: ["lexical"],
-  },
-  balanced: {
-    quality: "balanced",
-    required: [],
-    preferred: [],
-    expectedChannels: ["lexical"],
-  },
-  thorough: {
-    quality: "thorough",
-    required: ["semantic", "associative"],
-    preferred: ["reranking"],
-    expectedChannels: [
-      "lexical",
-      "semantic-direct",
-      "tag-readout",
-      "activation",
-      "diffusion",
-      "relation",
-    ],
-  },
-};
+export const PROFILES = Object.keys(profileConfig.queryProfiles) as Profile[];
+export const PROFILE_DEFINITIONS = profileConfig.queryProfiles;
+export const PROFILE_ACCEPTANCE = profileConfig.acceptance;
 
-const TOP_K = 5;
+const TOP_K = 10;
 const corpus = await readJsonLines<CorpusDocument>(
   new URL("./corpus.jsonl", import.meta.url),
 );
@@ -204,21 +117,24 @@ export async function runSingleBenchmarkQuery(options: {
 async function main(): Promise<void> {
   const requested = requestedProfile();
   const limit = requestedLimit();
+  let reports: BenchmarkProfileReport[];
   if (requested === "all") {
-    const results = [];
-    for (const profile of PROFILES) {
-      results.push(await runProfile(profile, limit));
-    }
-    console.log(JSON.stringify(results, null, 2));
+    reports = [];
+    for (const profile of PROFILES)
+      reports.push(await runProfile(profile, limit));
   } else if (PROFILES.includes(requested as Profile)) {
-    console.log(
-      JSON.stringify(await runProfile(requested as Profile, limit), null, 2),
-    );
+    reports = [await runProfile(requested as Profile, limit)];
   } else {
     throw new Error(
       "usage: run.ts --profile=" + [...PROFILES, "all"].join("|"),
     );
   }
+  await writeBenchmarkReports(reports, {
+    resultsDirectory: fileURLToPath(new URL("./results/", import.meta.url)),
+  });
+  console.log(
+    JSON.stringify(requested === "all" ? reports : reports[0], null, 2),
+  );
 }
 
 if (
@@ -235,8 +151,10 @@ if (
   }
 }
 
-async function runProfile(profile: Profile, limit: number) {
-  const started = performance.now();
+export async function runProfile(
+  profile: Profile,
+  limit: number,
+): Promise<BenchmarkProfileReport> {
   const definition = PROFILE_DEFINITIONS[profile];
   const fixture = await createRuntimeFixture(corpus);
   const queryMetrics: QueryMetrics[] = [];
@@ -251,7 +169,7 @@ async function runProfile(profile: Profile, limit: number) {
   try {
     for (const query of selectedQueries) {
       const queryStarted = performance.now();
-      const before = { ...fixture.counts };
+      const before = snapshotProviderCounts(fixture.counts);
       const response = await fixture.memoria.query(
         buildQuery(query, definition, fixture.spaceIds),
         { diagnostics: { operatorTrace: true } },
@@ -274,49 +192,17 @@ async function runProfile(profile: Profile, limit: number) {
           fixture.externalIdByMemoryId.get(result.memoryId) ?? result.memoryId,
         result,
       }));
-      const providerCalls =
-        fixture.counts.embedding -
-        before.embedding +
-        fixture.counts.rerank -
-        before.rerank +
-        fixture.counts.enrichment -
-        before.enrichment;
-      const rerankCalls = fixture.counts.rerank - before.rerank;
-      queryMetrics.push({
-        queryId: query.id,
-        case: query.case,
-        top: returned.slice(0, TOP_K).map((item) => item.id),
-        ...rankingMetrics(query, returned.slice(0, TOP_K)),
-        duplicateEvidence: trace.correlationSuppressedEvidence,
-        graphVisits: trace.activationEdgeVisits,
-        providerCalls,
-        annSearches: trace.channelsExecuted.filter((channel) =>
-          channel.startsWith("semantic-"),
-        ).length,
-        diffusionIterations: trace.diffusionIterations,
-        rerankCalls,
-        rerankApplied: trace.rerankApplied,
-        ...(trace.tagBasisRank === undefined
-          ? {}
-          : { basisRank: trace.tagBasisRank }),
-        latencyMs: Number((performance.now() - queryStarted).toFixed(3)),
-        hardConstraintViolations: countHardConstraintViolations(
+      queryMetrics.push(
+        calculateQueryMetrics({
           query,
           returned,
+          trace,
+          providerDelta: providerCounterDelta(before, fixture.counts),
+          latencyMs: performance.now() - queryStarted,
           fixture,
-        ),
-        trace: {
-          channelsExecuted: trace.channelsExecuted,
-          candidateCounts: trace.candidateCounts,
-          activationEdgeVisits: trace.activationEdgeVisits,
-          diffusionIterations: trace.diffusionIterations,
-          relationExpansions: trace.relationExpansions,
-          rerankRequested: trace.rerankRequested,
-          rerankApplied: trace.rerankApplied,
-          capabilityDegraded: trace.capabilityDegraded,
-          authorityGeneration: trace.authorityGeneration,
-        },
-      });
+          topK: TOP_K,
+        }),
+      );
     }
 
     for (const expectedChannel of definition.expectedChannels) {
@@ -335,10 +221,6 @@ async function runProfile(profile: Profile, limit: number) {
       throw new Error(profile + " profile completed without an applied rerank");
     }
 
-    const elapsedMs = Math.max(0.01, performance.now() - started);
-    const basisRanks = queryMetrics.flatMap((metric) =>
-      metric.basisRank === undefined ? [] : [metric.basisRank],
-    );
     return {
       runtimeBacked: true,
       runtimePath:
@@ -350,54 +232,10 @@ async function runProfile(profile: Profile, limit: number) {
       topK: TOP_K,
       observedChannels: [...observedChannels].sort(),
       metrics: {
-        recallAtK: mean(queryMetrics.map((metric) => metric.recallAtK)),
-        recallAt10: mean(queryMetrics.map((metric) => metric.recallAtK)),
-        mrr: mean(queryMetrics.map((metric) => metric.mrr)),
-        ndcgAtK: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
-        ndcgAt10: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
-        duplicateEvidence: queryMetrics.reduce(
-          (total, metric) => total + metric.duplicateEvidence,
-          0,
+        ...summarizeProfileMetrics(
+          queryMetrics,
+          await directorySize(fixture.dataDir),
         ),
-        duplicateEvidenceRate: mean(
-          queryMetrics.map((metric) => metric.duplicateEvidence),
-        ),
-        latencyMs: Number(elapsedMs.toFixed(3)),
-        p50LatencyMs: percentile(
-          queryMetrics.map((metric) => metric.latencyMs),
-          0.5,
-        ),
-        p95LatencyMs: percentile(
-          queryMetrics.map((metric) => metric.latencyMs),
-          0.95,
-        ),
-        providerCalls: queryMetrics.reduce(
-          (total, metric) => total + metric.providerCalls,
-          0,
-        ),
-        annSearches: queryMetrics.reduce(
-          (total, metric) => total + metric.annSearches,
-          0,
-        ),
-        graphVisits: queryMetrics.reduce(
-          (total, metric) => total + metric.graphVisits,
-          0,
-        ),
-        diffusionIterations: queryMetrics.reduce(
-          (total, metric) => total + metric.diffusionIterations,
-          0,
-        ),
-        rerankCalls: queryMetrics.reduce(
-          (total, metric) => total + metric.rerankCalls,
-          0,
-        ),
-        hardConstraintViolationCount: queryMetrics.reduce(
-          (total, metric) => total + metric.hardConstraintViolations,
-          0,
-        ),
-        storeBytes: await directorySize(fixture.dataDir),
-        basisRankMean: mean(basisRanks),
-        basisSkippedQueries: selectedQueries.length - basisRanks.length,
       },
       queries: queryMetrics,
     };
@@ -479,54 +317,6 @@ function queryMatchesProfile(query: QueryCase, profile: Profile): boolean {
   }
 }
 
-function rankingMetrics(
-  query: QueryCase,
-  returned: Array<{ id: string }>,
-): { recallAtK: number; mrr: number; ndcgAtK: number } {
-  const relevant = new Set(Object.keys(query.relevant));
-  const hits = returned.filter((candidate) => relevant.has(candidate.id));
-  const firstHit = returned.findIndex((candidate) =>
-    relevant.has(candidate.id),
-  );
-  const dcg = returned.reduce((total, candidate, index) => {
-    const grade = query.relevant[candidate.id] ?? 0;
-    return total + (2 ** grade - 1) / Math.log2(index + 2);
-  }, 0);
-  const ideal = Object.values(query.relevant)
-    .sort((left, right) => right - left)
-    .slice(0, TOP_K)
-    .reduce(
-      (total, grade, index) => total + (2 ** grade - 1) / Math.log2(index + 2),
-      0,
-    );
-  return {
-    recallAtK: relevant.size === 0 ? 0 : hits.length / relevant.size,
-    mrr: firstHit < 0 ? 0 : 1 / (firstHit + 1),
-    ndcgAtK: ideal === 0 ? 0 : dcg / ideal,
-  };
-}
-
-function countHardConstraintViolations(
-  query: QueryCase,
-  returned: Array<{ id: string; result: { spaceId: string } }>,
-  fixture: Fixture,
-): number {
-  const scopeIds = new Set(
-    query.scope
-      .map((space) => fixture.spaceIds.get(space))
-      .filter((id): id is SpaceId => id !== undefined),
-  );
-  return returned.reduce((total, item) => {
-    const document = fixture.documentByExternalId.get(item.id);
-    const outsideScope = !scopeIds.has(asSpaceId(item.result.spaceId));
-    const missingEntity =
-      query.entities !== undefined &&
-      document !== undefined &&
-      !query.entities.every((entity) => document.entities.includes(entity));
-    return total + (outsideScope || missingEntity ? 1 : 0);
-  }, 0);
-}
-
 function requestedProfile(): string {
   const argument = process.argv.find((value) => value.startsWith("--profile="));
   const index = process.argv.indexOf("--profile");
@@ -549,24 +339,4 @@ function requestedLimit(): number {
     throw new Error("--limit must be a positive integer");
   }
   return Math.min(limit, queries.length);
-}
-
-function percentile(values: number[], quantile: number): number {
-  const sorted = [...values].sort((left, right) => left - right);
-  if (sorted.length === 0) return 0;
-  const index = Math.min(
-    sorted.length - 1,
-    Math.ceil(sorted.length * quantile) - 1,
-  );
-  return Number(sorted[index].toFixed(3));
-}
-
-function mean(values: number[]): number {
-  return values.length === 0
-    ? 0
-    : Number(
-        (
-          values.reduce((total, value) => total + value, 0) / values.length
-        ).toFixed(4),
-      );
 }

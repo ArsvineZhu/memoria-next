@@ -43,7 +43,12 @@ export async function createRuntimeFixture(
   corpus: readonly CorpusDocument[],
 ): Promise<Fixture> {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-retrieval-"));
-  const counts: ProviderCounts = { embedding: 0, rerank: 0, enrichment: 0 };
+  const counts: ProviderCounts = {
+    embedding: 0,
+    rerank: 0,
+    enrichment: 0,
+    rerankCandidateCounts: [],
+  };
   const generatedTagsByMemoryId = new Map<string, readonly string[]>();
   let memoria: Memoria | undefined;
 

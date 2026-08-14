@@ -1,5 +1,74 @@
 {
-  "version": 1,
+  "version": 2,
+  "queryProfiles": {
+    "lexical": {
+      "quality": "balanced",
+      "required": [],
+      "preferred": [],
+      "expectedChannels": ["lexical"]
+    },
+    "lexical+semantic": {
+      "quality": "balanced",
+      "required": ["semantic"],
+      "preferred": [],
+      "expectedChannels": ["lexical", "semantic-direct"]
+    },
+    "tag-association": {
+      "quality": "balanced",
+      "required": ["associative"],
+      "preferred": [],
+      "expectedChannels": ["tag-readout"]
+    },
+    "tag-basis-residual": {
+      "quality": "balanced",
+      "required": ["semantic", "associative"],
+      "preferred": [],
+      "expectedChannels": ["semantic-direct", "semantic-residual"]
+    },
+    "activation": {
+      "quality": "balanced",
+      "required": ["associative"],
+      "preferred": [],
+      "expectedChannels": ["activation"]
+    },
+    "diffusion": {
+      "quality": "thorough",
+      "required": ["associative"],
+      "preferred": [],
+      "expectedChannels": ["diffusion"]
+    },
+    "rerank": {
+      "quality": "balanced",
+      "required": [],
+      "preferred": ["reranking"],
+      "expectedChannels": ["lexical"]
+    },
+    "fast": {
+      "quality": "fast",
+      "required": [],
+      "preferred": [],
+      "expectedChannels": ["lexical"]
+    },
+    "balanced": {
+      "quality": "balanced",
+      "required": [],
+      "preferred": [],
+      "expectedChannels": ["lexical"]
+    },
+    "thorough": {
+      "quality": "thorough",
+      "required": ["semantic", "associative"],
+      "preferred": ["reranking"],
+      "expectedChannels": [
+        "lexical",
+        "semantic-direct",
+        "tag-readout",
+        "activation",
+        "diffusion",
+        "relation"
+      ]
+    }
+  },
   "profiles": {
     "fast": {
       "tagBasisVectors": 12,
@@ -26,9 +95,11 @@
       "rerankCandidates": 64
     }
   },
-  "promotion": {
-    "balancedRecallDeltaMax": 0.02,
-    "balancedP95LatencyMultiplierMax": 1.5,
-    "providerCallIncreaseMax": 0
+  "acceptance": {
+    "maxHardConstraintViolations": 0,
+    "maxNdcgDrop": 0.005,
+    "minRecallImprovement": 0.05,
+    "maxP95LatencyIncreaseRatio": 0.25,
+    "maxUnrequestedProviderCalls": 0
   }
 }

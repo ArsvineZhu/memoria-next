@@ -8,6 +8,7 @@ export interface ProviderCounts {
   embedding: number;
   rerank: number;
   enrichment: number;
+  rerankCandidateCounts: number[];
 }
 
 export interface DeterministicProviderOptions {
@@ -37,6 +38,7 @@ export function createDeterministicProviders(
       trust: "local",
       async execute(work: RerankWork) {
         counts.rerank += 1;
+        counts.rerankCandidateCounts.push(work.candidates.length);
         return work.candidates.map((handle, index) => ({
           handle,
           score: rerankScore(work.query, handle, index),

@@ -5,3 +5,4 @@ dist-test/
 dist-next-test/
 /crates/memoria-mdx/fuzz/Cargo.lock
 .superpowers/
+/benchmarks/retrieval/results/
