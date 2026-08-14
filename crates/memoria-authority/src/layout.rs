@@ -31,6 +31,17 @@ pub struct StoreLayout {
 impl StoreLayout {
     pub fn create(store_dir: impl AsRef<Path>) -> Result<Self, MemoriaError> {
         let mut layout = Self::paths(store_dir.as_ref());
+        if layout.store_dir.exists()
+            && !layout.store_marker.exists()
+            && fs::read_dir(&layout.store_dir)?
+                .next()
+                .transpose()?
+                .is_some()
+        {
+            return Err(MemoriaError::UnsupportedStoreFormat {
+                path: layout.store_dir,
+            });
+        }
         fs::create_dir_all(&layout.store_dir)?;
         fs::create_dir_all(&layout.authority_dir)?;
         fs::create_dir_all(&layout.objects_dir)?;
@@ -64,6 +75,11 @@ impl StoreLayout {
     pub fn open(store_dir: impl AsRef<Path>) -> Result<Self, MemoriaError> {
         let mut layout = Self::paths(store_dir.as_ref());
         ensure_directory(&layout.store_dir)?;
+        if !layout.store_marker.exists() {
+            return Err(MemoriaError::UnsupportedStoreFormat {
+                path: layout.store_dir,
+            });
+        }
         ensure_file(&layout.store_marker)?;
         ensure_directory(&layout.authority_dir)?;
         ensure_file(&layout.authority_database)?;

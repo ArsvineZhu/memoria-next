@@ -27,6 +27,9 @@ pub enum MemoriaError {
     #[error("store is locked: {path}")]
     StoreLocked { path: PathBuf },
 
+    #[error("unsupported Store format at {path}")]
+    UnsupportedStoreFormat { path: PathBuf },
+
     #[error("HEAD_CONFLICT: memory {memory_id} expected {expected_head}, actual {actual_head}")]
     HeadConflict {
         memory_id: MemoryId,
@@ -89,6 +92,7 @@ impl MemoriaError {
             Self::InvalidTimestamp { .. } => "INVALID_TIMESTAMP",
             Self::InvalidGeneration { .. } => "INVALID_GENERATION",
             Self::StoreLocked { .. } => "STORE_LOCKED",
+            Self::UnsupportedStoreFormat { .. } => "UNSUPPORTED_STORE_FORMAT",
             Self::HeadConflict { .. } => "HEAD_CONFLICT",
             Self::NotFound { .. } => "NOT_FOUND",
             Self::SpaceRetired { .. } => "SPACE_RETIRED",
