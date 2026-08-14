@@ -4,7 +4,7 @@ use memoria_authority::SpaceProviderPolicy;
 use memoria_derived::EnrichmentProjection;
 use thiserror::Error;
 
-use crate::privacy::ProviderCapability;
+use crate::privacy::{ProviderCapability, ProviderRoute};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmbeddingItem {
@@ -16,6 +16,7 @@ pub struct EmbeddingItem {
 pub struct EmbeddingBatchRequest {
     pub work_id: String,
     pub signature: String,
+    pub route: ProviderRoute,
     pub dimensions: usize,
     pub items: Vec<EmbeddingItem>,
     pub space_policy: SpaceProviderPolicy,
@@ -25,6 +26,7 @@ pub struct EmbeddingBatchRequest {
 pub struct RerankBatchRequest {
     pub work_id: String,
     pub signature: String,
+    pub route: ProviderRoute,
     pub query: String,
     pub candidates: Vec<String>,
     pub space_policy: SpaceProviderPolicy,
@@ -34,6 +36,7 @@ pub struct RerankBatchRequest {
 pub struct EnrichmentBatchRequest {
     pub work_id: String,
     pub signature: String,
+    pub route: ProviderRoute,
     pub projection: EnrichmentProjection,
     pub space_policy: SpaceProviderPolicy,
 }
@@ -61,6 +64,15 @@ impl NeedWork {
             Self::Embeddings(request) => request.space_policy,
             Self::Rerank(request) => request.space_policy,
             Self::Enrichment(request) => request.space_policy,
+        }
+    }
+
+    #[must_use]
+    pub fn route(&self) -> &ProviderRoute {
+        match self {
+            Self::Embeddings(request) => &request.route,
+            Self::Rerank(request) => &request.route,
+            Self::Enrichment(request) => &request.route,
         }
     }
 }

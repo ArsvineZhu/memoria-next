@@ -200,6 +200,24 @@ export interface NativeProviderItem {
   text: string;
 }
 
+export type NativeProviderCapability =
+  | "embedding"
+  | "rerank"
+  | "enrichment";
+export type NativeProviderTrust = "local" | "external";
+
+export interface NativeProviderRoute {
+  capability: NativeProviderCapability;
+  trust: NativeProviderTrust;
+  signature: string;
+}
+
+export interface NativeProviderRouteConfig {
+  embedding: NativeProviderRoute;
+  rerank: NativeProviderRoute;
+  enrichment: NativeProviderRoute;
+}
+
 export interface NativeEnrichmentProjection {
   version: number;
   inputHash: string;
@@ -221,6 +239,7 @@ export interface NativeProviderWork {
   candidates: string[];
   projection?: NativeEnrichmentProjection;
   spacePolicy?: NativeSpaceProviderPolicy;
+  route?: NativeProviderRoute;
 }
 
 export type NativeQueryWork =
@@ -230,6 +249,7 @@ export type NativeQueryWork =
       signature: string;
       input: { key: string; text: string };
       spacePolicy?: NativeSpaceProviderPolicy;
+      route?: NativeProviderRoute;
     }
   | {
       type: "query-rerank";
@@ -238,6 +258,7 @@ export type NativeQueryWork =
       query: string;
       candidates: Array<{ handle: string; text: string }>;
       spacePolicy?: NativeSpaceProviderPolicy;
+      route?: NativeProviderRoute;
     };
 
 export type NativeQueryStep =
@@ -256,7 +277,10 @@ export interface NativeStoreHandle {
 }
 
 export interface NativeBinding {
-  openStore(dataDir: string): NativeStoreHandle;
+  openStore(
+    dataDir: string,
+    providerRoutes?: NativeProviderRouteConfig,
+  ): NativeStoreHandle;
   closeStore(store: NativeStoreHandle): void;
   authorityMutate(store: NativeStoreHandle, request: NativeCreateMemoryRequest): string;
   authorityCreateSpace(
@@ -310,6 +334,7 @@ export type NeedWork =
       dimensions: number;
       items: Array<{ key: string; text: string }>;
       spacePolicy?: NativeSpaceProviderPolicy;
+      route?: NativeProviderRoute;
     }
   | {
       type: "rerank";
@@ -318,6 +343,7 @@ export type NeedWork =
       query: string;
       candidates: string[];
       spacePolicy?: NativeSpaceProviderPolicy;
+      route?: NativeProviderRoute;
   }
   | {
       type: "enrichment";
@@ -325,6 +351,7 @@ export type NeedWork =
       signature: string;
       projection: NativeEnrichmentProjection;
       spacePolicy?: NativeSpaceProviderPolicy;
+      route?: NativeProviderRoute;
     };
 
 export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork {
@@ -338,6 +365,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
           dimensions: work.dimensions,
           items: work.items,
           spacePolicy: work.spacePolicy,
+          route: work.route,
         };
       case "rerank":
         return {
@@ -347,6 +375,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
           query: work.query ?? "",
           candidates: work.candidates,
           spacePolicy: work.spacePolicy,
+          route: work.route,
         };
       case "enrichment":
         if (!work.projection) {
@@ -358,6 +387,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
           signature: work.signature,
           projection: work.projection,
           spacePolicy: work.spacePolicy,
+          route: work.route,
         };
       default:
         throw new Error(`Unsupported native provider work type: ${work.workType}`);
@@ -372,6 +402,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
         dimensions: 3,
         items: [work.input],
         spacePolicy: work.spacePolicy,
+        route: work.route,
       };
     case "query-rerank":
       return {
@@ -381,6 +412,7 @@ export function toNeedWork(work: NativeProviderWork | NativeQueryWork): NeedWork
         query: work.query,
         candidates: work.candidates.map((candidate) => candidate.handle),
         spacePolicy: work.spacePolicy,
+        route: work.route,
       };
   }
 }

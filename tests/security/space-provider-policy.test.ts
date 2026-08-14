@@ -15,7 +15,7 @@ const localOnlyEmbedding = {
   enrichment: "external-allowed" as const,
 };
 
-function embeddingWork() {
+function embeddingWork(trust: "local" | "external" = "external") {
   return {
     type: "embedding" as const,
     workId: "EW_local-only",
@@ -23,6 +23,11 @@ function embeddingWork() {
     dimensions: 2,
     items: [{ key: "memory-1", text: "private source" }],
     spacePolicy: localOnlyEmbedding,
+    route: {
+      capability: "embedding" as const,
+      trust,
+      signature: "memoria-provider-route-embedding-v1",
+    },
   };
 }
 
@@ -90,7 +95,7 @@ test("local provider route is allowed for local-only scope", async () => {
   });
 
   const result = await host.execute(
-    embeddingWork(),
+    embeddingWork("local"),
     new AbortController().signal,
   );
   assert.deepEqual(result, {
@@ -100,11 +105,50 @@ test("local provider route is allowed for local-only scope", async () => {
   });
 });
 
+test("provider host rejects route metadata that disagrees with the configured provider", async () => {
+  let calls = 0;
+  const host = new ProviderHost({
+    providers: {
+      embedding: {
+        trust: "external",
+        async execute() {
+          calls += 1;
+          return { vectors: [{ key: "memory-1", values: [1, 0] }] };
+        },
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      host.execute(
+        {
+          ...embeddingWork(),
+          spacePolicy: {
+            embedding: "external-allowed",
+            reranking: "external-allowed",
+            enrichment: "external-allowed",
+          },
+          route: {
+            capability: "embedding",
+            trust: "local",
+            signature: "memoria-provider-route-embedding-v1",
+          },
+        },
+        new AbortController().signal,
+      ),
+    (error: unknown) =>
+      error instanceof MemoriaError && error.code === "PROVIDER_POLICY_DENIED",
+  );
+  assert.equal(calls, 0);
+});
+
 test("native provider work carries the scoped policy to a local route", async () => {
   const dataDir = await mkdtemp(
     join(tmpdir(), "memoria-next-space-provider-policy-"),
   );
   let calls = 0;
+  let routeTrust: string | undefined;
   const memoria = await createMemoria({
     dataDir,
     providers: {
@@ -112,6 +156,7 @@ test("native provider work carries the scoped policy to a local route", async ()
         trust: "local",
         async execute(work) {
           calls += 1;
+          routeTrust = work.route?.trust;
           return {
             vectors: [
               {
@@ -140,4 +185,5 @@ test("native provider work carries the scoped policy to a local route", async ()
     await rm(dataDir, { recursive: true, force: true });
   }
   assert.equal(calls > 0, true);
+  assert.equal(routeTrust, "local");
 });

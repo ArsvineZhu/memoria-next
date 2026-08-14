@@ -5,6 +5,7 @@ import {
   createProviderEgressGuard,
   type ProviderEgressPolicy,
 } from "../providers/host.js";
+import { providerRoutesFor } from "../providers/types.js";
 import { validateMemoriaConfig, type MemoriaConfig } from "../domain/config.js";
 import { toMemoriaError } from "../domain/errors.js";
 import { Memoria } from "./memoria.js";
@@ -19,7 +20,10 @@ export async function createMemoria(
   const binding = injectedBinding ?? loadNativeBinding();
   let store: NativeStoreHandle;
   try {
-    store = binding.openStore(config.dataDir);
+    store = binding.openStore(
+      config.dataDir,
+      providerRoutesFor(config.providers),
+    );
   } catch (error) {
     throw toMemoriaError(error);
   }

@@ -11,6 +11,7 @@ import {
   type ProviderSet,
   type RerankScore,
   type RerankWork,
+  providerRouteSignature,
 } from "./types.js";
 
 export interface ProviderEgressPolicy {
@@ -56,10 +57,14 @@ export class ProviderHost {
   }
 
   async execute(work: NeedWork, signal: AbortSignal): Promise<ProviderResult> {
+    assertProviderTrust(work, providerTrust(this.#providers, work.type));
     const egressWork = this.#onDataEgress
       ? await this.#onDataEgress(work)
       : work;
-    assertProviderTrust(work, providerTrust(this.#providers, work.type));
+    assertProviderTrust(
+      egressWork,
+      providerTrust(this.#providers, egressWork.type),
+    );
     const providerType = egressWork.type;
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
@@ -145,6 +150,18 @@ function providerTrust(
 }
 
 function assertProviderTrust(work: NeedWork, trust: ProviderTrust): void {
+  const route = work.route;
+  if (
+    route &&
+    (route.capability !== work.type ||
+      route.trust !== trust ||
+      route.signature !== providerRouteSignature(work.type))
+  ) {
+    throw new MemoriaError(
+      "PROVIDER_POLICY_DENIED",
+      `PROVIDER_POLICY_DENIED: ${work.type} provider route metadata does not match the configured provider`,
+    );
+  }
   const mode =
     work.spacePolicy?.[work.type === "rerank" ? "reranking" : work.type] ??
     "external-allowed";

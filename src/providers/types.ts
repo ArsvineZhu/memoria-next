@@ -1,11 +1,15 @@
 import type {
   NativeProviderWorkResult,
+  NativeProviderRoute,
+  NativeProviderRouteConfig,
   NativeSpaceProviderPolicy,
   NeedWork,
 } from "../native/protocol.js";
 
 export type ProviderTrust = "local" | "external";
 export type SpaceProviderPolicy = NativeSpaceProviderPolicy;
+export type ProviderCapability = "embedding" | "rerank" | "enrichment";
+export type ProviderRoute = NativeProviderRoute;
 
 export type EmbeddingWork = Extract<NeedWork, { type: "embedding" }>;
 export type RerankWork = Extract<NeedWork, { type: "rerank" }>;
@@ -43,6 +47,32 @@ export interface ProviderSet {
 }
 
 export type ProviderType = "embedding" | "rerank" | "enrichment";
+
+export function providerRouteSignature(capability: ProviderCapability): string {
+  return `memoria-provider-route-${capability}-v1`;
+}
+
+export function providerRoutesFor(
+  providers: ProviderSet | undefined,
+): NativeProviderRouteConfig {
+  return {
+    embedding: {
+      capability: "embedding",
+      trust: providers?.embedding?.trust ?? "external",
+      signature: providerRouteSignature("embedding"),
+    },
+    rerank: {
+      capability: "rerank",
+      trust: providers?.rerank?.trust ?? "external",
+      signature: providerRouteSignature("rerank"),
+    },
+    enrichment: {
+      capability: "enrichment",
+      trust: providers?.enrichment?.trust ?? "external",
+      signature: providerRouteSignature("enrichment"),
+    },
+  };
+}
 
 export type ProviderEgressHook = (
   work: NeedWork,

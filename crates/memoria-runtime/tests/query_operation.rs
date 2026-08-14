@@ -5,8 +5,8 @@ use std::time::Duration;
 use memoria_query::MemoryQuery;
 use memoria_runtime::{
     EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector, MemoriaRuntime, NeedWork,
-    ProviderWorkResult, QueryStep, QueryWork, RuntimeError, SpaceProviderMode, SpaceProviderPolicy,
-    validate_provider_result,
+    ProviderRouteConfig, ProviderTrust, ProviderWorkResult, QueryStep, QueryWork, RuntimeError,
+    SpaceProviderMode, SpaceProviderPolicy, validate_provider_result,
 };
 use tempfile::tempdir;
 
@@ -55,7 +55,9 @@ fn semantic_query_returns_pending_query_embedding_work() {
 #[test]
 fn semantic_work_uses_one_effective_policy_for_the_whole_scope() {
     let directory = tempdir().unwrap();
-    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let mut routes = ProviderRouteConfig::default();
+    routes.embedding.trust = ProviderTrust::Local;
+    let mut runtime = MemoriaRuntime::open_with_provider_routes(directory.path(), routes).unwrap();
     let external = runtime.create_space("external").unwrap();
     let local_only = runtime
         .create_space_with_policy(
@@ -192,6 +194,7 @@ fn rust_embedding_validation_uses_keys_and_reconstructs_request_order() {
     let work = NeedWork::Embeddings(EmbeddingBatchRequest {
         work_id: "EW_test".to_owned(),
         signature: "embedding-v1".to_owned(),
+        route: memoria_runtime::ProviderRouteConfig::default().embedding,
         dimensions: 3,
         items: vec![
             EmbeddingItem {

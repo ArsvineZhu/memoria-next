@@ -15,9 +15,9 @@ use napi_derive::napi;
 use crate::convert::{
     JsBackupResult, JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission,
     JsMemoryMutation, JsPortableImportRequest, JsPortableImportResult, JsPortableMemory,
-    JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest, JsQueryStep,
-    JsReviseMemoryRequest, JsSpaceProviderPolicy, JsStatus, QueryRequest, provider_result_from_js,
-    query_step_to_js,
+    JsProviderResult, JsProviderRouteConfig, JsProviderWork, JsPurgePlan, JsQueryRequest,
+    JsQueryStep, JsReviseMemoryRequest, JsSpaceProviderPolicy, JsStatus, QueryRequest,
+    provider_result_from_js, provider_routes_from_js, query_step_to_js,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -67,8 +67,15 @@ impl NativeStore {
 }
 
 #[napi]
-pub fn open_store(data_dir: String) -> Result<NativeStore> {
-    let runtime = MemoriaRuntime::open(data_dir).map_err(runtime_error)?;
+pub fn open_store(
+    data_dir: String,
+    provider_routes: Option<JsProviderRouteConfig>,
+) -> Result<NativeStore> {
+    let runtime = MemoriaRuntime::open_with_provider_routes(
+        data_dir,
+        provider_routes_from_js(provider_routes)?,
+    )
+    .map_err(runtime_error)?;
     Ok(NativeStore {
         runtime: Mutex::new(Some(runtime)),
         sessions: Mutex::new(HashMap::new()),

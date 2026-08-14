@@ -15,6 +15,90 @@ pub enum ProviderTrust {
     External,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderRoute {
+    pub capability: ProviderCapability,
+    pub trust: ProviderTrust,
+    pub signature: String,
+}
+
+impl ProviderRoute {
+    #[must_use]
+    pub fn new(
+        capability: ProviderCapability,
+        trust: ProviderTrust,
+        signature: impl Into<String>,
+    ) -> Self {
+        Self {
+            capability,
+            trust,
+            signature: signature.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderRouteConfig {
+    pub embedding: ProviderRoute,
+    pub rerank: ProviderRoute,
+    pub enrichment: ProviderRoute,
+}
+
+impl Default for ProviderRouteConfig {
+    fn default() -> Self {
+        Self {
+            embedding: ProviderRoute::new(
+                ProviderCapability::Embedding,
+                ProviderTrust::External,
+                "memoria-provider-route-embedding-v1",
+            ),
+            rerank: ProviderRoute::new(
+                ProviderCapability::Rerank,
+                ProviderTrust::External,
+                "memoria-provider-route-rerank-v1",
+            ),
+            enrichment: ProviderRoute::new(
+                ProviderCapability::Enrichment,
+                ProviderTrust::External,
+                "memoria-provider-route-enrichment-v1",
+            ),
+        }
+    }
+}
+
+impl ProviderRouteConfig {
+    #[must_use]
+    pub const fn route(&self, capability: ProviderCapability) -> &ProviderRoute {
+        match capability {
+            ProviderCapability::Embedding => &self.embedding,
+            ProviderCapability::Rerank => &self.rerank,
+            ProviderCapability::Enrichment => &self.enrichment,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderRouteDecision {
+    Allowed(ProviderRoute),
+    RequiredDenied,
+    PreferredDegraded,
+}
+
+#[must_use]
+pub fn resolve_provider_route(
+    policy: SpaceProviderPolicy,
+    route: &ProviderRoute,
+    required: bool,
+) -> ProviderRouteDecision {
+    if allows_space_provider_policy(policy, route.capability, route.trust) {
+        ProviderRouteDecision::Allowed(route.clone())
+    } else if required {
+        ProviderRouteDecision::RequiredDenied
+    } else {
+        ProviderRouteDecision::PreferredDegraded
+    }
+}
+
 #[must_use]
 pub const fn allows_space_provider_mode(mode: SpaceProviderMode, trust: ProviderTrust) -> bool {
     match (mode, trust) {
@@ -94,7 +178,8 @@ mod tests {
     use memoria_authority::{SpaceProviderMode, SpaceProviderPolicy};
 
     use super::{
-        ProviderCapability, ProviderEgressPolicy, ProviderTrust, allows_space_provider_policy,
+        ProviderCapability, ProviderEgressPolicy, ProviderRoute, ProviderRouteConfig,
+        ProviderRouteDecision, ProviderTrust, allows_space_provider_policy, resolve_provider_route,
     };
 
     #[test]
@@ -127,5 +212,44 @@ mod tests {
             ProviderCapability::Embedding,
             ProviderTrust::Local,
         ));
+    }
+
+    #[test]
+    fn route_resolution_distinguishes_required_and_preferred_denial() {
+        let policy = SpaceProviderPolicy {
+            embedding: SpaceProviderMode::LocalOnly,
+            ..SpaceProviderPolicy::default()
+        };
+        let route = ProviderRoute::new(
+            ProviderCapability::Embedding,
+            ProviderTrust::External,
+            "test-route",
+        );
+
+        assert_eq!(
+            resolve_provider_route(policy, &route, true),
+            ProviderRouteDecision::RequiredDenied
+        );
+        assert_eq!(
+            resolve_provider_route(policy, &route, false),
+            ProviderRouteDecision::PreferredDegraded
+        );
+    }
+
+    #[test]
+    fn default_routes_are_capability_scoped() {
+        let routes = ProviderRouteConfig::default();
+        assert_eq!(
+            routes.route(ProviderCapability::Embedding).capability,
+            ProviderCapability::Embedding
+        );
+        assert_eq!(
+            routes.route(ProviderCapability::Rerank).capability,
+            ProviderCapability::Rerank
+        );
+        assert_eq!(
+            routes.route(ProviderCapability::Enrichment).capability,
+            ProviderCapability::Enrichment
+        );
     }
 }

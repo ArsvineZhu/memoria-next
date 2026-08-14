@@ -9,8 +9,9 @@ use memoria_query::{
 };
 use memoria_runtime::{
     BackupManifest, EmbeddingVector, FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent,
-    NeedWork, PortableImportRequest, PortableImportResult, PortableMemory, ProviderWorkResult,
-    PurgePlan, PurgeState, QueryStep, QueryWork, RerankScore,
+    NeedWork, PortableImportRequest, PortableImportResult, PortableMemory, ProviderCapability,
+    ProviderRoute, ProviderRouteConfig, ProviderTrust, ProviderWorkResult, PurgePlan, PurgeState,
+    QueryStep, QueryWork, RerankScore,
 };
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
@@ -517,6 +518,91 @@ impl TryFrom<JsSpaceProviderPolicy> for SpaceProviderPolicy {
     }
 }
 
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsProviderRoute {
+    pub capability: String,
+    pub trust: String,
+    pub signature: String,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsProviderRouteConfig {
+    pub embedding: Option<JsProviderRoute>,
+    pub rerank: Option<JsProviderRoute>,
+    pub enrichment: Option<JsProviderRoute>,
+}
+
+pub fn provider_routes_from_js(
+    value: Option<JsProviderRouteConfig>,
+) -> Result<ProviderRouteConfig> {
+    let mut routes = ProviderRouteConfig::default();
+    let Some(value) = value else {
+        return Ok(routes);
+    };
+    if let Some(route) = value.embedding {
+        routes.embedding = provider_route_from_js(ProviderCapability::Embedding, route)?;
+    }
+    if let Some(route) = value.rerank {
+        routes.rerank = provider_route_from_js(ProviderCapability::Rerank, route)?;
+    }
+    if let Some(route) = value.enrichment {
+        routes.enrichment = provider_route_from_js(ProviderCapability::Enrichment, route)?;
+    }
+    Ok(routes)
+}
+
+fn provider_route_from_js(
+    expected_capability: ProviderCapability,
+    value: JsProviderRoute,
+) -> Result<ProviderRoute> {
+    let capability = match value.capability.as_str() {
+        "embedding" => ProviderCapability::Embedding,
+        "rerank" => ProviderCapability::Rerank,
+        "enrichment" => ProviderCapability::Enrichment,
+        other => {
+            return Err(napi::Error::from_reason(format!(
+                "UNSUPPORTED_OPERATION: provider route capability `{other}` is invalid"
+            )));
+        }
+    };
+    if capability != expected_capability {
+        return Err(napi::Error::from_reason(format!(
+            "UNSUPPORTED_OPERATION: provider route capability `{capability}` does not match the configured field"
+        )));
+    }
+    let trust = match value.trust.as_str() {
+        "local" => ProviderTrust::Local,
+        "external" => ProviderTrust::External,
+        other => {
+            return Err(napi::Error::from_reason(format!(
+                "UNSUPPORTED_OPERATION: provider route trust `{other}` is invalid"
+            )));
+        }
+    };
+    if value.signature.trim().is_empty() {
+        return Err(napi::Error::from_reason(
+            "UNSUPPORTED_OPERATION: provider route signature must not be empty",
+        ));
+    }
+    Ok(ProviderRoute::new(capability, trust, value.signature))
+}
+
+impl From<ProviderRoute> for JsProviderRoute {
+    fn from(value: ProviderRoute) -> Self {
+        Self {
+            capability: value.capability.to_string(),
+            trust: match value.trust {
+                ProviderTrust::Local => "local",
+                ProviderTrust::External => "external",
+            }
+            .to_owned(),
+            signature: value.signature,
+        }
+    }
+}
+
 fn provider_mode_to_js(value: SpaceProviderMode) -> &'static str {
     match value {
         SpaceProviderMode::Deny => "deny",
@@ -542,6 +628,7 @@ pub struct JsQueryWork {
     pub r#type: String,
     pub work_id: String,
     pub signature: String,
+    pub route: JsProviderRoute,
     pub input: Option<JsProviderItem>,
     pub query: Option<String>,
     pub candidates: Vec<JsQueryCandidate>,
@@ -936,6 +1023,7 @@ pub struct JsProviderWork {
     pub work_id: String,
     pub work_type: String,
     pub signature: String,
+    pub route: JsProviderRoute,
     pub dimensions: u32,
     pub items: Vec<JsProviderItem>,
     pub query: Option<String>,
@@ -951,6 +1039,7 @@ impl From<NeedWork> for JsProviderWork {
                 work_id: request.work_id,
                 work_type: "embedding".to_owned(),
                 signature: request.signature,
+                route: request.route.into(),
                 dimensions: u32::try_from(request.dimensions).unwrap_or(u32::MAX),
                 items: request
                     .items
@@ -969,6 +1058,7 @@ impl From<NeedWork> for JsProviderWork {
                 work_id: request.work_id,
                 work_type: "rerank".to_owned(),
                 signature: request.signature,
+                route: request.route.into(),
                 dimensions: 0,
                 items: Vec::new(),
                 query: Some(request.query),
@@ -980,6 +1070,7 @@ impl From<NeedWork> for JsProviderWork {
                 work_id: request.work_id,
                 work_type: "enrichment".to_owned(),
                 signature: request.signature,
+                route: request.route.into(),
                 dimensions: 0,
                 items: Vec::new(),
                 query: None,
@@ -1008,6 +1099,7 @@ fn query_work_to_js(work: QueryWork) -> JsQueryWork {
                 r#type: "query-embedding".to_owned(),
                 work_id: request.work_id,
                 signature: request.signature,
+                route: request.route.into(),
                 input: item.map(|item| JsProviderItem {
                     key: item.key,
                     text: item.text,
@@ -1021,6 +1113,7 @@ fn query_work_to_js(work: QueryWork) -> JsQueryWork {
             r#type: "query-rerank".to_owned(),
             work_id: request.work_id,
             signature: request.signature,
+            route: request.route.into(),
             input: None,
             query: Some(request.query),
             candidates: request

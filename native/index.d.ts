@@ -135,10 +135,23 @@ export interface JsProviderResult {
   message?: string
 }
 
+export interface JsProviderRoute {
+  capability: string
+  trust: string
+  signature: string
+}
+
+export interface JsProviderRouteConfig {
+  embedding?: JsProviderRoute
+  rerank?: JsProviderRoute
+  enrichment?: JsProviderRoute
+}
+
 export interface JsProviderWork {
   workId: string
   workType: string
   signature: string
+  route: JsProviderRoute
   dimensions: number
   items: Array<JsProviderItem>
   query?: string
@@ -246,6 +259,7 @@ export interface JsQueryWork {
   type: string
   workId: string
   signature: string
+  route: JsProviderRoute
   input?: JsProviderItem
   query?: string
   candidates: Array<JsQueryCandidate>
@@ -278,7 +292,7 @@ export interface JsStatus {
   closed: boolean
 }
 
-export declare function openStore(dataDir: string): NativeStore
+export declare function openStore(dataDir: string, providerRoutes?: JsProviderRouteConfig | undefined | null): NativeStore
 
 export declare function providerPollWork(store: NativeStore): JsProviderWork | null
 

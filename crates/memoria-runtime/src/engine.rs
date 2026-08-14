@@ -38,7 +38,10 @@ use thiserror::Error;
 
 use crate::backup;
 use crate::limits::{ResourceLimits, check_source_bytes};
-use crate::privacy::{ProviderCapability, ProviderEgressPolicy, space_provider_mode};
+use crate::privacy::{
+    ProviderCapability, ProviderEgressPolicy, ProviderRouteConfig, ProviderRouteDecision,
+    resolve_provider_route,
+};
 use crate::provider::{
     EmbeddingBatchRequest, EmbeddingItem, NeedWork, ProviderWorkResult, RerankBatchRequest,
     validate_provider_result,
@@ -194,6 +197,7 @@ pub struct MemoriaRuntime {
     generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
     adaptive_log: AdaptiveEventLog,
     provider_egress_policy: ProviderEgressPolicy,
+    provider_routes: ProviderRouteConfig,
     purge: PurgeCoordinator,
     resource_limits: ResourceLimits,
     receipts: BTreeMap<String, RetrievalReceipt>,
@@ -282,12 +286,39 @@ pub struct MemoryMutation {
 
 impl MemoriaRuntime {
     pub fn open(data_dir: impl AsRef<std::path::Path>) -> Result<Self, RuntimeError> {
-        Self::open_with_provider_egress_policy(data_dir, ProviderEgressPolicy::default())
+        Self::open_with_provider_egress_policy_and_routes(
+            data_dir,
+            ProviderEgressPolicy::default(),
+            ProviderRouteConfig::default(),
+        )
     }
 
     pub fn open_with_provider_egress_policy(
         data_dir: impl AsRef<std::path::Path>,
         provider_egress_policy: ProviderEgressPolicy,
+    ) -> Result<Self, RuntimeError> {
+        Self::open_with_provider_egress_policy_and_routes(
+            data_dir,
+            provider_egress_policy,
+            ProviderRouteConfig::default(),
+        )
+    }
+
+    pub fn open_with_provider_routes(
+        data_dir: impl AsRef<std::path::Path>,
+        provider_routes: ProviderRouteConfig,
+    ) -> Result<Self, RuntimeError> {
+        Self::open_with_provider_egress_policy_and_routes(
+            data_dir,
+            ProviderEgressPolicy::default(),
+            provider_routes,
+        )
+    }
+
+    pub fn open_with_provider_egress_policy_and_routes(
+        data_dir: impl AsRef<std::path::Path>,
+        provider_egress_policy: ProviderEgressPolicy,
+        provider_routes: ProviderRouteConfig,
     ) -> Result<Self, RuntimeError> {
         let layout = StoreLayout::create(data_dir)?;
         let writer_lock = StoreWriterLock::acquire(layout.store_dir())?;
@@ -315,6 +346,7 @@ impl MemoriaRuntime {
             generated_tag_artifacts: BTreeMap::new(),
             adaptive_log: AdaptiveEventLog::open(adaptive_database)?,
             provider_egress_policy,
+            provider_routes,
             purge: PurgeCoordinator::new(),
             resource_limits: ResourceLimits::default(),
             receipts: BTreeMap::new(),
@@ -786,44 +818,31 @@ impl MemoriaRuntime {
             &compiled.query.scope.spaces,
             compiled.snapshot.authority_generation,
         )?;
-        let semantic_policy_denied =
-            space_provider_mode(space_policy, ProviderCapability::Embedding)
-                == SpaceProviderMode::Deny;
-        if semantic_policy_denied && semantic_required {
-            return Err(RuntimeError::ProviderPolicyDenied {
-                capability: ProviderCapability::Embedding,
-            });
-        }
-        let compiled = if semantic_policy_denied && requested_semantic {
-            let mut fallback = query.clone();
-            fallback
-                .required_capabilities
-                .retain(|capability| capability != "semantic");
-            fallback
-                .preferred_capabilities
-                .retain(|capability| capability != "semantic");
-            let mut fallback = self.compile_query(fallback)?;
-            fallback.execution.degraded = true;
-            if !fallback
-                .execution
-                .degraded_capabilities
-                .iter()
-                .any(|item| item == "semantic")
-            {
-                fallback
-                    .execution
-                    .degraded_capabilities
-                    .push("semantic".to_owned());
-            }
-            fallback
-        } else {
-            compiled
-        };
+        let semantic_route = self
+            .provider_routes
+            .route(ProviderCapability::Embedding)
+            .clone();
+        let compiled =
+            match resolve_provider_route(space_policy, &semantic_route, semantic_required) {
+                ProviderRouteDecision::RequiredDenied => {
+                    return Err(RuntimeError::ProviderPolicyDenied {
+                        capability: ProviderCapability::Embedding,
+                    });
+                }
+                ProviderRouteDecision::PreferredDegraded
+                    if requested_semantic && compiled.execution.used("semantic") =>
+                {
+                    self.compile_without_capability(&query, "semantic")?
+                }
+                ProviderRouteDecision::Allowed(_) | ProviderRouteDecision::PreferredDegraded => {
+                    compiled
+                }
+            };
 
         let adaptive_snapshot = self.adaptive_snapshot_for(&compiled)?;
         let semantic_pending = requested_semantic && compiled.execution.used("semantic");
         if semantic_pending {
-            let work = query_embedding_work(&query, space_policy);
+            let work = query_embedding_work(&query, space_policy, semantic_route);
             let operation_id = if let Some(operation_id) = continuation_operation_id {
                 self.query_operations.replace_provider(
                     &operation_id,
@@ -873,7 +892,7 @@ impl MemoriaRuntime {
         &mut self,
         query: MemoryQuery,
         compiled: memoria_query::CompiledQuery,
-        response: RetrievalResponse,
+        mut response: RetrievalResponse,
         continuation_operation_id: Option<String>,
         space_policy: SpaceProviderPolicy,
         adaptive_snapshot: Option<AdaptiveReadSnapshot>,
@@ -894,28 +913,73 @@ impl MemoriaRuntime {
                 adaptive_snapshot.as_ref(),
             )?));
         }
-        let work = query_rerank_work(&query, &batch, space_policy);
-        let operation_id = if let Some(operation_id) = continuation_operation_id {
-            self.query_operations.replace_provider(
-                &operation_id,
-                compiled,
-                work.clone(),
-                Some(response),
-                Some(batch),
-                adaptive_snapshot.clone(),
-            );
-            operation_id
-        } else {
-            self.query_operations.insert_provider(
-                query,
-                compiled,
-                work.clone(),
-                Some(response),
-                Some(batch),
-                adaptive_snapshot,
-            )
-        };
-        Ok(QueryStep::ProviderPending { operation_id, work })
+        let rerank_required = query
+            .required_capabilities
+            .iter()
+            .any(|capability| capability == "reranking");
+        let rerank_route = self
+            .provider_routes
+            .route(ProviderCapability::Rerank)
+            .clone();
+        match resolve_provider_route(space_policy, &rerank_route, rerank_required) {
+            ProviderRouteDecision::RequiredDenied => Err(RuntimeError::ProviderPolicyDenied {
+                capability: ProviderCapability::Rerank,
+            }),
+            ProviderRouteDecision::PreferredDegraded => {
+                let mut compiled = compiled;
+                compiled
+                    .execution
+                    .used_capabilities
+                    .retain(|capability| capability != "reranking");
+                compiled.execution.degraded = true;
+                if !compiled
+                    .execution
+                    .degraded_capabilities
+                    .iter()
+                    .any(|capability| capability == "reranking")
+                {
+                    compiled
+                        .execution
+                        .degraded_capabilities
+                        .push("reranking".to_owned());
+                }
+                response.execution = compiled.execution.clone();
+                response.trace.capability_degraded = true;
+                response.trace.rerank_requested = false;
+                if let Some(operation_id) = continuation_operation_id {
+                    self.query_operations.remove(&operation_id);
+                }
+                Ok(QueryStep::Complete(self.finalize_query_response(
+                    &compiled,
+                    response,
+                    adaptive_snapshot.as_ref(),
+                )?))
+            }
+            ProviderRouteDecision::Allowed(rerank_route) => {
+                let work = query_rerank_work(&query, &batch, space_policy, rerank_route);
+                let operation_id = if let Some(operation_id) = continuation_operation_id {
+                    self.query_operations.replace_provider(
+                        &operation_id,
+                        compiled,
+                        work.clone(),
+                        Some(response),
+                        Some(batch),
+                        adaptive_snapshot.clone(),
+                    );
+                    operation_id
+                } else {
+                    self.query_operations.insert_provider(
+                        query,
+                        compiled,
+                        work.clone(),
+                        Some(response),
+                        Some(batch),
+                        adaptive_snapshot,
+                    )
+                };
+                Ok(QueryStep::ProviderPending { operation_id, work })
+            }
+        }
     }
 
     pub fn query_continue(&mut self, operation_id: &str) -> Result<QueryStep, RuntimeError> {
@@ -1204,6 +1268,34 @@ impl MemoriaRuntime {
                 generation: self.adaptive_log.current_generation(),
                 model_version: AdaptiveStateV1::model_version().to_owned(),
             };
+        }
+        Ok(compiled)
+    }
+
+    fn compile_without_capability(
+        &self,
+        query: &MemoryQuery,
+        capability: &str,
+    ) -> Result<memoria_query::CompiledQuery, RuntimeError> {
+        let mut fallback = query.clone();
+        fallback
+            .required_capabilities
+            .retain(|item| item != capability);
+        fallback
+            .preferred_capabilities
+            .retain(|item| item != capability);
+        let mut compiled = self.compile_query(fallback)?;
+        compiled.execution.degraded = true;
+        if !compiled
+            .execution
+            .degraded_capabilities
+            .iter()
+            .any(|item| item == capability)
+        {
+            compiled
+                .execution
+                .degraded_capabilities
+                .push(capability.to_owned());
         }
         Ok(compiled)
     }
@@ -1701,13 +1793,16 @@ impl MemoriaRuntime {
                 capability: pending.work.capability(),
             });
         }
-        if let Some(pending) = self.pending_provider_work.front()
-            && space_provider_mode(pending.work.space_policy(), pending.work.capability())
-                == SpaceProviderMode::Deny
-        {
-            return Err(RuntimeError::ProviderPolicyDenied {
-                capability: pending.work.capability(),
-            });
+        if let Some(pending) = self.pending_provider_work.front() {
+            let capability = pending.work.capability();
+            if pending.work.route().capability != capability
+                || !matches!(
+                    resolve_provider_route(pending.work.space_policy(), pending.work.route(), true),
+                    ProviderRouteDecision::Allowed(_)
+                )
+            {
+                return Err(RuntimeError::ProviderPolicyDenied { capability });
+            }
         }
         let Some(pending) = self.pending_provider_work.pop_front() else {
             return Ok(None);
@@ -1979,9 +2074,15 @@ impl MemoriaRuntime {
         projections: &[EnrichmentProjection],
         space_policy: SpaceProviderPolicy,
     ) {
-        if space_policy.enrichment == SpaceProviderMode::Deny {
+        let route = self
+            .provider_routes
+            .route(ProviderCapability::Enrichment)
+            .clone();
+        let ProviderRouteDecision::Allowed(route) =
+            resolve_provider_route(space_policy, &route, false)
+        else {
             return;
-        }
+        };
         for (index, projection) in projections.iter().enumerate() {
             let input_hash = hex_lower(projection.input_hash().as_bytes());
             let job_id = match self.derived.enqueue_build_job(
@@ -1999,6 +2100,7 @@ impl MemoriaRuntime {
             let work = NeedWork::Enrichment(crate::EnrichmentBatchRequest {
                 work_id: format!("TG_{}_{}_{}", projection.memory_id(), generation, index),
                 signature: projection.producer_signature().to_owned(),
+                route: route.clone(),
                 projection: projection.clone(),
                 space_policy,
             });
@@ -2018,9 +2120,15 @@ impl MemoriaRuntime {
         projection: LocalEmbeddingProjectionV1,
         space_policy: SpaceProviderPolicy,
     ) {
-        if space_policy.embedding == SpaceProviderMode::Deny {
+        let route = self
+            .provider_routes
+            .route(ProviderCapability::Embedding)
+            .clone();
+        let ProviderRouteDecision::Allowed(route) =
+            resolve_provider_route(space_policy, &route, false)
+        else {
             return;
-        }
+        };
         let input_hash = hex_lower(projection.input_hash().as_bytes());
         let job = match self.derived.enqueue_build_job(
             "embedding",
@@ -2044,6 +2152,7 @@ impl MemoriaRuntime {
         let work = NeedWork::Embeddings(crate::EmbeddingBatchRequest {
             work_id,
             signature: projection.producer_signature().to_owned(),
+            route,
             dimensions: 3,
             items: vec![crate::EmbeddingItem {
                 key: memory_id.to_string(),
@@ -2584,11 +2693,16 @@ fn local_embedding_projection(source: &[u8]) -> Result<LocalEmbeddingProjectionV
     )?)
 }
 
-fn query_embedding_work(query: &MemoryQuery, space_policy: SpaceProviderPolicy) -> QueryWork {
+fn query_embedding_work(
+    query: &MemoryQuery,
+    space_policy: SpaceProviderPolicy,
+    route: crate::privacy::ProviderRoute,
+) -> QueryWork {
     let projection = QueryEmbeddingProjectionV1::build(query.cue.text.join("\n"));
     QueryWork::Embedding(EmbeddingBatchRequest {
         work_id: format!("QW_{}", MemoryId::new()),
         signature: "query-embedding-v1".to_owned(),
+        route,
         dimensions: 3,
         items: vec![EmbeddingItem {
             key: "query".to_owned(),
@@ -2602,10 +2716,12 @@ fn query_rerank_work(
     query: &MemoryQuery,
     batch: &RerankBatch,
     space_policy: SpaceProviderPolicy,
+    route: crate::privacy::ProviderRoute,
 ) -> QueryWork {
     QueryWork::Rerank(RerankBatchRequest {
         work_id: format!("QW_{}", MemoryId::new()),
         signature: "query-rerank-v1".to_owned(),
+        route,
         query: query.cue.text.join("\n"),
         candidates: batch.views.iter().map(|view| view.handle.clone()).collect(),
         space_policy,

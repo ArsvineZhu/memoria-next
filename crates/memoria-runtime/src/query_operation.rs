@@ -6,6 +6,7 @@ use memoria_adaptive::AdaptiveReadSnapshot;
 use memoria_query::{CompiledQuery, MemoryQuery, RerankBatch, RerankScore, RetrievalResponse};
 use memoria_types::MemoryId;
 
+use crate::privacy::ProviderRoute;
 use crate::provider::{EmbeddingBatchRequest, NeedWork, RerankBatchRequest};
 
 pub const QUERY_OPERATION_TTL: Duration = Duration::from_secs(5 * 60);
@@ -31,6 +32,14 @@ impl QueryWork {
         match self {
             Self::Embedding(work) => work.space_policy,
             Self::Rerank(work) => work.space_policy,
+        }
+    }
+
+    #[must_use]
+    pub fn route(&self) -> &ProviderRoute {
+        match self {
+            Self::Embedding(work) => &work.route,
+            Self::Rerank(work) => &work.route,
         }
     }
 
