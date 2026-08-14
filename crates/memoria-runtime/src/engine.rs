@@ -7,10 +7,11 @@ use memoria_authority::{
     StoreWriterLock,
 };
 use memoria_derived::{
-    BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
+    BaseReadyReport, DerivedCatalog, DerivedCompiler, EmbeddingNormalization, EnrichmentProjection,
     EntityObservationBuilder, ExplicitTagBuilder, GeneratedTagArtifact, LexicalDocument,
     LocalEmbeddingProjectionV1, ProjectionInputHash, ProjectionKind, QueryEmbeddingProjectionV1,
-    TagDictionary,
+    SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION, TagDictionary, VectorPayloadRecord,
+    VectorPayloadV1,
 };
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
@@ -174,12 +175,14 @@ pub struct MemoriaRuntime {
 struct PendingProviderWork {
     generation: AuthorityGeneration,
     work: NeedWork,
+    embedding_projection: Option<LocalEmbeddingProjectionV1>,
 }
 
 struct InflightProviderWork {
     generation: AuthorityGeneration,
     expected_work: NeedWork,
     advances_semantic: bool,
+    embedding_projection: Option<LocalEmbeddingProjectionV1>,
     enrichment_projection: Option<EnrichmentProjection>,
 }
 
@@ -888,18 +891,21 @@ impl MemoriaRuntime {
                 generation: pending.generation,
                 expected_work: pending.work.clone(),
                 advances_semantic: true,
+                embedding_projection: pending.embedding_projection.clone(),
                 enrichment_projection: None,
             },
             NeedWork::Enrichment(request) => InflightProviderWork {
                 generation: pending.generation,
                 expected_work: pending.work.clone(),
                 advances_semantic: false,
+                embedding_projection: None,
                 enrichment_projection: Some(request.projection.clone()),
             },
             NeedWork::Rerank(_) => InflightProviderWork {
                 generation: pending.generation,
                 expected_work: pending.work.clone(),
                 advances_semantic: false,
+                embedding_projection: None,
                 enrichment_projection: None,
             },
         };
@@ -946,8 +952,21 @@ impl MemoriaRuntime {
                 self.generated_tag_artifacts
                     .insert(artifact.projection_input_hash().clone(), artifact);
             }
-            ProviderWorkResult::Embeddings { .. } => {
+            ProviderWorkResult::Embeddings { vectors, .. } => {
                 if pending.advances_semantic {
+                    let projection = pending.embedding_projection.as_ref().ok_or_else(|| {
+                        RuntimeError::InvalidProviderResult {
+                            work_id: work_id(&pending.expected_work).to_owned(),
+                            message: "embedding work did not retain its projection identity"
+                                .to_owned(),
+                        }
+                    })?;
+                    self.persist_embedding_result(
+                        pending.generation,
+                        &pending.expected_work,
+                        projection,
+                        &vectors,
+                    )?;
                     if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
                         *count = count.saturating_sub(1);
                         if *count == 0 {
@@ -1027,8 +1046,11 @@ impl MemoriaRuntime {
                 projection: projection.clone(),
                 space_policy,
             });
-            self.pending_provider_work
-                .push_back(PendingProviderWork { generation, work });
+            self.pending_provider_work.push_back(PendingProviderWork {
+                generation,
+                work,
+                embedding_projection: None,
+            });
         }
     }
 
@@ -1053,9 +1075,92 @@ impl MemoriaRuntime {
             }],
             space_policy,
         });
-        self.pending_provider_work
-            .push_back(PendingProviderWork { generation, work });
+        self.pending_provider_work.push_back(PendingProviderWork {
+            generation,
+            work,
+            embedding_projection: Some(projection),
+        });
         *self.pending_by_generation.entry(generation).or_default() += 1;
+    }
+
+    fn persist_embedding_result(
+        &mut self,
+        generation: AuthorityGeneration,
+        expected_work: &NeedWork,
+        projection: &LocalEmbeddingProjectionV1,
+        vectors: &[crate::EmbeddingVector],
+    ) -> Result<(), RuntimeError> {
+        let NeedWork::Embeddings(request) = expected_work else {
+            return Err(RuntimeError::InvalidProviderResult {
+                work_id: work_id(expected_work).to_owned(),
+                message: "embedding result was paired with non-embedding work".to_owned(),
+            });
+        };
+
+        let mut persisted = Vec::with_capacity(vectors.len());
+        for vector in vectors {
+            let memory_id = vector.key.parse::<MemoryId>()?;
+            let memory = self.authority.get_memory_at(memory_id, generation)?;
+            let payload = VectorPayloadV1::new(
+                vector.values.clone(),
+                EmbeddingNormalization::L2,
+                request.signature.as_bytes(),
+                projection.input_hash().clone(),
+            )?;
+            let payload_hash = payload.put(self.layout.derived_dir())?;
+            let payload_bytes = payload.canonical_bytes();
+            let payload_hex = payload_hash.as_hex();
+            self.derived.register_vector_payload(&VectorPayloadRecord {
+                payload_hash,
+                dimension: payload.dimension(),
+                normalization: payload.normalization(),
+                producer_signature: request.signature.clone(),
+                projection_input_hash: projection.input_hash().clone(),
+                object_path: format!("objects/vector/{}/{}.vec", &payload_hex[..2], payload_hex),
+                byte_length: u64::try_from(payload_bytes.len()).map_err(|_| {
+                    memoria_derived::DerivedError::InvalidProjectionValue {
+                        value: "vector payload byte length is out of range".to_owned(),
+                    }
+                })?,
+                checksum: *payload_hash.as_bytes(),
+                created_at: 0,
+            })?;
+            persisted.push((memory, payload_hash));
+        }
+
+        let semantic_artifact = self.derived.stage_artifact(
+            SEMANTIC_ARTIFACT_KIND,
+            SEMANTIC_ARTIFACT_VERSION,
+            generation,
+        )?;
+        for (memory, payload_hash) in persisted {
+            self.derived.insert_vector_membership(
+                semantic_artifact.id(),
+                memory.space_id,
+                memory.memory_id,
+                memory.head_revision_id,
+                format!("memory:{}", memory.memory_id),
+                None,
+                "leaf",
+                payload_hash,
+                generation,
+            )?;
+        }
+        let input_hash = hex_lower(projection.input_hash().as_bytes());
+        let job = self.derived.enqueue_build_job(
+            "embedding",
+            &input_hash,
+            &request.signature,
+            generation,
+        )?;
+        self.derived.mark_build_job_succeeded(&job.job_id)?;
+        let _ = self.derived.enqueue_build_job(
+            "ann-segment",
+            input_hash,
+            &request.signature,
+            generation,
+        )?;
+        Ok(())
     }
 
     fn advance_semantic_build_coverage(&mut self) {

@@ -285,7 +285,15 @@ impl DerivedCatalog {
             ],
         )?;
         let stored = self.vector_payload(record.payload_hash)?;
-        if stored != *record {
+        if stored.payload_hash != record.payload_hash
+            || stored.dimension != record.dimension
+            || stored.normalization != record.normalization
+            || stored.producer_signature != record.producer_signature
+            || stored.projection_input_hash != record.projection_input_hash
+            || stored.object_path != record.object_path
+            || stored.byte_length != record.byte_length
+            || stored.checksum != record.checksum
+        {
             return Err(DerivedError::InvalidProjectionValue {
                 value: "vector payload identity already contains different metadata".to_owned(),
             });
@@ -573,7 +581,14 @@ impl DerivedCatalog {
                     actual: artifact_generation,
                 });
             }
-            if kind == "semantic" && version == 1 {
+            let has_vector_membership: bool = transaction.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM vector_memberships WHERE artifact_id = ?1
+                )",
+                params![id.value()],
+                |row| row.get(0),
+            )?;
+            if kind == "semantic" && version == 1 && has_vector_membership {
                 has_compatible_semantic_artifact = true;
             }
             kinds.insert(kind);

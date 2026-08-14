@@ -1,4 +1,7 @@
-use memoria_derived::DerivedCatalog;
+use memoria_derived::{
+    DerivedCatalog, EmbeddingNormalization, ProjectionInputHash, VectorPayloadHash,
+    VectorPayloadRecord,
+};
 use memoria_types::AuthorityGeneration;
 use tempfile::tempdir;
 
@@ -41,6 +44,33 @@ fn semantic_is_ready_only_when_manifest_coverage_meets_authority_requirement() {
         .stage_artifact("semantic", 1, AuthorityGeneration::new(5))
         .unwrap();
     catalog.validate_artifact(artifact.id()).unwrap();
+    let payload_hash = VectorPayloadHash::from_bytes([0x31; 32]);
+    catalog
+        .register_vector_payload(&VectorPayloadRecord {
+            payload_hash,
+            dimension: 3,
+            normalization: EmbeddingNormalization::L2,
+            producer_signature: "provider:model:v1".to_owned(),
+            projection_input_hash: ProjectionInputHash::from_bytes([0x32; 32]),
+            object_path: "objects/vector/31/payload.vec".to_owned(),
+            byte_length: 99,
+            checksum: [0x31; 32],
+            created_at: 0,
+        })
+        .unwrap();
+    catalog
+        .insert_vector_membership(
+            artifact.id(),
+            fixture_space(),
+            memoria_types::MemoryId::from_bytes([8; 16]),
+            memoria_types::RevisionId::from_bytes([9; 32]),
+            "memory:fixture",
+            None,
+            "leaf",
+            payload_hash,
+            AuthorityGeneration::new(5),
+        )
+        .unwrap();
     let manifest = catalog
         .publish_manifest_at_generation(
             vec![artifact.id()],
