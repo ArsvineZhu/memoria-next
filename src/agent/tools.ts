@@ -114,7 +114,7 @@ export interface AgentTools {
   discoverMemoryOwner(
     input: DiscoverMemoryOwnerInput,
   ): Promise<MemoryOwnerResult>;
-  readMemory(input: { id: string }): Promise<AgentMemory>;
+  readMemory(input: { id: string; revisionId?: string }): Promise<AgentMemory>;
   recordMemory(input: {
     space: { key: string };
     mdx: string;
@@ -234,7 +234,12 @@ export function createAgentTools(options: AgentToolsOptions): AgentTools {
     },
     async readMemory(input) {
       requirePermission("read");
-      return options.backend.readMemory({ memoryId: input.id });
+      return options.backend.readMemory({
+        memoryId: input.id,
+        ...(input.revisionId === undefined
+          ? {}
+          : { revisionId: input.revisionId }),
+      });
     },
     async recordMemory(input) {
       requirePermission("write");

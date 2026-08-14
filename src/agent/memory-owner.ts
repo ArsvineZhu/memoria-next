@@ -24,7 +24,10 @@ export interface OwnerDiscoveryBackend {
     scope: readonly string[];
     cue: string;
   }): Promise<readonly AgentQueryHit[]>;
-  readMemory(input: { memoryId: string }): Promise<AgentMemory>;
+  readMemory(input: {
+    memoryId: string;
+    revisionId?: string;
+  }): Promise<AgentMemory>;
 }
 
 export interface DiscoverMemoryOwnerInput {
@@ -95,7 +98,7 @@ export async function discoverMemoryOwner(
     candidates.push({
       memoryId: memory.memoryId,
       spaceId: memory.spaceId,
-      revisionId: memory.revisionId,
+      revisionId: hit.revisionId,
       ...(memory.documentKey === undefined
         ? {}
         : { documentKey: memory.documentKey }),
