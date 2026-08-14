@@ -35,6 +35,13 @@ pub struct TagSeed {
     pub provenance: TagSeedProvenance,
 }
 
+impl TagSeed {
+    #[must_use]
+    pub const fn weight(&self) -> f32 {
+        self.provenance.weight()
+    }
+}
+
 /// A query-local Tag vector candidate used by the Tag Basis operator.
 ///
 /// The vector is discovery evidence only; it never changes the authoritative

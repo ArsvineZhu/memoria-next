@@ -65,21 +65,26 @@ pub fn diffusion_propagate(
         indexes.insert(tag_id, index);
     }
     let mut seed_mass = vec![0.0_f32; node_ids.len()];
-    let seed_weight = if seeds.is_empty() {
-        0.0
-    } else {
-        1.0 / seeds.len() as f32
-    };
     let mut seed_origins = BTreeMap::<memoria_derived::TagId, Vec<crate::TagSeedProvenance>>::new();
-    let mut seed_provenance = BTreeMap::new();
+    let mut seed_provenance =
+        BTreeMap::<memoria_derived::TagId, Vec<crate::TagSeedProvenance>>::new();
     for seed in seeds {
-        seed_provenance.insert(seed.tag_id, seed.provenance);
+        let provenances = seed_provenance.entry(seed.tag_id).or_default();
+        if !provenances.contains(&seed.provenance) {
+            provenances.push(seed.provenance);
+        }
         if let Some(index) = indexes.get(&seed.tag_id).copied() {
-            seed_mass[index] += seed_weight;
-            seed_origins
-                .entry(seed.tag_id)
-                .or_default()
-                .push(seed.provenance);
+            seed_mass[index] = seed_mass[index].max(seed.weight());
+            let origins = seed_origins.entry(seed.tag_id).or_default();
+            if !origins.contains(&seed.provenance) {
+                origins.push(seed.provenance);
+            }
+        }
+    }
+    let total_seed_mass = seed_mass.iter().sum::<f32>();
+    if total_seed_mass > 0.0 {
+        for mass in &mut seed_mass {
+            *mass /= total_seed_mass;
         }
     }
 
@@ -175,7 +180,7 @@ pub fn diffusion_propagate(
             let support_seed_ids = support_sets[index].iter().copied().collect::<Vec<_>>();
             let mut origins = support_seed_ids
                 .iter()
-                .filter_map(|seed_id| seed_provenance.get(seed_id).copied())
+                .flat_map(|seed_id| seed_provenance.get(seed_id).into_iter().flatten().copied())
                 .collect::<Vec<_>>();
             origins.sort_unstable();
             origins.dedup();

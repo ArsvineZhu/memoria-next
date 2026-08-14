@@ -65,7 +65,19 @@ pub fn activation_propagate(
     let mut frontier = VecDeque::new();
     let mut truncated = false;
     for seed in seeds {
-        if active.contains_key(&seed.tag_id) {
+        let seed_weight = seed.weight();
+        if let Some(existing) = active.get_mut(&seed.tag_id) {
+            merge_origins(&mut existing.seed_origins, &[seed.provenance]);
+            if seed_weight > existing.score + SCORE_EPSILON {
+                existing.score = seed_weight;
+                existing.strongest_support = existing.strongest_support.max(seed_weight);
+                existing.static_contribution = existing.static_contribution.max(seed_weight);
+                frontier.push_back(FrontierItem {
+                    tag_id: seed.tag_id,
+                    score: seed_weight,
+                    hops: 0,
+                });
+            }
             continue;
         }
         if active.len() >= budget.max_active_tags {
@@ -76,12 +88,12 @@ pub fn activation_propagate(
             seed.tag_id,
             PropagatedTag {
                 tag_id: seed.tag_id,
-                score: 1.0,
+                score: seed_weight,
                 hops: 0,
                 seed_origins: vec![seed.provenance],
-                strongest_support: 1.0,
+                strongest_support: seed_weight,
                 independent_seed_count: 1,
-                static_contribution: 1.0,
+                static_contribution: seed_weight,
                 adaptive_contribution: 0.0,
                 support_seed_ids: vec![seed.tag_id],
                 seed_ids: BTreeSet::from([seed.tag_id]),
@@ -89,7 +101,7 @@ pub fn activation_propagate(
         );
         frontier.push_back(FrontierItem {
             tag_id: seed.tag_id,
-            score: 1.0,
+            score: seed_weight,
             hops: 0,
         });
     }
