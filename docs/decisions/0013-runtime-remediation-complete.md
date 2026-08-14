@@ -2,9 +2,13 @@
 
 ## Status
 
-Accepted on 2026-08-14 for the Windows implementation branch
-`codex/memoria-next-foundation`. Linux and macOS evidence remains open because
-those hosts were not available for this run.
+Incomplete — superseded by production serving integration.
+
+The infrastructure remediation recorded below is retained as historical
+evidence, but the completion claim is withdrawn until the production query
+executor proves multi-channel serving, strict capability readiness, real
+post-consolidation reranking, capability-gated Adaptive ordering, and a
+benchmark that exercises the Runtime path rather than a retrieval simulator.
 
 ## Decision
 
