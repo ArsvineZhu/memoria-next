@@ -22,6 +22,7 @@ use crate::limits::{ResourceLimits, check_source_bytes};
 use crate::privacy::{ProviderCapability, ProviderEgressPolicy};
 use crate::provider::{
     EmbeddingBatchRequest, EmbeddingItem, NeedWork, ProviderWorkResult, RerankBatchRequest,
+    validate_provider_result,
 };
 use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
 use crate::query_operation::{QueryOperationTable, QueryStep, QueryWork};
@@ -73,6 +74,17 @@ pub enum RuntimeError {
     #[error("query provider rejected work `{work_id}`")]
     QueryProviderRejected { work_id: String },
 
+    #[error("provider result `{work_id}` is invalid: {message}")]
+    InvalidProviderResult { work_id: String, message: String },
+
+    #[error("provider failure for `{work_id}` ({code}, retryable={retryable}): {message}")]
+    ProviderFailure {
+        work_id: String,
+        retryable: bool,
+        code: String,
+        message: String,
+    },
+
     #[error("query operation `{operation_id}` is pending provider work")]
     QueryOperationPending { operation_id: String },
 
@@ -107,6 +119,9 @@ impl RuntimeError {
             Self::Query(_) | Self::Consolidation(_) => "QUERY_ERROR",
             Self::UnexpectedProviderWork { .. } => "PROVIDER_UNAVAILABLE",
             Self::UnexpectedQueryWork { .. } | Self::QueryProviderRejected { .. } => {
+                "PROVIDER_UNAVAILABLE"
+            }
+            Self::InvalidProviderResult { .. } | Self::ProviderFailure { .. } => {
                 "PROVIDER_UNAVAILABLE"
             }
             Self::QueryOperationNotFound { .. } => "SNAPSHOT_UNAVAILABLE",
@@ -155,6 +170,7 @@ struct PendingProviderWork {
 
 struct InflightProviderWork {
     generation: AuthorityGeneration,
+    expected_work: NeedWork,
     advances_semantic: bool,
     enrichment_projection: Option<EnrichmentProjection>,
 }
@@ -490,9 +506,30 @@ impl MemoriaRuntime {
                 operation_id: operation_id.to_owned(),
             });
         }
-        if operation.work.work_id() != result.work_id {
+        if operation.work.work_id() != result.work_id() {
             return Err(RuntimeError::UnexpectedQueryWork {
-                work_id: result.work_id,
+                work_id: result.work_id().to_owned(),
+            });
+        }
+        let expected_work = operation.work.as_need_work();
+        let result = validate_provider_result(&expected_work, result).map_err(|error| {
+            RuntimeError::InvalidProviderResult {
+                work_id: work_id(&expected_work).to_owned(),
+                message: error.to_string(),
+            }
+        })?;
+        if let ProviderWorkResult::Failure {
+            work_id,
+            retryable,
+            code,
+            message,
+        } = result
+        {
+            return Err(RuntimeError::ProviderFailure {
+                work_id,
+                retryable,
+                code,
+                message,
             });
         }
         let operation = self.query_operations.remove(operation_id).ok_or_else(|| {
@@ -500,11 +537,6 @@ impl MemoriaRuntime {
                 operation_id: operation_id.to_owned(),
             }
         })?;
-        if !result.accepted {
-            return Err(RuntimeError::QueryProviderRejected {
-                work_id: operation.work.work_id().to_owned(),
-            });
-        }
         if matches!(operation.work, QueryWork::Embedding(_))
             && !operation.rerank_candidates.is_empty()
         {
@@ -711,16 +743,19 @@ impl MemoriaRuntime {
         let metadata = match &pending.work {
             NeedWork::Embeddings(_) => InflightProviderWork {
                 generation: pending.generation,
+                expected_work: pending.work.clone(),
                 advances_semantic: true,
                 enrichment_projection: None,
             },
             NeedWork::Enrichment(request) => InflightProviderWork {
                 generation: pending.generation,
+                expected_work: pending.work.clone(),
                 advances_semantic: false,
                 enrichment_projection: Some(request.projection.clone()),
             },
             NeedWork::Rerank(_) => InflightProviderWork {
                 generation: pending.generation,
+                expected_work: pending.work.clone(),
                 advances_semantic: false,
                 enrichment_projection: None,
             },
@@ -734,33 +769,62 @@ impl MemoriaRuntime {
         result: ProviderWorkResult,
     ) -> Result<(), RuntimeError> {
         self.ensure_open()?;
+        let Some(inflight) = self.inflight_provider_work.get(result.work_id()) else {
+            return Err(RuntimeError::UnexpectedProviderWork {
+                work_id: result.work_id().to_owned(),
+            });
+        };
+        let result =
+            validate_provider_result(&inflight.expected_work, result).map_err(|error| {
+                RuntimeError::InvalidProviderResult {
+                    work_id: work_id(&inflight.expected_work).to_owned(),
+                    message: error.to_string(),
+                }
+            })?;
         let pending = self
             .inflight_provider_work
-            .remove(&result.work_id)
+            .remove(result.work_id())
             .ok_or_else(|| RuntimeError::UnexpectedProviderWork {
-                work_id: result.work_id.clone(),
+                work_id: result.work_id().to_owned(),
             })?;
-        if result.accepted {
-            if let Some(projection) = pending.enrichment_projection {
+        match result {
+            ProviderWorkResult::Enrichment { tags, .. } => {
+                let Some(projection) = pending.enrichment_projection else {
+                    return Err(RuntimeError::InvalidProviderResult {
+                        work_id: work_id(&pending.expected_work).to_owned(),
+                        message: "enrichment result did not have an enrichment request".to_owned(),
+                    });
+                };
                 let artifact = GeneratedTagArtifact::from_candidates(
                     projection,
                     &mut self.tag_dictionary,
-                    result.tags,
+                    tags,
                 )?;
                 self.generated_tag_artifacts
                     .insert(artifact.projection_input_hash().clone(), artifact);
             }
-            if pending.advances_semantic {
-                if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
-                    *count = count.saturating_sub(1);
-                    if *count == 0 {
-                        self.pending_by_generation.remove(&pending.generation);
+            ProviderWorkResult::Embeddings { .. } => {
+                if pending.advances_semantic {
+                    if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            self.pending_by_generation.remove(&pending.generation);
+                        }
                     }
+                    self.advance_semantic_coverage();
                 }
-                self.advance_semantic_coverage();
             }
-        } else {
-            self.last_error = Some(format!("provider work `{}` was rejected", result.work_id));
+            ProviderWorkResult::Rerank { .. } => {}
+            ProviderWorkResult::Failure {
+                work_id,
+                retryable,
+                code,
+                message,
+            } => {
+                self.last_error = Some(format!(
+                    "provider failure for `{work_id}` ({code}, retryable={retryable}): {message}"
+                ));
+            }
         }
         Ok(())
     }

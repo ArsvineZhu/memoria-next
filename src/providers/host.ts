@@ -78,13 +78,18 @@ export class ProviderHost {
           egressWork.type === "enrichment"
             ? validateTagEnrichmentPayload(egressWork, providerResult)
             : undefined;
-        return {
-          workId: work.workId,
-          accepted: true,
-          embeddings,
-          scores,
-          tags,
-        };
+        switch (egressWork.type) {
+          case "embedding":
+            return {
+              type: "embeddings",
+              workId: work.workId,
+              vectors: embeddings!,
+            };
+          case "rerank":
+            return { type: "rerank", workId: work.workId, scores: scores! };
+          case "enrichment":
+            return { type: "enrichment", workId: work.workId, tags: tags! };
+        }
       } catch (error) {
         lastError = error;
         if (signal.aborted || attempt === this.#maxAttempts) {
@@ -133,20 +138,33 @@ function validateEmbeddingPayload(
   work: EmbeddingWork,
   result: unknown,
 ): EmbeddingPayload[] {
-  const vectors = Array.isArray(result)
-    ? result
-    : result && typeof result === "object" && "vectors" in result
+  const vectors =
+    result && typeof result === "object" && "vectors" in result
       ? (result as { vectors: unknown }).vectors
       : undefined;
   if (!Array.isArray(vectors) || vectors.length !== work.items.length) {
     throw new Error("embedding provider returned the wrong item count");
   }
-  return vectors.map((vector, index) => {
-    const values = Array.isArray(vector)
-      ? vector
-      : vector && typeof vector === "object" && "values" in vector
-        ? (vector as { values: unknown }).values
-        : undefined;
+  const expected = new Set(work.items.map((item) => item.key));
+  const seen = new Set<string>();
+  const byKey = new Map<string, number[]>();
+  vectors.forEach((vector, index) => {
+    if (!vector || typeof vector !== "object" || !("key" in vector)) {
+      throw new Error(`embedding vector ${index} is missing its key`);
+    }
+    const key = (vector as { key: unknown }).key;
+    const values =
+      "values" in vector ? (vector as { values: unknown }).values : undefined;
+    if (
+      typeof key !== "string" ||
+      key.length === 0 ||
+      !expected.has(key) ||
+      seen.has(key)
+    ) {
+      throw new Error(
+        `embedding vector ${index} returned an unknown or duplicate key`,
+      );
+    }
     if (
       !Array.isArray(values) ||
       values.length !== work.dimensions ||
@@ -158,8 +176,16 @@ function validateEmbeddingPayload(
         `embedding dimension/value validation failed for item ${work.items[index]?.key ?? index}`,
       );
     }
-    return { key: work.items[index].key, values: [...values] };
+    seen.add(key);
+    byKey.set(key, [...values]);
   });
+  if (seen.size !== expected.size) {
+    throw new Error("embedding provider result is missing a requested key");
+  }
+  return work.items.map((item) => ({
+    key: item.key,
+    values: byKey.get(item.key)!,
+  }));
 }
 
 function validateRerankPayload(

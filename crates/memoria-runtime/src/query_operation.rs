@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use memoria_query::{CompiledQuery, RetrievalResponse};
 use memoria_types::MemoryId;
 
-use crate::provider::{EmbeddingBatchRequest, RerankBatchRequest};
+use crate::provider::{EmbeddingBatchRequest, NeedWork, RerankBatchRequest};
 
 pub const QUERY_OPERATION_TTL: Duration = Duration::from_secs(5 * 60);
 
@@ -21,6 +21,14 @@ impl QueryWork {
         match self {
             Self::Embedding(work) => &work.work_id,
             Self::Rerank(work) => &work.work_id,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn as_need_work(&self) -> NeedWork {
+        match self {
+            Self::Embedding(work) => NeedWork::Embeddings(work.clone()),
+            Self::Rerank(work) => NeedWork::Rerank(work.clone()),
         }
     }
 }

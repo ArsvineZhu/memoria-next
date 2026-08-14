@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use memoria_query::{MemoryQuery, ReadSession};
-use memoria_runtime::{MemoriaRuntime, ProviderWorkResult, RerankScore};
+use memoria_runtime::MemoriaRuntime;
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -14,7 +14,7 @@ use napi_derive::napi;
 use crate::convert::{
     JsCreateMemoryRequest, JsFeedbackCommit, JsFeedbackSubmission, JsMemoryMutation,
     JsPortableMemory, JsProviderResult, JsProviderWork, JsPurgePlan, JsQueryRequest, JsQueryStep,
-    JsReviseMemoryRequest, JsStatus, QueryRequest, query_step_to_js,
+    JsReviseMemoryRequest, JsStatus, QueryRequest, provider_result_from_js, query_step_to_js,
 };
 use crate::error::{runtime_error, to_napi_error};
 
@@ -227,23 +227,7 @@ pub fn query_resume(
         .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
     runtime
-        .query_resume(
-            &operation_id,
-            ProviderWorkResult {
-                work_id: result.work_id,
-                accepted: result.accepted,
-                scores: result
-                    .scores
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|score| RerankScore {
-                        handle: score.handle,
-                        score: score.score as f32,
-                    })
-                    .collect(),
-                tags: result.tags.unwrap_or_default(),
-            },
-        )
+        .query_resume(&operation_id, provider_result_from_js(result)?)
         .map_err(runtime_error)
         .and_then(query_step_to_js)
 }
@@ -312,19 +296,6 @@ pub fn provider_submit_result(store: &NativeStore, result: JsProviderResult) -> 
         .as_mut()
         .ok_or_else(|| napi::Error::from_reason("store is closed"))?;
     runtime
-        .provider_submit_result(ProviderWorkResult {
-            work_id: result.work_id,
-            accepted: result.accepted,
-            scores: result
-                .scores
-                .unwrap_or_default()
-                .into_iter()
-                .map(|score| RerankScore {
-                    handle: score.handle,
-                    score: score.score as f32,
-                })
-                .collect(),
-            tags: result.tags.unwrap_or_default(),
-        })
+        .provider_submit_result(provider_result_from_js(result)?)
         .map_err(runtime_error)
 }

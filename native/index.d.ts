@@ -26,6 +26,11 @@ export interface JsCreateMemoryRequest {
   mdx: string
 }
 
+export interface JsEmbeddingVector {
+  key: string
+  values: Array<number>
+}
+
 export interface JsEnrichmentProjection {
   version: number
   inputHash: string
@@ -85,10 +90,14 @@ export interface JsProviderItem {
 }
 
 export interface JsProviderResult {
+  type: string
   workId: string
-  accepted: boolean
+  vectors?: Array<JsEmbeddingVector>
   scores?: Array<JsRerankScore>
   tags?: Array<string>
+  retryable?: boolean
+  code?: string
+  message?: string
 }
 
 export interface JsProviderWork {

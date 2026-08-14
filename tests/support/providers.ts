@@ -24,7 +24,12 @@ export function deferredEmbeddingProvider(): DeferredEmbeddingProvider {
         pending.push({
           resolve: () =>
             resolve({
-              vectors: [Array.from({ length: work.dimensions }, () => 0)],
+              vectors: [
+                {
+                  key: work.items[0]?.key ?? "query",
+                  values: Array.from({ length: work.dimensions }, () => 0),
+                },
+              ],
             }),
           reject,
         });

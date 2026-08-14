@@ -7,8 +7,8 @@ use memoria_query::{
     QueryQualityLevel, ReadinessBehavior,
 };
 use memoria_runtime::{
-    FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork, PortableMemory,
-    PurgePlan, PurgeState, QueryStep, QueryWork,
+    EmbeddingVector, FeedbackCommit, FeedbackSubmission, FeedbackSubmissionEvent, NeedWork,
+    PortableMemory, ProviderWorkResult, PurgePlan, PurgeState, QueryStep, QueryWork, RerankScore,
 };
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use napi::bindgen_prelude::Result;
@@ -640,10 +640,21 @@ impl From<(String, memoria_query::MemoryResult)> for JsQueryResult {
 #[napi(object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsProviderResult {
+    pub r#type: String,
     pub work_id: String,
-    pub accepted: bool,
+    pub vectors: Option<Vec<JsEmbeddingVector>>,
     pub scores: Option<Vec<JsRerankScore>>,
     pub tags: Option<Vec<String>>,
+    pub retryable: Option<bool>,
+    pub code: Option<String>,
+    pub message: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsEmbeddingVector {
+    pub key: String,
+    pub values: Vec<f64>,
 }
 
 #[napi(object)]
@@ -651,6 +662,87 @@ pub struct JsProviderResult {
 pub struct JsRerankScore {
     pub handle: String,
     pub score: f64,
+}
+
+pub fn provider_result_from_js(result: JsProviderResult) -> Result<ProviderWorkResult> {
+    let work_id = result.work_id;
+    match result.r#type.as_str() {
+        "embeddings" => {
+            let vectors = result.vectors.ok_or_else(|| {
+                napi::Error::from_reason(
+                    "PROVIDER_UNAVAILABLE: embeddings result is missing vectors",
+                )
+            })?;
+            Ok(ProviderWorkResult::Embeddings {
+                work_id,
+                vectors: vectors
+                    .into_iter()
+                    .map(|vector| {
+                        Ok(EmbeddingVector {
+                            key: vector.key,
+                            values: vector
+                                .values
+                                .into_iter()
+                                .map(provider_f32)
+                                .collect::<Result<Vec<_>>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            })
+        }
+        "rerank" => {
+            let scores = result.scores.ok_or_else(|| {
+                napi::Error::from_reason("PROVIDER_UNAVAILABLE: rerank result is missing scores")
+            })?;
+            Ok(ProviderWorkResult::Rerank {
+                work_id,
+                scores: scores
+                    .into_iter()
+                    .map(|score| {
+                        Ok(RerankScore {
+                            handle: score.handle,
+                            score: provider_f32(score.score)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            })
+        }
+        "enrichment" => {
+            let tags = result.tags.ok_or_else(|| {
+                napi::Error::from_reason("PROVIDER_UNAVAILABLE: enrichment result is missing tags")
+            })?;
+            Ok(ProviderWorkResult::Enrichment { work_id, tags })
+        }
+        "failure" => Ok(ProviderWorkResult::Failure {
+            work_id,
+            retryable: result.retryable.ok_or_else(|| {
+                napi::Error::from_reason(
+                    "PROVIDER_UNAVAILABLE: provider failure is missing retryable",
+                )
+            })?,
+            code: result.code.ok_or_else(|| {
+                napi::Error::from_reason("PROVIDER_UNAVAILABLE: provider failure is missing code")
+            })?,
+            message: result.message.ok_or_else(|| {
+                napi::Error::from_reason(
+                    "PROVIDER_UNAVAILABLE: provider failure is missing message",
+                )
+            })?,
+        }),
+        other => Err(napi::Error::from_reason(format!(
+            "PROVIDER_UNAVAILABLE: unsupported provider result type `{other}`"
+        ))),
+    }
+}
+
+fn provider_f32(value: f64) -> Result<f32> {
+    let converted = value as f32;
+    if !value.is_finite() || !converted.is_finite() {
+        return Err(napi::Error::from_reason(
+            "PROVIDER_UNAVAILABLE: provider numeric result must be finite and representable as f32",
+        ));
+    }
+    Ok(converted)
 }
 
 #[napi(object)]

@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use memoria_query::MemoryQuery;
 use memoria_runtime::{
-    MemoriaRuntime, NeedWork, ProviderWorkResult, QueryStep, QueryWork, RuntimeError,
+    EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector, MemoriaRuntime, NeedWork,
+    ProviderWorkResult, QueryStep, QueryWork, RuntimeError, validate_provider_result,
 };
 use tempfile::tempdir;
 
@@ -63,16 +64,153 @@ fn wrong_work_id_cannot_resume_operation() {
     let error = runtime
         .query_resume(
             &operation_id,
-            ProviderWorkResult {
+            ProviderWorkResult::Embeddings {
                 work_id: "wrong-work-id".to_owned(),
-                accepted: true,
-                scores: Vec::new(),
-                tags: Vec::new(),
+                vectors: vec![EmbeddingVector {
+                    key: "query".to_owned(),
+                    values: vec![0.0, 0.0, 0.0],
+                }],
             },
         )
         .unwrap_err();
     assert!(matches!(&error, RuntimeError::UnexpectedQueryWork { .. }));
     assert_eq!(error.code(), "PROVIDER_UNAVAILABLE");
+}
+
+#[test]
+fn invalid_embedding_payload_is_rejected_before_operation_resume() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    runtime
+        .create_memory(space, Some("career"), b"# Career\nRust systems work")
+        .unwrap();
+    let (operation_id, work_id) = pending_embedding(&mut runtime, space);
+
+    let error = runtime
+        .query_resume(
+            &operation_id,
+            ProviderWorkResult::Embeddings {
+                work_id: work_id.clone(),
+                vectors: vec![EmbeddingVector {
+                    key: "query".to_owned(),
+                    values: vec![0.0, 0.0],
+                }],
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(&error, RuntimeError::InvalidProviderResult { .. }));
+    assert_eq!(error.code(), "PROVIDER_UNAVAILABLE");
+
+    let resumed = runtime
+        .query_resume(
+            &operation_id,
+            ProviderWorkResult::Embeddings {
+                work_id,
+                vectors: vec![EmbeddingVector {
+                    key: "query".to_owned(),
+                    values: vec![0.0, 0.0, 0.0],
+                }],
+            },
+        )
+        .unwrap();
+    assert!(matches!(resumed, QueryStep::Complete(_)));
+}
+
+#[test]
+fn query_provider_failure_preserves_typed_metadata() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    runtime
+        .create_memory(space, Some("career"), b"# Career\nRust systems work")
+        .unwrap();
+    let (operation_id, work_id) = pending_embedding(&mut runtime, space);
+
+    let error = runtime
+        .query_resume(
+            &operation_id,
+            ProviderWorkResult::Failure {
+                work_id,
+                retryable: true,
+                code: "RATE_LIMITED".to_owned(),
+                message: "provider asked for backoff".to_owned(),
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        &error,
+        RuntimeError::ProviderFailure {
+            retryable: true,
+            code,
+            message,
+            ..
+        } if code == "RATE_LIMITED" && message == "provider asked for backoff"
+    ));
+    assert_eq!(error.code(), "PROVIDER_UNAVAILABLE");
+}
+
+#[test]
+fn rust_embedding_validation_uses_keys_and_reconstructs_request_order() {
+    let work = NeedWork::Embeddings(EmbeddingBatchRequest {
+        work_id: "EW_test".to_owned(),
+        signature: "embedding-v1".to_owned(),
+        dimensions: 3,
+        items: vec![
+            EmbeddingItem {
+                key: "u1".to_owned(),
+                text: "one".to_owned(),
+            },
+            EmbeddingItem {
+                key: "u2".to_owned(),
+                text: "two".to_owned(),
+            },
+        ],
+    });
+    let result = validate_provider_result(
+        &work,
+        ProviderWorkResult::Embeddings {
+            work_id: "EW_test".to_owned(),
+            vectors: vec![
+                EmbeddingVector {
+                    key: "u2".to_owned(),
+                    values: vec![0.0, 1.0, 0.0],
+                },
+                EmbeddingVector {
+                    key: "u1".to_owned(),
+                    values: vec![1.0, 0.0, 0.0],
+                },
+            ],
+        },
+    )
+    .unwrap();
+    let ProviderWorkResult::Embeddings { vectors, .. } = result else {
+        panic!("expected embedding result");
+    };
+    assert_eq!(vectors[0].key, "u1");
+    assert_eq!(vectors[1].key, "u2");
+
+    let duplicate = validate_provider_result(
+        &work,
+        ProviderWorkResult::Embeddings {
+            work_id: "EW_test".to_owned(),
+            vectors: vec![
+                EmbeddingVector {
+                    key: "u1".to_owned(),
+                    values: vec![1.0, 0.0, 0.0],
+                },
+                EmbeddingVector {
+                    key: "u1".to_owned(),
+                    values: vec![0.0, 1.0, 0.0],
+                },
+            ],
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        duplicate,
+        memoria_runtime::ProviderResultValidationError::EmbeddingKeys
+    ));
 }
 
 #[test]
@@ -89,11 +227,12 @@ fn cancelled_operation_cannot_resume() {
     let error = runtime
         .query_resume(
             &operation_id,
-            ProviderWorkResult {
+            ProviderWorkResult::Embeddings {
                 work_id,
-                accepted: true,
-                scores: Vec::new(),
-                tags: Vec::new(),
+                vectors: vec![EmbeddingVector {
+                    key: "query".to_owned(),
+                    values: vec![0.0, 0.0, 0.0],
+                }],
             },
         )
         .unwrap_err();
@@ -118,11 +257,12 @@ fn expired_operation_returns_query_operation_expired() {
     let error = runtime
         .query_resume(
             &operation_id,
-            ProviderWorkResult {
+            ProviderWorkResult::Embeddings {
                 work_id,
-                accepted: true,
-                scores: Vec::new(),
-                tags: Vec::new(),
+                vectors: vec![EmbeddingVector {
+                    key: "query".to_owned(),
+                    values: vec![0.0, 0.0, 0.0],
+                }],
             },
         )
         .unwrap_err();
@@ -145,11 +285,12 @@ fn status_cleanup_removes_expired_operation() {
     let error = runtime
         .query_resume(
             &operation_id,
-            ProviderWorkResult {
+            ProviderWorkResult::Embeddings {
                 work_id,
-                accepted: true,
-                scores: Vec::new(),
-                tags: Vec::new(),
+                vectors: vec![EmbeddingVector {
+                    key: "query".to_owned(),
+                    values: vec![0.0, 0.0, 0.0],
+                }],
             },
         )
         .unwrap_err();

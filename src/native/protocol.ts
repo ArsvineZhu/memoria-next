@@ -101,14 +101,29 @@ export interface NativeMemoryMutation {
   authorityGeneration: string;
 }
 
-export interface NativeProviderResult {
-  workId: string;
-  accepted: boolean;
-  scores?: Array<{ handle: string; score: number }>;
-  tags?: string[];
-}
-
-export type NativeQueryWorkResult = NativeProviderResult;
+export type NativeProviderWorkResult =
+  | {
+      type: "embeddings";
+      workId: string;
+      vectors: Array<{ key: string; values: number[] }>;
+    }
+  | {
+      type: "rerank";
+      workId: string;
+      scores: Array<{ handle: string; score: number }>;
+    }
+  | {
+      type: "enrichment";
+      workId: string;
+      tags: string[];
+    }
+  | {
+      type: "failure";
+      workId: string;
+      retryable: boolean;
+      code: string;
+      message: string;
+    };
 
 export interface NativeFeedbackSubmission {
   retrievalId: string;
@@ -211,10 +226,10 @@ export interface NativeBinding {
   queryResume(
     store: NativeStoreHandle,
     operationId: string,
-    result: NativeQueryWorkResult,
+    result: NativeProviderWorkResult,
   ): NativeQueryResponse | NativeQueryStep | Promise<NativeQueryResponse | NativeQueryStep>;
   providerPollWork(store: NativeStoreHandle): NativeProviderWork | null;
-  providerSubmitResult(store: NativeStoreHandle, result: NativeProviderResult): void;
+  providerSubmitResult(store: NativeStoreHandle, result: NativeProviderWorkResult): void;
   feedbackSubmit(
     store: NativeStoreHandle,
     request: NativeFeedbackSubmission,

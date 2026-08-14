@@ -58,7 +58,10 @@ export async function rerankScopedCandidates(
     },
     options.signal ?? new AbortController().signal,
   );
-  const scores = result.scores ?? [];
+  if (result.type !== "rerank") {
+    throw new Error("rerank provider returned a non-rerank result");
+  }
+  const scores = result.scores;
   const byHandle = new Map(scores.map((score) => [score.handle, score]));
   if (
     scores.length !== selected.length ||

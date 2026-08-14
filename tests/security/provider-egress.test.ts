@@ -12,7 +12,7 @@ test("required semantic fails before local-only provider egress", async () => {
   const embedding: EmbeddingProvider = {
     async execute() {
       calls += 1;
-      return [[1, 0]];
+      return { vectors: [{ key: "memory-1", values: [1, 0] }] };
     },
   };
   const host = new ProviderHost({

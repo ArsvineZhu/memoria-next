@@ -19,8 +19,9 @@ pub use limits::{ResourceLimitError, ResourceLimits, check_source_bytes};
 pub use memoria_query::{MemoryQuery, RetrievalResponse};
 pub use privacy::{ProviderCapability, ProviderEgressPolicy};
 pub use provider::{
-    EmbeddingBatchRequest, EmbeddingItem, EnrichmentBatchRequest, NeedWork, ProviderWorkResult,
-    RerankBatchRequest, RerankScore,
+    EmbeddingBatchRequest, EmbeddingItem, EmbeddingVector, EnrichmentBatchRequest, NeedWork,
+    ProviderResultValidationError, ProviderWorkResult, RerankBatchRequest, RerankScore,
+    validate_provider_result,
 };
 pub use purge::{PurgeCoordinator, PurgePlan, PurgeState, PurgeTransitionError};
 pub use query_operation::{QueryStep, QueryWork};

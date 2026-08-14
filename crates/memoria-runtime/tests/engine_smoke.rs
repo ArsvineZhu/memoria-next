@@ -1,7 +1,7 @@
 use memoria_query::MemoryQuery;
 use memoria_runtime::{
-    MemoriaRuntime, NeedWork, ProviderCapability, ProviderEgressPolicy, ProviderWorkResult,
-    RuntimeError,
+    EmbeddingVector, MemoriaRuntime, NeedWork, ProviderCapability, ProviderEgressPolicy,
+    ProviderWorkResult, RuntimeError,
 };
 use tempfile::tempdir;
 
@@ -54,11 +54,12 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
         other => panic!("unexpected provider work: {other:?}"),
     };
     runtime
-        .provider_submit_result(ProviderWorkResult {
+        .provider_submit_result(ProviderWorkResult::Embeddings {
             work_id,
-            accepted: true,
-            scores: Vec::new(),
-            tags: Vec::new(),
+            vectors: vec![EmbeddingVector {
+                key: memory_id.to_string(),
+                values: vec![0.0, 0.0, 0.0],
+            }],
         })
         .unwrap();
 
@@ -87,11 +88,12 @@ fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
         other => panic!("expected initial embedding work, got {other:?}"),
     };
     runtime
-        .provider_submit_result(ProviderWorkResult {
+        .provider_submit_result(ProviderWorkResult::Embeddings {
             work_id: embedding_work_id,
-            accepted: true,
-            scores: Vec::new(),
-            tags: Vec::new(),
+            vectors: vec![EmbeddingVector {
+                key: memory_id.to_string(),
+                values: vec![0.0, 0.0, 0.0],
+            }],
         })
         .unwrap();
     while let Some(work) = runtime.provider_poll_work().unwrap() {
@@ -100,14 +102,35 @@ fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
             NeedWork::Rerank(request) => request.work_id.clone(),
             NeedWork::Enrichment(request) => request.work_id.clone(),
         };
-        runtime
-            .provider_submit_result(ProviderWorkResult {
+        let result = match &work {
+            NeedWork::Embeddings(request) => ProviderWorkResult::Embeddings {
                 work_id,
-                accepted: true,
-                scores: Vec::new(),
+                vectors: request
+                    .items
+                    .iter()
+                    .map(|item| EmbeddingVector {
+                        key: item.key.clone(),
+                        values: vec![0.0, 0.0, 0.0],
+                    })
+                    .collect(),
+            },
+            NeedWork::Rerank(request) => ProviderWorkResult::Rerank {
+                work_id,
+                scores: request
+                    .candidates
+                    .iter()
+                    .map(|handle| memoria_runtime::RerankScore {
+                        handle: handle.clone(),
+                        score: 0.0,
+                    })
+                    .collect(),
+            },
+            NeedWork::Enrichment(_) => ProviderWorkResult::Enrichment {
+                work_id,
                 tags: vec!["derived".to_owned()],
-            })
-            .unwrap();
+            },
+        };
+        runtime.provider_submit_result(result).unwrap();
     }
 
     let query = MemoryQuery::builder()

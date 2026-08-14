@@ -19,7 +19,12 @@ test("background enrichment receives a versioned projection without Raw MDX", as
       embedding: {
         async execute(work) {
           return {
-            vectors: [Array.from({ length: work.dimensions }, () => 0)],
+            vectors: [
+              {
+                key: work.items[0]?.key ?? "query",
+                values: Array.from({ length: work.dimensions }, () => 0),
+              },
+            ],
           };
         },
       },

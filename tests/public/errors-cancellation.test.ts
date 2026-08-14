@@ -11,7 +11,7 @@ import type {
   NativeBinding,
   NativeCreateMemoryRequest,
   NativeMemoryMutation,
-  NativeProviderResult,
+  NativeProviderWorkResult,
   NativeQueryRequest,
   NativeQueryResponse,
   NativeReviseMemoryRequest,
@@ -94,7 +94,7 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
     },
     providerSubmitResult(
       _value: NativeStoreHandle,
-      _result: NativeProviderResult,
+      _result: NativeProviderWorkResult,
     ) {},
     feedbackSubmit() {
       return { generation: "0", events: [] };

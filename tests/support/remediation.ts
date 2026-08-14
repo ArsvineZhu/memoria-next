@@ -5,7 +5,7 @@ import type {
   NativeFeedbackSubmission,
   NativeMemoryMutation,
   NativePortableMemory,
-  NativeProviderResult,
+  NativeProviderWorkResult,
   NativeProviderWork,
   NativePurgePlan,
   NativeQueryRequest,
@@ -17,7 +17,7 @@ import type {
 import type { EmbeddingProvider } from "../../src/providers/types.js";
 
 interface PendingEmbeddingResolution {
-  resolve: (value: unknown) => void;
+  resolve: (values: number[]) => void;
   reject: (error: unknown) => void;
 }
 
@@ -46,7 +46,15 @@ export function deferredObservedEmbeddingProvider(
       });
       return new Promise<unknown>((resolve, reject) => {
         pending.push({
-          resolve,
+          resolve: (values) =>
+            resolve({
+              vectors: [
+                {
+                  key: work.items[0]?.key ?? "query",
+                  values: [...values],
+                },
+              ],
+            }),
           reject,
         });
       });
@@ -60,7 +68,7 @@ export function deferredObservedEmbeddingProvider(
     resolveAll(values = defaultValues) {
       const work = pending.splice(0);
       for (const item of work) {
-        item.resolve({ vectors: [values] });
+        item.resolve(values);
       }
     },
     rejectAll(error = new Error("deferred embedding provider rejected")) {
@@ -75,7 +83,7 @@ export function deferredObservedEmbeddingProvider(
 export interface BindingHarness {
   binding: NativeBinding;
   queryRequests: NativeQueryRequest[];
-  providerSubmissions: NativeProviderResult[];
+  providerSubmissions: NativeProviderWorkResult[];
 }
 
 interface BindingHarnessOptions {
@@ -88,7 +96,7 @@ export function createBindingHarness(
   options: BindingHarnessOptions = {},
 ): BindingHarness {
   const queryRequests: NativeQueryRequest[] = [];
-  const providerSubmissions: NativeProviderResult[] = [];
+  const providerSubmissions: NativeProviderWorkResult[] = [];
   const providerWork = [...(options.providerWork ?? [])];
   const status: NativeStatus = {
     authorityGeneration: "0",
@@ -176,7 +184,7 @@ export function createBindingHarness(
       },
       providerSubmitResult(
         _store: NativeStoreHandle,
-        result: NativeProviderResult,
+        result: NativeProviderWorkResult,
       ) {
         // Observe the exact object crossing the TypeScript NativeBinding boundary.
         providerSubmissions.push(result);

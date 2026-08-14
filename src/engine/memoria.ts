@@ -4,9 +4,9 @@ import type {
   NativeBinding,
   NativeCreateMemoryRequest,
   NativeMemoryMutation,
+  NativeProviderWorkResult,
   NativeQueryRequest,
   NativeQueryResponse,
-  NativeQueryWorkResult,
   NativePortableMemory,
   NativePurgePlan,
   NativeStatus,
@@ -17,6 +17,7 @@ import {
   toNeedWork as decodeNeedWork,
 } from "../native/protocol.js";
 import { ProviderHost } from "../providers/host.js";
+import { providerFailure } from "../providers/types.js";
 import { createAdminApi, type AdminApi } from "../admin/index.js";
 import { createDocumentsApi, type DocumentsApi } from "../domain/documents.js";
 import { MemoriaError, toMemoriaError } from "../domain/errors.js";
@@ -204,33 +205,21 @@ export class Memoria {
       this.#operations.set(operationId, step.operationId);
       this.assertNotAborted(signal);
       const work = decodeNeedWork(step.work);
-      let result: NativeQueryWorkResult;
-      try {
-        if (!this.#providerHost) {
-          throw new MemoriaError(
-            "CAPABILITY_NOT_READY",
-            "CAPABILITY_NOT_READY: query provider is not configured",
-          );
-        }
-        const providerResult = await this.#providerHost.execute(
-          work,
-          providerSignal,
+      let result: NativeProviderWorkResult;
+      const providerHost = this.#providerHost;
+      if (!providerHost) {
+        throw new MemoriaError(
+          "CAPABILITY_NOT_READY",
+          "CAPABILITY_NOT_READY: query provider is not configured",
         );
-        result = {
-          workId: providerResult.workId,
-          accepted: providerResult.accepted,
-          ...(providerResult.scores === undefined
-            ? {}
-            : { scores: providerResult.scores }),
-          ...(providerResult.tags === undefined
-            ? {}
-            : { tags: providerResult.tags }),
-        };
+      }
+      try {
+        result = await providerHost.execute(work, providerSignal);
       } catch (error) {
         if (providerSignal.aborted) {
           throw new MemoriaError("ABORTED", "The operation was aborted");
         }
-        throw error;
+        result = providerFailure(work.workId, error);
       }
       if (providerSignal.aborted) {
         throw new MemoriaError("ABORTED", "The operation was aborted");
@@ -346,14 +335,14 @@ export class Memoria {
       }
 
       const work = decodeNeedWork(nativeWork);
-      let result;
+      let result: NativeProviderWorkResult;
       try {
         result = await this.#providerHost.execute(
           work,
           this.#providerAbort.signal,
         );
-      } catch {
-        result = { workId: work.workId, accepted: false };
+      } catch (error) {
+        result = providerFailure(work.workId, error);
       }
       if (!this.#closed && this.#store) {
         this.#binding.providerSubmitResult(this.#store, result);

@@ -17,7 +17,7 @@ test("wrong embedding dimension is rejected before resume", async () => {
   const host = new ProviderHost({
     embedding: {
       async execute() {
-        return [[1, 2]];
+        return { vectors: [{ key: "u1", values: [1, 2] }] };
       },
     },
   });
@@ -31,7 +31,7 @@ test("embedding payload is normalized with stable item keys", async () => {
   const host = new ProviderHost({
     embedding: {
       async execute() {
-        return { vectors: [[1, 0, 0]] };
+        return { vectors: [{ key: "u1", values: [1, 0, 0] }] };
       },
     },
   });
@@ -39,5 +39,68 @@ test("embedding payload is normalized with stable item keys", async () => {
     embeddingWork(3),
     new AbortController().signal,
   );
-  assert.deepEqual(result.embeddings, [{ key: "u1", values: [1, 0, 0] }]);
+  assert.equal(result.type, "embeddings");
+  if (result.type !== "embeddings") {
+    throw new Error("expected an embedding result");
+  }
+  assert.deepEqual(result.vectors, [{ key: "u1", values: [1, 0, 0] }]);
+});
+
+test("missing vector keys are rejected before resume", async () => {
+  const host = new ProviderHost({
+    embedding: {
+      async execute() {
+        return { vectors: [{ key: "other", values: [1, 0, 0] }] };
+      },
+    },
+  });
+  await assert.rejects(
+    () => host.execute(embeddingWork(3), new AbortController().signal),
+    /missing|key/i,
+  );
+});
+
+test("duplicate vector keys are rejected before resume", async () => {
+  const host = new ProviderHost({
+    embedding: {
+      async execute() {
+        return {
+          vectors: [
+            { key: "u1", values: [1, 0, 0] },
+            { key: "u1", values: [0, 1, 0] },
+          ],
+        };
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      host.execute(
+        {
+          ...embeddingWork(3),
+          items: [
+            { key: "u1", text: "one" },
+            { key: "u2", text: "two" },
+          ],
+        },
+        new AbortController().signal,
+      ),
+    /duplicate|key/i,
+  );
+});
+
+test("non-finite vector values are rejected before resume", async () => {
+  const host = new ProviderHost({
+    embedding: {
+      async execute() {
+        return {
+          vectors: [{ key: "u1", values: [Number.NaN, 0, 0] }],
+        };
+      },
+    },
+  });
+  await assert.rejects(
+    () => host.execute(embeddingWork(3), new AbortController().signal),
+    /finite|value/i,
+  );
 });

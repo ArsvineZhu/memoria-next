@@ -112,7 +112,7 @@ test("provider embedding result preserves vector values across native resume", a
       embedding: {
         async execute() {
           return {
-            vectors: [[0.25, 0.5, 0.25]],
+            vectors: [{ key: "M_remediation", values: [0.25, 0.5, 0.25] }],
           };
         },
       },
@@ -122,7 +122,7 @@ test("provider embedding result preserves vector values across native resume", a
     await waitFor(() => harness.providerSubmissions.length === 1);
     const submission = harness.providerSubmissions[0];
     assert(submission);
-    assert.deepEqual(Reflect.get(submission, "embeddings"), [
+    assert.deepEqual(Reflect.get(submission, "vectors"), [
       { key: "M_remediation", values: [0.25, 0.5, 0.25] },
     ]);
   } finally {

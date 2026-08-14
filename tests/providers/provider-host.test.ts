@@ -8,7 +8,7 @@ test("provider host preserves work id", async () => {
   const host = new ProviderHost({
     embedding: {
       async execute() {
-        return [[1, 0, 0]];
+        return { vectors: [{ key: "u1", values: [1, 0, 0] }] };
       },
     },
   });
@@ -49,6 +49,10 @@ test("provider host validates rerank handles and scores", async () => {
     new AbortController().signal,
   );
 
+  assert.equal(result.type, "rerank");
+  if (result.type !== "rerank") {
+    throw new Error("expected a rerank result");
+  }
   assert.deepEqual(result.scores, [
     { handle: "h2", score: 0.9 },
     { handle: "h1", score: 0.1 },
@@ -93,7 +97,7 @@ test("provider host retries provider-specific failures and applies egress policy
           if (attempts === 1) {
             throw new Error("transient network failure");
           }
-          return [[1, 0, 0]];
+          return { vectors: [{ key: "u2", values: [1, 0, 0] }] };
         },
       },
     },
@@ -145,6 +149,11 @@ test("provider host exposes bounded provider failure", async () => {
         new AbortController().signal,
       ),
     (error: unknown) =>
-      error instanceof ProviderExecutionError && error.attempts === 1,
+      error instanceof ProviderExecutionError &&
+      error.attempts === 1 &&
+      Reflect.get(error, "retryable") === false &&
+      Reflect.get(error, "code") === "PROVIDER_EXECUTION_FAILED" &&
+      Reflect.get(error, "message") ===
+        "embedding provider failed after 1 attempt(s): permanent provider failure",
   );
 });

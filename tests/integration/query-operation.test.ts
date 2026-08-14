@@ -9,9 +9,9 @@ import { asSpaceId } from "../../src/domain/ids.js";
 import { loadNativeBinding } from "../../src/native/binding.js";
 import type {
   NativeBinding,
+  NativeProviderWorkResult,
   NativeQueryRequest,
   NativeQueryResponse,
-  NativeQueryWorkResult,
 } from "../../src/native/protocol.js";
 import type { ProviderResult } from "../../src/providers/types.js";
 
@@ -29,7 +29,7 @@ test("Memoria.query hides start/resume loop from caller", async () => {
   );
   const observed: {
     result?: ProviderResult;
-    resumed?: NativeQueryWorkResult;
+    resumed?: NativeProviderWorkResult;
     resumedOperationId?: string;
     providerPollCalls: number;
   } = { providerPollCalls: 0 };
@@ -96,7 +96,7 @@ test("Memoria.query hides start/resume loop from caller", async () => {
     queryResume(
       _store: unknown,
       operationId: string,
-      result: NativeQueryWorkResult,
+      result: NativeProviderWorkResult,
     ) {
       observed.resumedOperationId = operationId;
       observed.resumed = result;
@@ -122,7 +122,7 @@ test("Memoria.query hides start/resume loop from caller", async () => {
     providers: {
       embedding: {
         async execute() {
-          return { vectors: [[0, 0, 0]] };
+          return { vectors: [{ key: "query", values: [0, 0, 0] }] };
         },
       },
     },
@@ -136,8 +136,9 @@ test("Memoria.query hides start/resume loop from caller", async () => {
       consistency: { preferred: ["semantic"] },
     });
     observed.result = {
+      type: "embeddings",
       workId: "QW_query_operation",
-      accepted: true,
+      vectors: [{ key: "query", values: [0, 0, 0] }],
     };
     assert.deepEqual(result, response);
     assert.equal(observed.resumedOperationId, "QO_query_operation");
@@ -195,8 +196,9 @@ test("real native query operation exposes query work and cancellation", async ()
     assert.throws(
       () =>
         binding.queryResume(store, step.operationId, {
+          type: "embeddings",
           workId: step.work.workId,
-          accepted: true,
+          vectors: [{ key: "query", values: [0, 0, 0] }],
         }),
       /ABORTED/,
     );

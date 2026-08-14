@@ -13,6 +13,10 @@ test("tag enrichment provider returns bounded candidates for the requested work"
     new AbortController().signal,
   );
   assert.equal(result.workId, "W-tag-1");
+  assert.equal(result.type, "enrichment");
+  if (result.type !== "enrichment") {
+    throw new Error("expected an enrichment result");
+  }
   assert.deepEqual(result.tags, ["career", "systems"]);
   assert(
     result.tags?.every(

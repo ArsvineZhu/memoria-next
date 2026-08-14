@@ -87,7 +87,7 @@ test("local-only Space blocks provider egress before provider execution", async 
       embedding: {
         async execute() {
           calls += 1;
-          return [[1, 0]];
+          return { vectors: [{ key: "memory-1", values: [1, 0] }] };
         },
       },
     },
