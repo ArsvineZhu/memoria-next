@@ -191,7 +191,10 @@ async function runRevisionCase(
     await waitForEmbeddingCoverage(memoria, created.authorityGeneration);
     await waitForProviderCalls(counts, 1, 1);
 
-    const before = await memoria.query({ scope: [space.id], text: "Rust" });
+    const before = await memoria.query({
+      scope: { spaces: [space.id] },
+      cue: { text: "Rust" },
+    });
     const current = before.results[0];
     if (!current) {
       throw new Error(`${editCase.id}: baseline query returned no result`);
@@ -212,7 +215,10 @@ async function runRevisionCase(
     }
 
     const queryStarted = performance.now();
-    await memoria.query({ scope: [space.id], text: "Rust" });
+    await memoria.query({
+      scope: { spaces: [space.id] },
+      cue: { text: "Rust" },
+    });
     const queryMs = performance.now() - queryStarted;
     const status = await memoria.status();
     const storeBytes = await directorySize(dataDir);

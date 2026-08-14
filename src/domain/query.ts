@@ -104,6 +104,10 @@ const optionalCapabilities = new Set<QueryOptionalCapability>([
   "adaptive",
 ]);
 
+function invalidQuery(message: string): never {
+  throw new Error(`QUERY_ERROR: ${message}`);
+}
+
 function normalizeCue(cue: MemoryQueryCue): MemoryQueryCue {
   return {
     ...(cue.text === undefined ? {} : { text: cue.text }),
@@ -140,10 +144,10 @@ function normalizeCapabilities(
   const seen = new Set<string>();
   for (const capability of [...required, ...preferred]) {
     if (!optionalCapabilities.has(capability)) {
-      throw new Error(`unsupported query capability: ${String(capability)}`);
+      invalidQuery(`unsupported query capability: ${String(capability)}`);
     }
     if (seen.has(capability)) {
-      throw new Error(`duplicate query capability: ${capability}`);
+      invalidQuery(`duplicate query capability: ${capability}`);
     }
     seen.add(capability);
   }
@@ -152,20 +156,20 @@ function normalizeCapabilities(
 
 function assertNonNegativeNumber(value: number, name: string): void {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${name} must be non-negative`);
+    invalidQuery(`${name} must be non-negative`);
   }
 }
 
 function assertPositiveNumber(value: number, name: string): void {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be positive`);
+    invalidQuery(`${name} must be positive`);
   }
 }
 
 export function normalizeQuery(input: MemoryQueryInput): NormalizedMemoryQuery {
   const spaces = input.scope?.spaces;
   if (!spaces || spaces.length === 0) {
-    throw new Error("scope.spaces must contain at least one SpaceId");
+    invalidQuery("scope.spaces must contain at least one SpaceId");
   }
 
   const consistency = input.consistency;

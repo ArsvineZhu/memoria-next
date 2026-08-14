@@ -148,17 +148,18 @@ export class Memoria {
     query: MemoryQueryInput,
     options: QueryOptions = {},
   ): Promise<NativeQueryResponse> {
-    const normalized = normalizeQuery(query);
-    this.assertNotAborted(options.signal);
-    const store = this.store();
-    const operationId = this.startOperation();
-    const request: NativeQueryRequest = {
-      scope: normalized.scope.spaces,
-      ...(normalized.cue?.text === undefined
-        ? {}
-        : { text: normalized.cue.text }),
-    };
+    let operationId: string | undefined;
     try {
+      const normalized = normalizeQuery(query);
+      this.assertNotAborted(options.signal);
+      const store = this.store();
+      operationId = this.startOperation();
+      const request: NativeQueryRequest = {
+        scope: normalized.scope.spaces,
+        ...(normalized.cue?.text === undefined
+          ? {}
+          : { text: normalized.cue.text }),
+      };
       const response = await this.awaitOperation(
         operationId,
         Promise.resolve().then(() => this.#binding.queryStart(store, request)),
@@ -169,7 +170,9 @@ export class Memoria {
     } catch (error) {
       throw toMemoriaError(error);
     } finally {
-      this.#operations.delete(operationId);
+      if (operationId !== undefined) {
+        this.#operations.delete(operationId);
+      }
     }
   }
 
@@ -232,15 +235,19 @@ export class Memoria {
   }
 
   async openReadSession(query: MemoryQueryInput): Promise<string> {
-    const normalized = normalizeQuery(query);
-    const sessionId = this.#binding.readSessionOpen(this.store(), {
-      scope: normalized.scope.spaces,
-      ...(normalized.cue?.text === undefined
-        ? {}
-        : { text: normalized.cue.text }),
-    });
-    this.#readSessions.add(sessionId);
-    return sessionId;
+    try {
+      const normalized = normalizeQuery(query);
+      const sessionId = this.#binding.readSessionOpen(this.store(), {
+        scope: normalized.scope.spaces,
+        ...(normalized.cue?.text === undefined
+          ? {}
+          : { text: normalized.cue.text }),
+      });
+      this.#readSessions.add(sessionId);
+      return sessionId;
+    } catch (error) {
+      throw toMemoriaError(error);
+    }
   }
 
   async closeReadSession(sessionId: string): Promise<void> {

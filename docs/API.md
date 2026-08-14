@@ -31,7 +31,7 @@ leases on the terminal boundary.
 | `memoria.spaces.create({ key })`                                          | Create a Space and return its branded `id` and key.                                    |
 | `memoria.documents.create({ space, documentKey?, mdx, idempotencyKey? })` | Commit a new Memory in the selected Space.                                             |
 | `memoria.documents.revise({ memory, expectedHead, mdx })`                 | Commit a new revision using compare-and-swap against the expected HEAD.                |
-| `memoria.query({ scope, text? }, { signal?, timeoutMs? })`                | Run a scoped query and return a retrieval receipt plus result handles.                 |
+| `memoria.query({ scope: { spaces }, cue? }, { signal?, timeoutMs? })`     | Run a scoped query and return a retrieval receipt plus result handles.                 |
 | `memoria.status()`                                                        | Read Authority generation, Base and semantic coverage, active leases, and close state. |
 | `memoria.openReadSession(query)` / `closeReadSession(id)`                 | Hold an explicit native read lease; close it when the caller is done.                  |
 
@@ -52,9 +52,10 @@ The query response has this shape:
 }
 ```
 
-`scope` is mandatory. It is the hard confidentiality and tenancy boundary;
-ranking does not recover out-of-scope results. The optional `text` is a cue,
-not an instruction to infer missing entity or time constraints.
+`scope.spaces` is mandatory. It is the hard confidentiality and tenancy
+boundary; ranking does not recover out-of-scope results. The optional
+`cue.text` is a cue, not an instruction to infer missing entity or time
+constraints.
 
 ## Authoring
 
@@ -132,6 +133,6 @@ stale patch.
 Public failures are mapped to `MemoriaError` with a stable `code`. Important
 codes include `INVALID_MDX`, `HEAD_CONFLICT`, `OUT_OF_SCOPE`,
 `CAPABILITY_NOT_READY`, `PROVIDER_UNAVAILABLE`, `STORE_LOCKED`,
-`UNSUPPORTED_STORE_FORMAT`, `RESOURCE_LIMIT`, `ABORTED`, `QUERY_TIMEOUT`, and
-`STORE_CLOSED`. Use `isMemoriaError(error, code)` instead of parsing message
-text.
+`UNSUPPORTED_STORE_FORMAT`, `RESOURCE_LIMIT`, `ABORTED`, `QUERY_TIMEOUT`,
+`QUERY_ERROR`, and `STORE_CLOSED`. Use `isMemoriaError(error, code)` instead of
+parsing message text.

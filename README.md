@@ -42,8 +42,8 @@ try {
     }),
   });
   const response = await memoria.query({
-    scope: [space.id],
-    text: "Rust",
+    scope: { spaces: [space.id] },
+    cue: { text: "Rust" },
   });
   console.log(response.results);
 } finally {
