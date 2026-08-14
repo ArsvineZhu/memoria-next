@@ -169,6 +169,14 @@ pub enum AdaptiveError {
     #[error("adaptive generation is exhausted")]
     GenerationExhausted,
 
+    #[error(
+        "adaptive snapshot generation {requested:?} is unavailable; current generation is {current:?}"
+    )]
+    SnapshotUnavailable {
+        requested: AdaptiveGeneration,
+        current: AdaptiveGeneration,
+    },
+
     #[error("adaptive storage error: {message}")]
     Storage { message: String },
 }

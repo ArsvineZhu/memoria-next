@@ -14,6 +14,28 @@ pub struct AdaptiveStateV1 {
     generation: AdaptiveGeneration,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdaptiveReadSnapshot {
+    pub generation: AdaptiveGeneration,
+    pub model_version: String,
+    state: AdaptiveStateV1,
+}
+
+impl AdaptiveReadSnapshot {
+    pub(crate) fn new(generation: AdaptiveGeneration, state: AdaptiveStateV1) -> Self {
+        Self {
+            generation,
+            model_version: AdaptiveStateV1::model_version().to_owned(),
+            state,
+        }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> &AdaptiveStateV1 {
+        &self.state
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TargetFamiliarity {
     pub success_count: u64,

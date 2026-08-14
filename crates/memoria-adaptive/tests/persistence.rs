@@ -2,7 +2,7 @@ use memoria_adaptive::{
     AdaptiveEventLog, AdaptiveStateV1, FeedbackEventInput, FeedbackOutcome, QueryAdaptiveSignature,
     checkpoint_after,
 };
-use memoria_types::{MemoryId, RevisionId, SpaceId, Timestamp};
+use memoria_types::{AdaptiveGeneration, MemoryId, RevisionId, SpaceId, Timestamp};
 use tempfile::tempdir;
 
 fn input(index: u8, space: u8, memory: u8) -> FeedbackEventInput {
@@ -54,6 +54,36 @@ fn adaptive_generation_never_resets_on_reopen() {
         AdaptiveEventLog::open(&path).unwrap().current_generation(),
         generation
     );
+}
+
+#[test]
+fn snapshot_at_reads_the_materialized_generation() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("adaptive.sqlite");
+    let mut log = AdaptiveEventLog::open(&path).unwrap();
+    log.append_batch([input(1, 1, 2)]).unwrap();
+
+    let snapshot = log.snapshot_at(log.current_generation()).unwrap();
+    assert_eq!(snapshot.generation, AdaptiveGeneration::new(1));
+    assert_eq!(snapshot.model_version, "adaptive-v1");
+    assert!(
+        snapshot
+            .state()
+            .familiarity(SpaceId::from_bytes([1; 16]), MemoryId::from_bytes([2; 16]))
+            .is_some()
+    );
+}
+
+#[test]
+fn snapshot_at_rejects_a_generation_that_is_not_materialized() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("adaptive.sqlite");
+    let log = AdaptiveEventLog::open(&path).unwrap();
+
+    assert!(matches!(
+        log.snapshot_at(AdaptiveGeneration::new(1)),
+        Err(memoria_adaptive::AdaptiveError::SnapshotUnavailable { .. })
+    ));
 }
 
 #[test]

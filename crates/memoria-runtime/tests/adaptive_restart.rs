@@ -1,3 +1,5 @@
+mod support;
+
 use memoria_adaptive::FeedbackOutcome;
 use memoria_query::MemoryQuery;
 use memoria_runtime::{FeedbackSubmission, FeedbackSubmissionEvent, MemoriaRuntime};
@@ -13,11 +15,13 @@ fn adaptive_generation_and_feedback_survive_runtime_reopen() {
         let _memory_id = runtime
             .create_memory(space, Some("career"), b"# Career\nRust")
             .unwrap();
+        support::publish_manifest_with_capabilities(&runtime, &["adaptive"]);
         let response = runtime
             .query(
                 MemoryQuery::builder()
                     .spaces(vec![space])
                     .text_cue("Rust")
+                    .prefer_capability("adaptive")
                     .build()
                     .unwrap(),
             )
@@ -43,6 +47,7 @@ fn adaptive_generation_and_feedback_survive_runtime_reopen() {
             MemoryQuery::builder()
                 .spaces(vec![space])
                 .text_cue("Rust")
+                .prefer_capability("adaptive")
                 .build()
                 .unwrap(),
         )
@@ -64,11 +69,13 @@ fn query_snapshot_records_reopened_adaptive_generation_without_unused_events() {
         runtime
             .create_memory(space, Some("career"), b"# Career\nRust")
             .unwrap();
+        support::publish_manifest_with_capabilities(&runtime, &["adaptive"]);
         let response = runtime
             .query(
                 MemoryQuery::builder()
                     .spaces(vec![space])
                     .text_cue("Rust")
+                    .prefer_capability("adaptive")
                     .build()
                     .unwrap(),
             )
@@ -85,6 +92,7 @@ fn query_snapshot_records_reopened_adaptive_generation_without_unused_events() {
             MemoryQuery::builder()
                 .spaces(vec![space])
                 .text_cue("Rust")
+                .prefer_capability("adaptive")
                 .build()
                 .unwrap(),
         )
@@ -105,11 +113,13 @@ fn feedback_retry_after_process_restart_is_idempotent() {
         runtime
             .create_memory(space, Some("career"), b"# Career\nRust")
             .unwrap();
+        support::publish_manifest_with_capabilities(&runtime, &["adaptive"]);
         let response = runtime
             .query(
                 MemoryQuery::builder()
                     .spaces(vec![space])
                     .text_cue("Rust")
+                    .prefer_capability("adaptive")
                     .build()
                     .unwrap(),
             )
@@ -133,6 +143,7 @@ fn feedback_retry_after_process_restart_is_idempotent() {
             MemoryQuery::builder()
                 .spaces(vec![space])
                 .text_cue("Rust")
+                .prefer_capability("adaptive")
                 .build()
                 .unwrap(),
         )

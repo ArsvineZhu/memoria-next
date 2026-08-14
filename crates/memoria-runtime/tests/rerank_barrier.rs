@@ -20,7 +20,6 @@ fn setup_runtime() -> (
     let second = runtime
         .create_memory(space, Some("second"), b"# Second\nshared rerank cue")
         .unwrap();
-    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
     support::publish_manifest_with_capabilities(&runtime, &["reranking"]);
     (directory, runtime, space, first, second)
 }

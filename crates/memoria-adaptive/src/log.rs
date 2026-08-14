@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use std::{thread, time::Duration};
 
 use crate::{
-    AdaptiveCheckpoint, AdaptiveError, AdaptiveEvent, AdaptiveStateV1, FeedbackEventInput,
+    AdaptiveCheckpoint, AdaptiveError, AdaptiveEvent, AdaptiveReadSnapshot, AdaptiveStateV1,
+    FeedbackEventInput,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,6 +75,22 @@ impl AdaptiveEventLog {
     #[must_use]
     pub fn state(&self) -> &AdaptiveStateV1 {
         &self.materialized_state
+    }
+
+    pub fn snapshot_at(
+        &self,
+        generation: memoria_types::AdaptiveGeneration,
+    ) -> Result<AdaptiveReadSnapshot, AdaptiveError> {
+        if generation != self.generation {
+            return Err(AdaptiveError::SnapshotUnavailable {
+                requested: generation,
+                current: self.generation,
+            });
+        }
+        Ok(AdaptiveReadSnapshot::new(
+            generation,
+            self.materialized_state.clone(),
+        ))
     }
 
     #[must_use]

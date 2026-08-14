@@ -1,6 +1,7 @@
 use memoria_derived::DerivedCatalog;
 use memoria_runtime::{EmbeddingVector, MemoriaRuntime, NeedWork, ProviderWorkResult};
 
+#[allow(dead_code)]
 pub fn drain_background_work<F>(runtime: &mut MemoriaRuntime, mut vector_for: F)
 where
     F: FnMut(&str) -> Vec<f32>,

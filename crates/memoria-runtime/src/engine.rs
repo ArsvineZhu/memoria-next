@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::string::FromUtf8Error;
 
-use memoria_adaptive::{AdaptiveEventLog, AdaptiveStateV1, QueryAdaptiveSignature};
+use memoria_adaptive::{
+    AdaptiveEventLog, AdaptiveReadSnapshot, AdaptiveStateV1, QueryAdaptiveSignature,
+};
 use memoria_authority::{
     AuthorityDb, ImportMemoryAllocation, MemoryLifecycle, PortableImportAllocation,
     PortableImportCommit, PortableImportResult, PurgeOperationRecord, SourceCas, SpaceProviderMode,
@@ -110,6 +112,9 @@ pub enum RuntimeError {
     #[error("adaptive error: {0}")]
     Adaptive(#[from] memoria_adaptive::AdaptiveError),
 
+    #[error("adaptive snapshot is unavailable for the compiled query")]
+    AdaptiveSnapshotUnavailable,
+
     #[error("CAPABILITY_NOT_READY: provider data egress denied for {capability}")]
     ProviderEgressDenied { capability: ProviderCapability },
 
@@ -157,6 +162,7 @@ impl RuntimeError {
             Self::QueryOperationExpired { .. } => "CONTINUATION_EXPIRED",
             Self::QueryOperationPending { .. } => "QUERY_ERROR",
             Self::Adaptive(_) => "ADAPTIVE_ERROR",
+            Self::AdaptiveSnapshotUnavailable => "ADAPTIVE_ERROR",
             Self::ProviderEgressDenied { .. } => "CAPABILITY_NOT_READY",
             Self::ProviderPolicyDenied { .. } => "PROVIDER_POLICY_DENIED",
             Self::PurgeConflict { .. } => "PURGE_CONFLICT",
@@ -784,6 +790,7 @@ impl MemoriaRuntime {
             compiled
         };
 
+        let adaptive_snapshot = self.adaptive_snapshot_for(&compiled)?;
         let semantic_pending = requested_semantic && compiled.execution.used("semantic");
         if semantic_pending {
             let work = query_embedding_work(&query, space_policy);
@@ -794,6 +801,7 @@ impl MemoriaRuntime {
                     work.clone(),
                     None,
                     None,
+                    adaptive_snapshot.clone(),
                 );
                 operation_id
             } else {
@@ -803,6 +811,7 @@ impl MemoriaRuntime {
                     work.clone(),
                     None,
                     None,
+                    adaptive_snapshot.clone(),
                 )
             };
             return Ok(QueryStep::ProviderPending { operation_id, work });
@@ -816,15 +825,18 @@ impl MemoriaRuntime {
                 response,
                 continuation_operation_id,
                 space_policy,
+                adaptive_snapshot,
             );
         }
 
         if let Some(operation_id) = continuation_operation_id {
             self.query_operations.remove(&operation_id);
         }
-        Ok(QueryStep::Complete(
-            self.finalize_query_response(&compiled, response)?,
-        ))
+        Ok(QueryStep::Complete(self.finalize_query_response(
+            &compiled,
+            response,
+            adaptive_snapshot.as_ref(),
+        )?))
     }
 
     fn begin_rerank_barrier(
@@ -834,6 +846,7 @@ impl MemoriaRuntime {
         response: RetrievalResponse,
         continuation_operation_id: Option<String>,
         space_policy: SpaceProviderPolicy,
+        adaptive_snapshot: Option<AdaptiveReadSnapshot>,
     ) -> Result<QueryStep, RuntimeError> {
         let batch = build_rerank_batch(
             query.cue.text.join(" "),
@@ -845,9 +858,11 @@ impl MemoriaRuntime {
             if let Some(operation_id) = continuation_operation_id {
                 self.query_operations.remove(&operation_id);
             }
-            return Ok(QueryStep::Complete(
-                self.finalize_query_response(&compiled, response)?,
-            ));
+            return Ok(QueryStep::Complete(self.finalize_query_response(
+                &compiled,
+                response,
+                adaptive_snapshot.as_ref(),
+            )?));
         }
         let work = query_rerank_work(&query, &batch, space_policy);
         let operation_id = if let Some(operation_id) = continuation_operation_id {
@@ -857,6 +872,7 @@ impl MemoriaRuntime {
                 work.clone(),
                 Some(response),
                 Some(batch),
+                adaptive_snapshot.clone(),
             );
             operation_id
         } else {
@@ -866,6 +882,7 @@ impl MemoriaRuntime {
                 work.clone(),
                 Some(response),
                 Some(batch),
+                adaptive_snapshot,
             )
         };
         Ok(QueryStep::ProviderPending { operation_id, work })
@@ -1074,7 +1091,11 @@ impl MemoriaRuntime {
                 &compiled.query.scope.spaces,
             )?;
             response.trace.rerank_applied = true;
-            let finalized = self.finalize_query_response(compiled, response)?;
+            let finalized = self.finalize_query_response(
+                compiled,
+                response,
+                operation.adaptive_snapshot.as_ref(),
+            )?;
             self.query_operations.remove(operation_id);
             self.query_operations.cleanup(now);
             return Ok(QueryStep::Complete(finalized));
@@ -1103,14 +1124,17 @@ impl MemoriaRuntime {
                     .as_ref()
                     .expect("embedding operation must have provider work")
                     .space_policy(),
+                operation.adaptive_snapshot.clone(),
             );
         }
 
         self.query_operations.remove(operation_id);
         self.query_operations.cleanup(now);
-        Ok(QueryStep::Complete(
-            self.finalize_query_response(&compiled, response)?,
-        ))
+        Ok(QueryStep::Complete(self.finalize_query_response(
+            &compiled,
+            response,
+            operation.adaptive_snapshot.as_ref(),
+        )?))
     }
 
     pub fn cancel_operation(&mut self, operation_id: &str) -> Result<(), RuntimeError> {
@@ -1141,13 +1165,28 @@ impl MemoriaRuntime {
         let manifest = self.derived.serving_manifest()?.unwrap_or_else(|| {
             memoria_derived::DerivedManifest::empty_for_lexical_query(generation)
         });
-        QueryCompiler::new(generation, Some(manifest))
-            .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Enabled {
-                generation: self.adaptive_log.current_generation(),
-                model_version: "adaptive-v1".to_owned(),
-            })
+        let mut compiled = QueryCompiler::new(generation, Some(manifest))
+            .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Disabled)
             .compile(query)
-            .map_err(RuntimeError::from)
+            .map_err(RuntimeError::from)?;
+        if compiled.execution.used("adaptive") {
+            compiled.snapshot.adaptive = AdaptiveSnapshotIdentity::Enabled {
+                generation: self.adaptive_log.current_generation(),
+                model_version: AdaptiveStateV1::model_version().to_owned(),
+            };
+        }
+        Ok(compiled)
+    }
+
+    fn adaptive_snapshot_for(
+        &self,
+        compiled: &memoria_query::CompiledQuery,
+    ) -> Result<Option<AdaptiveReadSnapshot>, RuntimeError> {
+        let generation = match &compiled.snapshot.adaptive {
+            AdaptiveSnapshotIdentity::Enabled { generation, .. } => *generation,
+            AdaptiveSnapshotIdentity::Disabled => return Ok(None),
+        };
+        Ok(Some(self.adaptive_log.snapshot_at(generation)?))
     }
 
     fn execute_compiled_query(
@@ -1155,8 +1194,9 @@ impl MemoriaRuntime {
         compiled: memoria_query::CompiledQuery,
         query_vector: Option<Vec<f32>>,
     ) -> Result<RetrievalResponse, RuntimeError> {
+        let adaptive_snapshot = self.adaptive_snapshot_for(&compiled)?;
         let response = self.execute_compiled_query_stage(&compiled, query_vector)?;
-        self.finalize_query_response(&compiled, response)
+        self.finalize_query_response(&compiled, response, adaptive_snapshot.as_ref())
     }
 
     fn execute_compiled_query_stage(
@@ -1271,13 +1311,22 @@ impl MemoriaRuntime {
         &mut self,
         compiled: &memoria_query::CompiledQuery,
         mut response: RetrievalResponse,
+        adaptive_snapshot: Option<&AdaptiveReadSnapshot>,
     ) -> Result<RetrievalResponse, RuntimeError> {
         let query_signature = adaptive_signature(&compiled.query);
         let now = memoria_types::Timestamp::now()?;
         if compiled.execution.used("adaptive") {
-            let adaptive_state = AdaptiveStateV1::replay(self.adaptive_log.events());
-            response.results =
-                rank_with_adaptive(response.results, &adaptive_state, &query_signature, now);
+            let adaptive_state =
+                adaptive_snapshot.ok_or(RuntimeError::AdaptiveSnapshotUnavailable)?;
+            response.results = rank_with_adaptive(
+                response.results,
+                adaptive_state.state(),
+                &query_signature,
+                now,
+            );
+            response.trace = response
+                .trace
+                .with_channel("adaptive", response.results.len());
         }
         response.assessment = assess(&response.results);
         let receipt = RetrievalReceipt::from_results(
