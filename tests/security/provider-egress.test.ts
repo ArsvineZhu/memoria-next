@@ -15,6 +15,7 @@ import type { EmbeddingProvider } from "../../src/providers/types.js";
 test("required semantic fails before local-only provider egress", async () => {
   let calls = 0;
   const embedding: EmbeddingProvider = {
+    trust: "external",
     async execute() {
       calls += 1;
       return { vectors: [{ key: "memory-1", values: [1, 0] }] };
@@ -56,6 +57,7 @@ test("provider never receives literal semantic MDX tags from stored memory", asy
     dataDir,
     providers: {
       embedding: {
+        trust: "external",
         async execute(work) {
           received = work.items[0]?.text ?? "";
           return {

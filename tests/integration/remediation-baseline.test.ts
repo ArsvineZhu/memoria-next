@@ -61,13 +61,11 @@ test("semantic preferred is explicit and may request provider work", async () =>
 
     // The embedding work is real background work from the Authority mutation;
     // the public query shape does not claim that query itself dispatched it.
-    assert.equal(
-      provider.calls[0]?.items[0]?.text,
-      "# Career\nRust systems work",
-    );
+    assert.equal(provider.calls[0]?.items[0]?.text, "Rust systems work");
     const degraded = await memoria.query({
       scope: { spaces: [asSpaceId(spaceId)] },
       cue: { text: "career" },
+      consistency: { preferred: ["semantic"] },
     });
     assert.equal(provider.callCount(), 1);
     assert.equal(degraded.degraded, true);
@@ -76,14 +74,16 @@ test("semantic preferred is explicit and may request provider work", async () =>
     await waitFor(async () => {
       const status = await memoria.status();
       return (
-        BigInt(status.semanticCoverage) >= BigInt(created.authorityGeneration)
+        BigInt(status.semanticBuildCoverage) >=
+        BigInt(created.authorityGeneration)
       );
     });
-    const ready = await memoria.query({
+    const stillDegraded = await memoria.query({
       scope: { spaces: [asSpaceId(spaceId)] },
       cue: { text: "career" },
+      consistency: { preferred: ["semantic"] },
     });
-    assert.equal(ready.degraded, false);
+    assert.equal(stillDegraded.degraded, true);
   } finally {
     provider.rejectAll();
     await memoria.close();
@@ -110,6 +110,7 @@ test("provider embedding result preserves vector values across native resume", a
     binding: harness.binding,
     providers: {
       embedding: {
+        trust: "external",
         async execute() {
           return {
             vectors: [{ key: "M_remediation", values: [0.25, 0.5, 0.25] }],

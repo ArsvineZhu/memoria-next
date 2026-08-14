@@ -17,11 +17,15 @@ fn target(value: u8) -> memoria_query::CandidateTarget {
 fn compiler() -> QueryCompiler {
     let dir = tempdir().unwrap();
     let mut catalog = DerivedCatalog::open(dir.path().join("derived.sqlite")).unwrap();
+    let artifact = catalog
+        .stage_artifact("semantic", 1, AuthorityGeneration::new(1))
+        .unwrap();
+    catalog.validate_artifact(artifact.id()).unwrap();
     let manifest = catalog
         .publish_manifest_at_generation(
-            Vec::new(),
+            vec![artifact.id()],
             AuthorityGeneration::new(1),
-            vec!["semantic".to_owned()],
+            Vec::new(),
         )
         .unwrap();
     QueryCompiler::new(AuthorityGeneration::new(1), Some(manifest))
@@ -77,7 +81,7 @@ fn semantic_candidates_keep_resolution_provenance_and_suppress_correlated_duplic
 }
 
 #[test]
-fn stale_semantic_coverage_degrades_preferred_queries() {
+fn semantic_without_manifest_artifact_degrades_preferred_queries() {
     let dir = tempdir().unwrap();
     let mut catalog = DerivedCatalog::open(dir.path().join("derived.sqlite")).unwrap();
     let manifest = catalog
@@ -90,32 +94,10 @@ fn stale_semantic_coverage_degrades_preferred_queries() {
         .build()
         .unwrap();
     let compiled = QueryCompiler::new(AuthorityGeneration::new(1), Some(manifest))
-        .with_semantic_coverage(AuthorityGeneration::initial())
         .compile(query)
         .unwrap();
     assert!(compiled.execution.degraded);
     assert!(!compiled.execution.used("semantic"));
-}
-
-#[test]
-fn current_semantic_coverage_uses_preferred_queries_without_manifest_aliasing() {
-    let dir = tempdir().unwrap();
-    let mut catalog = DerivedCatalog::open(dir.path().join("derived.sqlite")).unwrap();
-    let manifest = catalog
-        .publish_empty_manifest(AuthorityGeneration::new(1))
-        .unwrap();
-    let query = MemoryQuery::builder()
-        .spaces(vec![SpaceId::from_bytes([1; 16])])
-        .text_cue("career")
-        .prefer_capability("semantic")
-        .build()
-        .unwrap();
-    let compiled = QueryCompiler::new(AuthorityGeneration::new(1), Some(manifest))
-        .with_semantic_coverage(AuthorityGeneration::new(1))
-        .compile(query)
-        .unwrap();
-    assert!(!compiled.execution.degraded);
-    assert!(compiled.execution.used("semantic"));
 }
 
 #[test]

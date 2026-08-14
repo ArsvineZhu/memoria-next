@@ -236,6 +236,7 @@ export interface JsStatus {
   authorityGeneration: string
   baseCoverage: string
   semanticCoverage: string
+  semanticBuildCoverage: string
   activeReadLeases: number
   closed: boolean
 }

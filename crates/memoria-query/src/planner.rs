@@ -66,33 +66,14 @@ impl CapabilityPlanner {
         manifest: &DerivedManifest,
         target: CapabilityTarget,
     ) -> Result<CapabilityExecution, QueryError> {
-        Self::capabilities_with_semantic_coverage(query, manifest, target, None)
-    }
-
-    pub fn capabilities_with_semantic_coverage(
-        query: &MemoryQuery,
-        manifest: &DerivedManifest,
-        target: CapabilityTarget,
-        semantic_coverage: Option<AuthorityGeneration>,
-    ) -> Result<CapabilityExecution, QueryError> {
         let mut used_capabilities = Vec::new();
         let mut degraded_capabilities = Vec::new();
         for capability in &query.required_capabilities {
-            ensure_ready(
-                manifest,
-                capability,
-                target.authority_generation,
-                semantic_coverage,
-            )?;
+            ensure_ready(manifest, capability, target.authority_generation)?;
             used_capabilities.push(capability.clone());
         }
         for capability in &query.preferred_capabilities {
-            if is_ready(
-                manifest,
-                capability,
-                target.authority_generation,
-                semantic_coverage,
-            ) {
+            if is_ready(manifest, capability, target.authority_generation) {
                 used_capabilities.push(capability.clone());
             } else {
                 degraded_capabilities.push(capability.clone());
@@ -110,12 +91,11 @@ fn ensure_ready(
     manifest: &DerivedManifest,
     capability: &str,
     required_generation: AuthorityGeneration,
-    semantic_coverage: Option<AuthorityGeneration>,
 ) -> Result<(), QueryError> {
-    if is_ready(manifest, capability, required_generation, semantic_coverage) {
+    if is_ready(manifest, capability, required_generation) {
         return Ok(());
     }
-    let available = coverage(manifest, capability, semantic_coverage);
+    let available = manifest.capability(capability).coverage();
     Err(QueryError::CapabilityNotReady {
         capability: capability.to_owned(),
         required: required_generation,
@@ -127,26 +107,7 @@ fn is_ready(
     manifest: &DerivedManifest,
     capability: &str,
     required_generation: AuthorityGeneration,
-    semantic_coverage: Option<AuthorityGeneration>,
 ) -> bool {
     let status = manifest.capability(capability);
-    if capability == "semantic"
-        && let Some(semantic_coverage) = semantic_coverage
-    {
-        return semantic_coverage >= required_generation;
-    }
     status.is_ready() && status.coverage() >= required_generation
-}
-
-fn coverage(
-    manifest: &DerivedManifest,
-    capability: &str,
-    semantic_coverage: Option<AuthorityGeneration>,
-) -> AuthorityGeneration {
-    if capability == "semantic"
-        && let Some(semantic_coverage) = semantic_coverage
-    {
-        return semantic_coverage;
-    }
-    manifest.capability(capability).coverage()
 }

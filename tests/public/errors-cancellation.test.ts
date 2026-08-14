@@ -24,6 +24,7 @@ function fakeBinding(queryStart: NativeBinding["queryStart"]): NativeBinding {
     authorityGeneration: "0",
     baseCoverage: "0",
     semanticCoverage: "0",
+    semanticBuildCoverage: "0",
     activeReadLeases: 0,
     closed: false,
   };

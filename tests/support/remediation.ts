@@ -38,6 +38,7 @@ export function deferredObservedEmbeddingProvider(
   const calls: DeferredObservedEmbeddingProvider["calls"] = [];
   const pending: PendingEmbeddingResolution[] = [];
   return {
+    trust: "external",
     calls,
     async execute(work) {
       calls.push({
@@ -102,6 +103,7 @@ export function createBindingHarness(
     authorityGeneration: "0",
     baseCoverage: "0",
     semanticCoverage: "0",
+    semanticBuildCoverage: "0",
     activeReadLeases: 0,
     closed: false,
     ...options.status,

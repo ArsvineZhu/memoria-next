@@ -58,6 +58,7 @@ impl NativeStore {
             authority_generation: status.authority_generation.to_string(),
             base_coverage: status.base_coverage.to_string(),
             semantic_coverage: status.semantic_coverage.to_string(),
+            semantic_build_coverage: status.semantic_build_coverage.to_string(),
             active_read_leases: u32::try_from(status.active_read_leases).map_err(to_napi_error)?,
             closed: status.closed,
         })

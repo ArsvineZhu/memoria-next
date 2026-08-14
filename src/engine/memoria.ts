@@ -35,6 +35,7 @@ export interface MemoriaStatus {
   authorityGeneration: string;
   baseCoverage: string;
   semanticCoverage: string;
+  semanticBuildCoverage: string;
   activeReadLeases: number;
   closed: boolean;
 }
@@ -61,6 +62,7 @@ function mapStatus(status: NativeStatus): MemoriaStatus {
     authorityGeneration: status.authorityGeneration,
     baseCoverage: status.baseCoverage,
     semanticCoverage: status.semanticCoverage,
+    semanticBuildCoverage: status.semanticBuildCoverage,
     activeReadLeases: status.activeReadLeases,
     closed: status.closed,
   };

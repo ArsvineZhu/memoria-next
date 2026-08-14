@@ -38,21 +38,25 @@ fn unsupported_capability_is_rejected_by_domain_validation() {
     ));
 }
 
-fn compiler_with_semantic_coverage(authority: u64, coverage: u64) -> QueryCompiler {
+fn compiler_with_semantic_manifest(authority: u64, coverage: u64) -> QueryCompiler {
     let dir = tempdir().unwrap();
     let mut catalog = DerivedCatalog::open(dir.path().join("derived.sqlite")).unwrap();
+    let artifact = catalog
+        .stage_artifact("semantic", 1, AuthorityGeneration::new(coverage))
+        .unwrap();
+    catalog.validate_artifact(artifact.id()).unwrap();
     let manifest = catalog
         .publish_manifest_at_generation(
-            Vec::new(),
+            vec![artifact.id()],
             AuthorityGeneration::new(coverage),
-            vec!["semantic".to_owned()],
+            Vec::new(),
         )
         .unwrap();
     QueryCompiler::new(AuthorityGeneration::new(authority), Some(manifest))
 }
 
 #[test]
-fn required_semantic_cannot_use_stale_coverage() {
+fn required_semantic_cannot_use_stale_manifest_coverage() {
     let query = MemoryQuery::builder()
         .spaces(vec![fixture_space()])
         .require_capability("semantic")
@@ -60,7 +64,7 @@ fn required_semantic_cannot_use_stale_coverage() {
         .fail_if_not_ready()
         .build()
         .unwrap();
-    let compiler = compiler_with_semantic_coverage(12, 10);
+    let compiler = compiler_with_semantic_manifest(12, 10);
     assert!(matches!(
         compiler.compile(query),
         Err(QueryError::CapabilityNotReady { .. })
@@ -68,13 +72,13 @@ fn required_semantic_cannot_use_stale_coverage() {
 }
 
 #[test]
-fn preferred_semantic_may_degrade_explicitly() {
+fn preferred_semantic_degrades_when_manifest_is_stale() {
     let query = MemoryQuery::builder()
         .spaces(vec![fixture_space()])
         .prefer_capability("semantic")
         .build()
         .unwrap();
-    let compiler = compiler_with_semantic_coverage(12, 10);
+    let compiler = compiler_with_semantic_manifest(12, 10);
     let compiled = compiler.compile(query).unwrap();
     assert!(compiled.execution.degraded);
     assert!(matches!(

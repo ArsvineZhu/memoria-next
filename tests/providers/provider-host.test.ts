@@ -7,6 +7,7 @@ import { ProviderExecutionError } from "../../src/providers/types.js";
 test("provider host preserves work id", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         return { vectors: [{ key: "u1", values: [1, 0, 0] }] };
       },
@@ -28,6 +29,7 @@ test("provider host preserves work id", async () => {
 test("provider host validates rerank handles and scores", async () => {
   const host = new ProviderHost({
     rerank: {
+      trust: "external",
       async execute() {
         return {
           scores: [
@@ -62,6 +64,7 @@ test("provider host validates rerank handles and scores", async () => {
 test("provider host rejects rerank scores for unknown handles", async () => {
   const host = new ProviderHost({
     rerank: {
+      trust: "external",
       async execute() {
         return [{ handle: "outside-space", score: 1 }];
       },
@@ -91,6 +94,7 @@ test("provider host retries provider-specific failures and applies egress policy
   const host = new ProviderHost({
     providers: {
       embedding: {
+        trust: "external",
         async execute(work) {
           attempts += 1;
           sentText = work.items[0]?.text ?? "";
@@ -131,6 +135,7 @@ test("provider host retries provider-specific failures and applies egress policy
 test("provider host exposes bounded provider failure", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         throw new Error("permanent provider failure");
       },

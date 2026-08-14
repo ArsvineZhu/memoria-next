@@ -19,6 +19,7 @@ export interface DeferredEmbeddingProvider extends EmbeddingProvider {
 export function deferredEmbeddingProvider(): DeferredEmbeddingProvider {
   const pending: PendingEmbedding[] = [];
   return {
+    trust: "external",
     execute(work, _signal) {
       return new Promise<unknown>((resolve, reject) => {
         pending.push({
@@ -66,20 +67,20 @@ export async function waitForPendingProvider(
   }
 }
 
-export async function waitForSemanticCoverage(
-  memoria: { status(): Promise<{ semanticCoverage: string }> },
+export async function waitForSemanticBuildCoverage(
+  memoria: { status(): Promise<{ semanticBuildCoverage: string }> },
   targetGeneration: string,
   timeoutMs = 1_000,
 ): Promise<void> {
   const target = BigInt(targetGeneration);
   const deadline = Date.now() + timeoutMs;
   while (
-    BigInt((await memoria.status()).semanticCoverage) < target &&
+    BigInt((await memoria.status()).semanticBuildCoverage) < target &&
     Date.now() < deadline
   ) {
     await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
-  if (BigInt((await memoria.status()).semanticCoverage) < target) {
+  if (BigInt((await memoria.status()).semanticBuildCoverage) < target) {
     throw new Error(
       `semantic coverage did not reach ${targetGeneration} before timeout`,
     );
@@ -107,6 +108,7 @@ export function tagEnrichmentWork(workId: string): EnrichmentWork {
 export function providerHostWithTagEnrichment(tags: string[]): ProviderHost {
   return new ProviderHost({
     enrichment: {
+      trust: "external",
       async execute() {
         return { tags };
       },
@@ -123,6 +125,7 @@ export function observedTagEnrichmentProvider(
 ): ObservedTagEnrichmentProvider {
   const works: EnrichmentWork[] = [];
   return {
+    trust: "external",
     works,
     async execute(work) {
       works.push(work);

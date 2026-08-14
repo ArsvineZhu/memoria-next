@@ -18,7 +18,6 @@ pub struct QueryCompiler {
     current_authority: AuthorityGeneration,
     manifest: Option<DerivedManifest>,
     adaptive: AdaptiveSnapshotIdentity,
-    semantic_coverage: Option<AuthorityGeneration>,
 }
 
 impl QueryCompiler {
@@ -28,19 +27,12 @@ impl QueryCompiler {
             current_authority,
             manifest,
             adaptive: AdaptiveSnapshotIdentity::Disabled,
-            semantic_coverage: None,
         }
     }
 
     #[must_use]
     pub fn with_adaptive_snapshot(mut self, adaptive: AdaptiveSnapshotIdentity) -> Self {
         self.adaptive = adaptive;
-        self
-    }
-
-    #[must_use]
-    pub fn with_semantic_coverage(mut self, coverage: AuthorityGeneration) -> Self {
-        self.semantic_coverage = Some(coverage);
         self
     }
 
@@ -51,12 +43,7 @@ impl QueryCompiler {
             .manifest
             .as_ref()
             .ok_or(QueryError::DerivedSnapshotUnavailable)?;
-        let execution = CapabilityPlanner::capabilities_with_semantic_coverage(
-            &query,
-            manifest,
-            target,
-            self.semantic_coverage,
-        )?;
+        let execution = CapabilityPlanner::capabilities(&query, manifest, target)?;
         Ok(CompiledQuery {
             query,
             snapshot: QuerySnapshot {

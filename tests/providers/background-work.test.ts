@@ -8,7 +8,7 @@ import { createMemoria } from "../../src/engine/create-memoria.js";
 import {
   deferredEmbeddingProvider,
   waitForPendingProvider,
-  waitForSemanticCoverage,
+  waitForSemanticBuildCoverage,
 } from "../support/providers.js";
 
 test("authority mutation returns before provider completion and background pump advances readiness", async () => {
@@ -30,16 +30,19 @@ test("authority mutation returns before provider completion and background pump 
     const before = await memoria.status();
     assert.equal(provider.pendingCount(), 1);
     assert(
-      BigInt(before.semanticCoverage) < BigInt(created.authorityGeneration),
+      BigInt(before.semanticBuildCoverage) <
+        BigInt(created.authorityGeneration),
     );
 
     provider.resolveAll();
-    await waitForSemanticCoverage(memoria, created.authorityGeneration);
+    await waitForSemanticBuildCoverage(memoria, created.authorityGeneration);
 
     const after = await memoria.status();
     assert(
-      BigInt(after.semanticCoverage) >= BigInt(created.authorityGeneration),
+      BigInt(after.semanticBuildCoverage) >=
+        BigInt(created.authorityGeneration),
     );
+    assert.equal(after.semanticCoverage, "0");
   } finally {
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });

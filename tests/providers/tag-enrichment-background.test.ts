@@ -17,6 +17,7 @@ test("background enrichment receives a versioned projection without Raw MDX", as
     dataDir,
     providers: {
       embedding: {
+        trust: "external",
         async execute(work) {
           return {
             vectors: [

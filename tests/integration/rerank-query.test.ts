@@ -10,6 +10,7 @@ test("reranker cannot restore out-of-scope result", async () => {
   const observed: string[][] = [];
   const provider = new ProviderHost({
     rerank: {
+      trust: "external",
       async execute(work) {
         observed.push([...work.candidates]);
         return work.candidates.map((handle, index) => ({

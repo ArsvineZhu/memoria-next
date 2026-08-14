@@ -448,6 +448,7 @@ pub struct JsStatus {
     pub authority_generation: String,
     pub base_coverage: String,
     pub semantic_coverage: String,
+    pub semantic_build_coverage: String,
     pub active_read_leases: u32,
     pub closed: bool,
 }

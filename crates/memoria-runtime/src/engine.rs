@@ -158,7 +158,7 @@ pub struct MemoriaRuntime {
     inflight_provider_work: BTreeMap<String, InflightProviderWork>,
     pending_by_generation: BTreeMap<AuthorityGeneration, usize>,
     query_operations: QueryOperationTable,
-    semantic_coverage: AuthorityGeneration,
+    semantic_build_coverage: AuthorityGeneration,
     tag_dictionary: TagDictionary,
     generated_tag_artifacts: BTreeMap<ProjectionInputHash, GeneratedTagArtifact>,
     adaptive_log: AdaptiveEventLog,
@@ -219,7 +219,7 @@ impl MemoriaRuntime {
             inflight_provider_work: BTreeMap::new(),
             pending_by_generation: BTreeMap::new(),
             query_operations: QueryOperationTable::default(),
-            semantic_coverage: AuthorityGeneration::initial(),
+            semantic_build_coverage: AuthorityGeneration::initial(),
             tag_dictionary: TagDictionary::new(),
             generated_tag_artifacts: BTreeMap::new(),
             adaptive_log: AdaptiveEventLog::new(),
@@ -441,7 +441,7 @@ impl MemoriaRuntime {
                 provider_policy,
             );
         } else {
-            self.advance_semantic_coverage();
+            self.advance_semantic_build_coverage();
         }
         self.rebuild_base_for_space(record.space_id, result.generation(), provider_policy);
         Ok(MemoryMutation {
@@ -721,24 +721,16 @@ impl MemoriaRuntime {
                 message: error.to_string(),
             }
         })?;
-        let serving_manifest = self.derived.serving_manifest()?;
-        let has_real_manifest = serving_manifest.is_some();
-        let manifest = serving_manifest.unwrap_or_else(|| {
+        let manifest = self.derived.serving_manifest()?.unwrap_or_else(|| {
             memoria_derived::DerivedManifest::empty_for_lexical_query(generation)
         });
-        let semantic_artifact_ready = manifest.capability("semantic").is_ready();
-        let compiler = QueryCompiler::new(generation, Some(manifest)).with_adaptive_snapshot(
-            AdaptiveSnapshotIdentity::Enabled {
+        QueryCompiler::new(generation, Some(manifest))
+            .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Enabled {
                 generation: self.adaptive_log.current_generation(),
                 model_version: "adaptive-v1".to_owned(),
-            },
-        );
-        let compiler = if has_real_manifest && semantic_artifact_ready {
-            compiler.with_semantic_coverage(self.semantic_coverage)
-        } else {
-            compiler
-        };
-        compiler.compile(query).map_err(RuntimeError::from)
+            })
+            .compile(query)
+            .map_err(RuntimeError::from)
     }
 
     fn execute_compiled_query(
@@ -824,9 +816,7 @@ impl MemoriaRuntime {
                 message: "no Derived Manifest is serving".to_owned(),
             },
         )?;
-        let compiled = QueryCompiler::new(generation, Some(manifest))
-            .with_semantic_coverage(self.semantic_coverage)
-            .compile(query)?;
+        let compiled = QueryCompiler::new(generation, Some(manifest)).compile(query)?;
         ReadSession::open(&mut self.derived, &compiled, ttl).map_err(|error| {
             RuntimeError::AuthorityDatabase {
                 message: error.to_string(),
@@ -841,22 +831,29 @@ impl MemoriaRuntime {
             .authority
             .current_generation()
             .unwrap_or_else(|_| AuthorityGeneration::initial());
-        let (base_coverage, last_error) = self
+        let (base_coverage, semantic_coverage, last_error) = self
             .derived
             .serving_manifest()
             .ok()
             .flatten()
             .map(|manifest| {
+                let semantic = manifest.capability("semantic");
                 (
                     manifest.capability("base-search").coverage(),
+                    semantic.serving_coverage(),
                     self.last_error.clone(),
                 )
             })
-            .unwrap_or((AuthorityGeneration::initial(), self.last_error.clone()));
+            .unwrap_or((
+                AuthorityGeneration::initial(),
+                AuthorityGeneration::initial(),
+                self.last_error.clone(),
+            ));
         RuntimeStatus {
             authority_generation,
             base_coverage,
-            semantic_coverage: self.semantic_coverage,
+            semantic_coverage,
+            semantic_build_coverage: self.semantic_build_coverage,
             active_read_leases: 0,
             closed: self.closed,
             last_error,
@@ -957,7 +954,7 @@ impl MemoriaRuntime {
                             self.pending_by_generation.remove(&pending.generation);
                         }
                     }
-                    self.advance_semantic_coverage();
+                    self.advance_semantic_build_coverage();
                 }
             }
             ProviderWorkResult::Rerank { .. } => {}
@@ -1061,8 +1058,8 @@ impl MemoriaRuntime {
         *self.pending_by_generation.entry(generation).or_default() += 1;
     }
 
-    fn advance_semantic_coverage(&mut self) {
-        let mut candidate = self.semantic_coverage.next();
+    fn advance_semantic_build_coverage(&mut self) {
+        let mut candidate = self.semantic_build_coverage.next();
         while candidate <= self.authority_generation_or_initial() {
             if self
                 .pending_by_generation
@@ -1071,7 +1068,7 @@ impl MemoriaRuntime {
             {
                 break;
             }
-            self.semantic_coverage = candidate;
+            self.semantic_build_coverage = candidate;
             candidate = candidate.next();
         }
     }

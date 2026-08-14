@@ -33,7 +33,7 @@ fn runtime_status_starts_at_authority_generation_zero() {
 }
 
 #[test]
-fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
+fn provider_work_is_queued_after_commit_and_advances_semantic_build_coverage() {
     let directory = tempdir().unwrap();
     let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
     let space = runtime.create_space("personal").unwrap();
@@ -44,6 +44,7 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
     let before = runtime.status();
     assert_eq!(before.authority_generation.value(), 2);
     assert_eq!(before.semantic_coverage.value(), 0);
+    assert_eq!(before.semantic_build_coverage.value(), 0);
 
     let work = runtime.provider_poll_work().unwrap().unwrap();
     let work_id = match work {
@@ -63,7 +64,9 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_coverage() {
         })
         .unwrap();
 
-    assert_eq!(runtime.status().semantic_coverage.value(), 2);
+    let after = runtime.status();
+    assert_eq!(after.semantic_coverage.value(), 0);
+    assert_eq!(after.semantic_build_coverage.value(), 2);
 }
 
 #[test]
@@ -152,7 +155,11 @@ fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
     let work = runtime.provider_poll_work().unwrap().unwrap();
     assert!(matches!(work, NeedWork::Enrichment(_)));
     assert_eq!(mutation.memory_id, memory_id);
-    assert_eq!(runtime.status().semantic_coverage, mutation.generation,);
+    assert_eq!(runtime.status().semantic_coverage.value(), 0);
+    assert_eq!(
+        runtime.status().semantic_build_coverage,
+        mutation.generation,
+    );
 }
 
 #[test]

@@ -185,16 +185,19 @@ impl DerivedCatalog {
     ) -> Result<DerivedManifest, DerivedError> {
         let transaction = self.connection.transaction()?;
         let mut kinds = BTreeSet::new();
+        let mut has_compatible_semantic_artifact = false;
         for id in &artifact_ids {
-            let (state, artifact_generation, kind) = transaction
+            let (state, artifact_generation, kind, version) = transaction
                 .query_row(
-                    "SELECT state, authority_generation, kind FROM artifacts WHERE id = ?1",
+                    "SELECT state, authority_generation, kind, version
+                     FROM artifacts WHERE id = ?1",
                     params![id.value()],
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,
                             row.get::<_, i64>(1)?,
                             row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
                         ))
                     },
                 )
@@ -217,12 +220,18 @@ impl DerivedCatalog {
                     actual: artifact_generation,
                 });
             }
+            if kind == "semantic" && version == 1 {
+                has_compatible_semantic_artifact = true;
+            }
             kinds.insert(kind);
         }
         let capabilities = if capabilities.is_empty() {
-            capabilities_for_kinds(&kinds)
+            capabilities_for_kinds(&kinds, has_compatible_semantic_artifact)
         } else {
             capabilities
+                .into_iter()
+                .filter(|capability| capability != "semantic" || has_compatible_semantic_artifact)
+                .collect()
         };
         transaction.execute(
             "INSERT INTO manifests(authority_generation) VALUES (?1)",
@@ -394,8 +403,14 @@ impl DerivedCatalog {
     }
 }
 
-fn capabilities_for_kinds(kinds: &BTreeSet<String>) -> Vec<String> {
+fn capabilities_for_kinds(
+    kinds: &BTreeSet<String>,
+    has_compatible_semantic_artifact: bool,
+) -> Vec<String> {
     let mut capabilities = Vec::new();
+    if has_compatible_semantic_artifact {
+        capabilities.push("semantic".to_owned());
+    }
     if kinds.contains("lexical") {
         capabilities.push("lexical".to_owned());
     }

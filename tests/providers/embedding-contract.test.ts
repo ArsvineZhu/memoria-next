@@ -16,6 +16,7 @@ function embeddingWork(dimensions: number) {
 test("wrong embedding dimension is rejected before resume", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         return { vectors: [{ key: "u1", values: [1, 2] }] };
       },
@@ -30,6 +31,7 @@ test("wrong embedding dimension is rejected before resume", async () => {
 test("embedding payload is normalized with stable item keys", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         return { vectors: [{ key: "u1", values: [1, 0, 0] }] };
       },
@@ -49,6 +51,7 @@ test("embedding payload is normalized with stable item keys", async () => {
 test("missing vector keys are rejected before resume", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         return { vectors: [{ key: "other", values: [1, 0, 0] }] };
       },
@@ -63,6 +66,7 @@ test("missing vector keys are rejected before resume", async () => {
 test("duplicate vector keys are rejected before resume", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         return {
           vectors: [
@@ -92,6 +96,7 @@ test("duplicate vector keys are rejected before resume", async () => {
 test("non-finite vector values are rejected before resume", async () => {
   const host = new ProviderHost({
     embedding: {
+      trust: "external",
       async execute() {
         return {
           vectors: [{ key: "u1", values: [Number.NaN, 0, 0] }],

@@ -8,7 +8,7 @@ import { createMemoria } from "../../src/engine/create-memoria.js";
 import {
   deferredEmbeddingProvider,
   waitForPendingProvider,
-  waitForSemanticCoverage,
+  waitForSemanticBuildCoverage,
 } from "../support/providers.js";
 
 test("semantic preferred degrades until vector coverage is ready", async () => {
@@ -30,17 +30,19 @@ test("semantic preferred degrades until vector coverage is ready", async () => {
     const degraded = await memoria.query({
       scope: { spaces: [space.id] },
       cue: { text: "career" },
+      consistency: { preferred: ["semantic"] },
     });
     assert.equal(degraded.degraded, true);
 
     provider.resolveAll();
-    await waitForSemanticCoverage(memoria, created.authorityGeneration);
+    await waitForSemanticBuildCoverage(memoria, created.authorityGeneration);
 
-    const ready = await memoria.query({
+    const stillDegraded = await memoria.query({
       scope: { spaces: [space.id] },
       cue: { text: "career" },
+      consistency: { preferred: ["semantic"] },
     });
-    assert.equal(ready.degraded, false);
+    assert.equal(stillDegraded.degraded, true);
   } finally {
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });

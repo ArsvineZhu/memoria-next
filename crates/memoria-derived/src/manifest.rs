@@ -23,6 +23,15 @@ impl CapabilityStatus {
     pub const fn coverage(self) -> AuthorityGeneration {
         self.coverage
     }
+
+    #[must_use]
+    pub const fn serving_coverage(self) -> AuthorityGeneration {
+        if self.ready {
+            self.coverage
+        } else {
+            AuthorityGeneration::initial()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

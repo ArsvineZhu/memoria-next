@@ -23,8 +23,7 @@ fn semantic_readiness_requires_manifest_artifact() {
         .fail_if_not_ready()
         .build()
         .unwrap();
-    let compiler =
-        compiler_with_empty_manifest(5, 5).with_semantic_coverage(AuthorityGeneration::new(5));
+    let compiler = compiler_with_empty_manifest(5, 5);
     assert!(matches!(
         compiler.compile(query),
         Err(QueryError::CapabilityNotReady { .. })
