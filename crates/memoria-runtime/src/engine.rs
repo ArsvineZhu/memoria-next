@@ -703,6 +703,12 @@ impl MemoriaRuntime {
         } else {
             None
         };
+        let needs_semantic_rebase = projection.is_none();
+        let semantic_source = if needs_semantic_rebase {
+            self.serving_semantic_membership(memory_id)?
+        } else {
+            None
+        };
         let result = self
             .authority
             .revise_memory(&self.cas, memory_id, expected_head, source)?;
@@ -721,6 +727,15 @@ impl MemoriaRuntime {
             self.advance_semantic_build_coverage();
         }
         self.rebuild_base_for_space(record.space_id, result.generation(), provider_policy);
+        if needs_semantic_rebase {
+            self.rebase_semantic_membership(
+                semantic_source,
+                record.memory_id,
+                record.space_id,
+                record.head_revision_id,
+                result.generation(),
+            )?;
+        }
         Ok(MemoryMutation {
             memory_id: record.memory_id,
             space_id: record.space_id,
@@ -738,6 +753,7 @@ impl MemoriaRuntime {
     ) -> Result<MemoryMutation, RuntimeError> {
         self.ensure_open()?;
         let previous_space_id = self.authority.get_memory(memory_id)?.space_id;
+        let semantic_source = self.serving_semantic_membership(memory_id)?;
         let result =
             self.authority
                 .move_memory(memory_id, space_id, document_key, expected_generation)?;
@@ -749,6 +765,13 @@ impl MemoriaRuntime {
             let target_policy = self.space_provider_policy_at(record.space_id, generation)?;
             self.rebuild_base_for_space(record.space_id, generation, target_policy);
         }
+        self.rebase_semantic_membership(
+            semantic_source,
+            record.memory_id,
+            record.space_id,
+            record.head_revision_id,
+            generation,
+        )?;
         self.advance_semantic_build_coverage();
         Ok(MemoryMutation {
             memory_id: record.memory_id,
@@ -1259,6 +1282,22 @@ impl MemoriaRuntime {
         let manifest = self.derived.serving_manifest()?.unwrap_or_else(|| {
             memoria_derived::DerivedManifest::empty_for_lexical_query(generation)
         });
+        let base_ready = manifest.capability("base-search").is_ready()
+            && manifest.capability("base-search").coverage() >= generation;
+        let runtime_capabilities = if base_ready {
+            let mut capabilities = vec!["associative", "adaptive"];
+            if self.provider_routes.available(ProviderCapability::Rerank)
+                && self
+                    .provider_egress_policy
+                    .allows(ProviderCapability::Rerank)
+            {
+                capabilities.push("reranking");
+            }
+            capabilities
+        } else {
+            Vec::new()
+        };
+        let manifest = manifest.with_additional_capabilities(&runtime_capabilities);
         let mut compiled = QueryCompiler::new(generation, Some(manifest))
             .with_adaptive_snapshot(AdaptiveSnapshotIdentity::Disabled)
             .compile(query)
@@ -1962,15 +2001,20 @@ impl MemoriaRuntime {
         &mut self,
         space_id: SpaceId,
         generation: AuthorityGeneration,
-        provider_policy: SpaceProviderPolicy,
+        _provider_policy: SpaceProviderPolicy,
     ) {
         match self.try_rebuild_base_for_space(space_id, generation) {
             Ok(report) => {
-                self.enqueue_enrichment_work(
-                    generation,
-                    report.enrichment_projections(),
-                    provider_policy,
-                );
+                for projection in report.enrichment_projections() {
+                    match self.space_provider_policy_at(projection.space_id(), generation) {
+                        Ok(provider_policy) => self.enqueue_enrichment_work(
+                            generation,
+                            std::slice::from_ref(projection),
+                            provider_policy,
+                        ),
+                        Err(error) => self.last_error = Some(error.to_string()),
+                    }
+                }
             }
             Err(error) => {
                 self.last_error = Some(error.to_string());
@@ -2010,11 +2054,12 @@ impl MemoriaRuntime {
             manifest.authority_generation() >= generation
                 && manifest.capability("semantic").is_ready()
         });
+        if !base_ready && let Some(space_id) = spaces.first() {
+            let policy = self.space_provider_policy_at(*space_id, generation)?;
+            self.rebuild_base_for_space(*space_id, generation, policy);
+        }
         for space_id in spaces {
             let policy = self.space_provider_policy_at(space_id, generation)?;
-            if !base_ready {
-                self.rebuild_base_for_space(space_id, generation, policy);
-            }
             if semantic_ready || policy.embedding == SpaceProviderMode::Deny {
                 continue;
             }
@@ -2085,13 +2130,38 @@ impl MemoriaRuntime {
         };
         for (index, projection) in projections.iter().enumerate() {
             let input_hash = hex_lower(projection.input_hash().as_bytes());
+            let job_input_hash = format!(
+                "space:{}:memory:{}:revision:{}:{input_hash}",
+                projection.space_id(),
+                projection.memory_id(),
+                projection.revision_id(),
+            );
             let job_id = match self.derived.enqueue_build_job(
                 "enrichment",
-                &input_hash,
+                &job_input_hash,
                 projection.producer_signature(),
                 generation,
             ) {
-                Ok(job) => Some(job.job_id),
+                Ok(job) => {
+                    if matches!(
+                        job.state,
+                        BuildJobState::Succeeded | BuildJobState::Superseded
+                    ) {
+                        continue;
+                    }
+                    if self
+                        .pending_provider_work
+                        .iter()
+                        .any(|pending| pending.job_id.as_deref() == Some(job.job_id.as_str()))
+                        || self
+                            .inflight_provider_work
+                            .values()
+                            .any(|inflight| inflight.job_id.as_deref() == Some(job.job_id.as_str()))
+                    {
+                        continue;
+                    }
+                    Some(job.job_id)
+                }
                 Err(error) => {
                     self.last_error = Some(error.to_string());
                     continue;
@@ -2130,9 +2200,10 @@ impl MemoriaRuntime {
             return;
         };
         let input_hash = hex_lower(projection.input_hash().as_bytes());
+        let job_input_hash = format!("memory:{memory_id}:{input_hash}");
         let job = match self.derived.enqueue_build_job(
             "embedding",
-            &input_hash,
+            &job_input_hash,
             projection.producer_signature(),
             generation,
         ) {
@@ -2348,16 +2419,14 @@ impl MemoriaRuntime {
             )?);
         }
         let input_hash = hex_lower(projection.input_hash().as_bytes());
-        let job = self.derived.enqueue_build_job(
-            "embedding",
-            &input_hash,
-            &request.signature,
-            generation,
-        )?;
-        self.derived.mark_build_job_succeeded(&job.job_id)?;
+        if let Some(job_id) = job_id {
+            self.derived.mark_build_job_succeeded(job_id)?;
+        }
+        let ann_input_hash =
+            format!("{input_hash}:memory:{target_memory_id}:revision:{target_revision_id}");
         let ann_job = self.derived.enqueue_build_job(
             "ann-segment",
-            input_hash,
+            ann_input_hash,
             &request.signature,
             generation,
         )?;
@@ -2375,14 +2444,7 @@ impl MemoriaRuntime {
         if let Some(manifest) = self.derived.serving_manifest()?
             && manifest.authority_generation() >= publication_generation
         {
-            let mut artifact_ids = manifest.artifacts_with(semantic_artifact.id());
-            artifact_ids.retain(|artifact_id| {
-                *artifact_id == semantic_artifact.id()
-                    || self
-                        .derived
-                        .artifact(*artifact_id)
-                        .is_ok_and(|artifact| artifact.kind() != SEMANTIC_ARTIFACT_KIND)
-            });
+            let artifact_ids = manifest.artifacts_with(semantic_artifact.id());
             self.derived.publish_manifest_rebased_at_generation(
                 artifact_ids,
                 manifest.authority_generation(),
@@ -2405,6 +2467,98 @@ impl MemoriaRuntime {
             self.semantic_build_coverage = candidate;
             candidate = candidate.next();
         }
+    }
+
+    fn serving_semantic_membership(
+        &self,
+        memory_id: MemoryId,
+    ) -> Result<Option<memoria_derived::VectorMembershipRecord>, RuntimeError> {
+        let Some(manifest) = self.derived.serving_manifest()? else {
+            return Ok(None);
+        };
+        Ok(self
+            .derived
+            .vector_memberships_for_memory(memory_id)?
+            .into_iter()
+            .filter(|membership| {
+                manifest
+                    .artifacts()
+                    .any(|artifact_id| artifact_id == membership.artifact_id)
+            })
+            .filter(|membership| {
+                self.derived
+                    .artifact(membership.artifact_id)
+                    .is_ok_and(|artifact| artifact.is_compatible_semantic())
+            })
+            .max_by_key(|membership| membership.membership_id))
+    }
+
+    fn rebase_semantic_membership(
+        &mut self,
+        source: Option<memoria_derived::VectorMembershipRecord>,
+        memory_id: MemoryId,
+        space_id: SpaceId,
+        revision_id: RevisionId,
+        generation: AuthorityGeneration,
+    ) -> Result<(), RuntimeError> {
+        let Some(source) = source else {
+            return Ok(());
+        };
+        let Some(manifest) = self.derived.serving_manifest()? else {
+            return Ok(());
+        };
+        if source.space_id == space_id && source.revision_id == revision_id {
+            return Ok(());
+        }
+
+        let payload_record = self.derived.vector_payload(source.payload_hash)?;
+        let payload = VectorPayloadV1::get(self.layout.derived_dir(), source.payload_hash)?;
+        let semantic_artifact = self.derived.stage_artifact(
+            SEMANTIC_ARTIFACT_KIND,
+            SEMANTIC_ARTIFACT_VERSION,
+            generation,
+        )?;
+        self.derived.insert_vector_membership(
+            semantic_artifact.id(),
+            space_id,
+            memory_id,
+            revision_id,
+            source.derived_unit_id,
+            source.semantic_node_id.as_deref(),
+            source.resolution,
+            source.payload_hash,
+            generation,
+        )?;
+        let membership = VectorMembership::from_parts(
+            space_id,
+            memory_id,
+            revision_id,
+            generation,
+            source.payload_hash.into_bytes(),
+        );
+        let segment = AnnSegmentV1::build(
+            payload_record.producer_signature.clone(),
+            vec![AnnSegmentEntry::new(
+                format!("memory:{memory_id}"),
+                membership,
+                payload.values().to_vec(),
+            )?],
+        )?;
+        let object_hash = segment.put(self.layout.derived_dir())?;
+        self.derived.register_ann_segment(
+            semantic_artifact.id(),
+            object_hash,
+            u64::try_from(segment.vector_count()).map_err(memoria_derived::DerivedError::from)?,
+            segment.dimension(),
+            segment.producer_signature(),
+        )?;
+        self.derived.validate_artifact(semantic_artifact.id())?;
+        self.derived.publish_manifest_rebased_at_generation(
+            manifest.artifacts_with(semantic_artifact.id()),
+            generation,
+            Vec::new(),
+        )?;
+        Ok(())
     }
 
     fn authority_generation_or_initial(&self) -> AuthorityGeneration {
@@ -2445,21 +2599,24 @@ impl MemoriaRuntime {
 
     fn try_rebuild_base_for_space(
         &mut self,
-        space_id: SpaceId,
+        _space_id: SpaceId,
         generation: AuthorityGeneration,
     ) -> Result<BaseReadyReport, RuntimeError> {
-        let reads = self
-            .authority
-            .list_memories_at(&self.cas, space_id, generation)?;
-        let mut documents = Vec::with_capacity(reads.len());
-        for read in &reads {
-            let source = String::from_utf8(read.source.clone())?;
-            documents.push(LexicalDocument::new(
-                space_id,
-                read.memory.memory_id,
-                read.memory.head_revision_id,
-                compile_ir(&source)?,
-            ));
+        let spaces = self.authority.list_active_space_ids_at(generation)?;
+        let mut documents = Vec::new();
+        for space_id in spaces {
+            let reads = self
+                .authority
+                .list_memories_at(&self.cas, space_id, generation)?;
+            for read in &reads {
+                let source = String::from_utf8(read.source.clone())?;
+                documents.push(LexicalDocument::new(
+                    space_id,
+                    read.memory.memory_id,
+                    read.memory.head_revision_id,
+                    compile_ir(&source)?,
+                ));
+            }
         }
         for document in &documents {
             let target = memoria_derived::ProjectionTarget {

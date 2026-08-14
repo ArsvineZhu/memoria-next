@@ -42,6 +42,9 @@ pub struct ProviderRouteConfig {
     pub embedding: ProviderRoute,
     pub rerank: ProviderRoute,
     pub enrichment: ProviderRoute,
+    pub embedding_available: bool,
+    pub rerank_available: bool,
+    pub enrichment_available: bool,
 }
 
 impl Default for ProviderRouteConfig {
@@ -62,6 +65,9 @@ impl Default for ProviderRouteConfig {
                 ProviderTrust::External,
                 "memoria-provider-route-enrichment-v1",
             ),
+            embedding_available: true,
+            rerank_available: true,
+            enrichment_available: true,
         }
     }
 }
@@ -73,6 +79,15 @@ impl ProviderRouteConfig {
             ProviderCapability::Embedding => &self.embedding,
             ProviderCapability::Rerank => &self.rerank,
             ProviderCapability::Enrichment => &self.enrichment,
+        }
+    }
+
+    #[must_use]
+    pub const fn available(&self, capability: ProviderCapability) -> bool {
+        match capability {
+            ProviderCapability::Embedding => self.embedding_available,
+            ProviderCapability::Rerank => self.rerank_available,
+            ProviderCapability::Enrichment => self.enrichment_available,
         }
     }
 }

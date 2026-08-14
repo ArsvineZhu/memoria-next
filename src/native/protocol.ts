@@ -238,6 +238,9 @@ export interface NativeProviderRouteConfig {
   embedding: NativeProviderRoute;
   rerank: NativeProviderRoute;
   enrichment: NativeProviderRoute;
+  embeddingAvailable: boolean;
+  rerankAvailable: boolean;
+  enrichmentAvailable: boolean;
 }
 
 export interface NativeEnrichmentProjection {

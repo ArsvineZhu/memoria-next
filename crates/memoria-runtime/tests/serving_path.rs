@@ -32,6 +32,44 @@ fn current_text_query_uses_lexical_artifact_without_source_cas_reads() {
 }
 
 #[test]
+fn current_text_query_across_spaces_uses_one_global_lexical_artifact() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let first_space = runtime.create_space("first").unwrap();
+    let second_space = runtime.create_space("second").unwrap();
+    runtime
+        .create_memory(first_space, Some("one"), b"# One\nshared cross-space cue")
+        .unwrap();
+    runtime
+        .create_memory(second_space, Some("two"), b"# Two\nshared cross-space cue")
+        .unwrap();
+
+    let response = runtime
+        .query(
+            MemoryQuery::builder()
+                .spaces(vec![first_space, second_space])
+                .text_cue("shared cross-space cue")
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(response.results.len(), 2);
+    assert!(
+        response
+            .results
+            .iter()
+            .any(|result| result.space_id == first_space)
+    );
+    assert!(
+        response
+            .results
+            .iter()
+            .any(|result| result.space_id == second_space)
+    );
+}
+
+#[test]
 fn exact_entity_constraint_uses_published_local_index() {
     let directory = tempdir().unwrap();
     let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();

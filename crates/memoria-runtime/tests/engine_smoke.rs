@@ -155,7 +155,11 @@ fn projection_specific_revision_changes_do_not_enqueue_content_embedding() {
     let work = runtime.provider_poll_work().unwrap().unwrap();
     assert!(matches!(work, NeedWork::Enrichment(_)));
     assert_eq!(mutation.memory_id, memory_id);
-    assert_eq!(runtime.status().semantic_coverage.value(), 0);
+    assert_eq!(
+        runtime.status().semantic_coverage,
+        mutation.generation,
+        "tag-only revisions rebase the immutable semantic payload instead of dropping readiness",
+    );
     assert_eq!(
         runtime.status().semantic_build_coverage,
         mutation.generation,

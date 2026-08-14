@@ -145,6 +145,9 @@ export interface JsProviderRouteConfig {
   embedding?: JsProviderRoute
   rerank?: JsProviderRoute
   enrichment?: JsProviderRoute
+  embeddingAvailable?: boolean
+  rerankAvailable?: boolean
+  enrichmentAvailable?: boolean
 }
 
 export interface JsProviderWork {

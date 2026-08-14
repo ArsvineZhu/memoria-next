@@ -71,6 +71,9 @@ export function providerRoutesFor(
       trust: providers?.enrichment?.trust ?? "external",
       signature: providerRouteSignature("enrichment"),
     },
+    embeddingAvailable: providers?.embedding !== undefined,
+    rerankAvailable: providers?.rerank !== undefined,
+    enrichmentAvailable: providers?.enrichment !== undefined,
   };
 }
 

@@ -684,6 +684,24 @@ impl DerivedCatalog {
             .map_err(DerivedError::from)
     }
 
+    pub fn vector_memberships_for_memory(
+        &self,
+        memory_id: MemoryId,
+    ) -> Result<Vec<VectorMembershipRecord>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT membership_id, artifact_id, space_id, memory_id, revision_id,
+                    derived_unit_id, semantic_node_id, resolution, payload_hash,
+                    live_from_artifact_generation, live_to_artifact_generation
+             FROM vector_memberships WHERE memory_id = ?1 ORDER BY membership_id",
+        )?;
+        let rows = statement.query_map(
+            params![memory_id.as_bytes().as_slice()],
+            decode_vector_membership_record,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DerivedError::from)
+    }
+
     pub fn register_ann_segment(
         &mut self,
         artifact_id: ArtifactId,

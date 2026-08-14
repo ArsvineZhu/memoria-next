@@ -123,4 +123,21 @@ impl DerivedManifest {
     pub fn capabilities(&self) -> impl Iterator<Item = &str> {
         self.capabilities.iter().map(String::as_str)
     }
+
+    /// Add runtime-only capability claims without changing the persisted
+    /// manifest identity or its artifact set.
+    #[must_use]
+    pub fn with_additional_capabilities(&self, additional: &[&str]) -> Self {
+        let mut manifest = self.clone();
+        for capability in additional {
+            if !manifest
+                .capabilities
+                .iter()
+                .any(|current| current == capability)
+            {
+                manifest.capabilities.push((*capability).to_owned());
+            }
+        }
+        manifest
+    }
 }

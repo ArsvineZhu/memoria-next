@@ -55,7 +55,7 @@ pub fn publish_manifest_with_capabilities(
         }
     }
     catalog
-        .publish_manifest_at_generation(
+        .publish_manifest_rebased_at_generation(
             manifest.artifacts().collect(),
             runtime.status().authority_generation,
             capabilities,

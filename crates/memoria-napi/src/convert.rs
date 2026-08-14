@@ -563,6 +563,9 @@ pub struct JsProviderRouteConfig {
     pub embedding: Option<JsProviderRoute>,
     pub rerank: Option<JsProviderRoute>,
     pub enrichment: Option<JsProviderRoute>,
+    pub embedding_available: Option<bool>,
+    pub rerank_available: Option<bool>,
+    pub enrichment_available: Option<bool>,
 }
 
 pub fn provider_routes_from_js(
@@ -572,6 +575,15 @@ pub fn provider_routes_from_js(
     let Some(value) = value else {
         return Ok(routes);
     };
+    if let Some(available) = value.embedding_available {
+        routes.embedding_available = available;
+    }
+    if let Some(available) = value.rerank_available {
+        routes.rerank_available = available;
+    }
+    if let Some(available) = value.enrichment_available {
+        routes.enrichment_available = available;
+    }
     if let Some(route) = value.embedding {
         routes.embedding = provider_route_from_js(ProviderCapability::Embedding, route)?;
     }
