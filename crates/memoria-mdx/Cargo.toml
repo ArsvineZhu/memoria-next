@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Enabled only by downstream integration tests that need cross-crate IR counters.
+test-support = []
+
 [dependencies]
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
 pulldown-cmark = "0.13.0"

@@ -10,6 +10,9 @@ use crate::time::{TemporalPrecision, TemporalValue};
 const SEMANTIC_HASH_DOMAIN: &[u8] = b"memoria-semantic-v1\0";
 
 pub fn compile_ir(source: &str) -> Result<MemoryIr, MdxError> {
+    #[cfg(any(test, feature = "test-support"))]
+    crate::test_support::record_ir_compile_call();
+
     let document = crate::parse_and_validate(source)?;
     compile_validated(&document)
 }

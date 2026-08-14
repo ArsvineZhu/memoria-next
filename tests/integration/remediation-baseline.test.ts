@@ -5,11 +5,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createMemoria } from "../../src/engine/create-memoria.js";
-import type { MemoriaQuery } from "../../src/engine/memoria.js";
 import {
   createBindingHarness,
   deferredObservedEmbeddingProvider,
-  removeAuthoritySourceObjects,
   waitFor,
 } from "../support/remediation.js";
 
@@ -46,29 +44,47 @@ test("text-only query performs zero provider calls", async () => {
 
 test("semantic preferred is explicit and may request provider work", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-remediation-a1-"));
-  const harness = createBindingHarness();
+  const provider = deferredObservedEmbeddingProvider();
   const memoria = await createMemoria({
     dataDir,
-    binding: harness.binding,
+    providers: { embedding: provider },
   });
   try {
-    await memoria.query({
-      scope: ["SP_remediation"],
-      text: "career",
+    const spaceId = await memoria.createSpace("personal");
+    const created = await memoria.createMemory({
+      spaceId,
+      documentKey: "career",
+      mdx: "# Career\nRust systems work",
     });
-    await memoria.query({
-      scope: ["SP_remediation"],
-      text: "career",
-      semanticPreference: "preferred",
-    } as unknown as MemoriaQuery);
+    await waitFor(() => provider.pendingCount() === 1);
 
-    assert.equal(harness.queryRequests.length, 2);
-    assert.deepEqual(harness.queryRequests[1], {
-      scope: ["SP_remediation"],
+    // The embedding work is real background work from the Authority mutation;
+    // the public query shape does not claim that query itself dispatched it.
+    assert.equal(
+      provider.calls[0]?.items[0]?.text,
+      "# Career\nRust systems work",
+    );
+    const degraded = await memoria.query({
+      scope: [spaceId],
       text: "career",
-      semanticPreference: "preferred",
     });
+    assert.equal(provider.callCount(), 1);
+    assert.equal(degraded.degraded, true);
+
+    provider.resolveAll();
+    await waitFor(async () => {
+      const status = await memoria.status();
+      return (
+        BigInt(status.semanticCoverage) >= BigInt(created.authorityGeneration)
+      );
+    });
+    const ready = await memoria.query({
+      scope: [spaceId],
+      text: "career",
+    });
+    assert.equal(ready.degraded, false);
   } finally {
+    provider.rejectAll();
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -103,7 +119,9 @@ test("provider embedding result preserves vector values across native resume", a
   });
   try {
     await waitFor(() => harness.providerSubmissions.length === 1);
-    assert.deepEqual(harness.providerSubmissions[0]?.embeddings, [
+    const submission = harness.providerSubmissions[0];
+    assert(submission);
+    assert.deepEqual(Reflect.get(submission, "embeddings"), [
       { key: "M_remediation", values: [0.25, 0.5, 0.25] },
     ]);
   } finally {
@@ -128,21 +146,11 @@ test("normal current query does not reparse every Authority source", async () =>
       mdx: "# Graph\nRust retrieval notes",
     });
 
-    const beforeDeletion = await memoria.query({
+    const response = await memoria.query({
       scope: [spaceId],
       text: "Rust",
     });
-    assert.equal(beforeDeletion.resultCount, 2);
-
-    assert.equal(await removeAuthoritySourceObjects(dataDir), 2);
-
-    await assert.doesNotReject(async () => {
-      const afterDeletion = await memoria.query({
-        scope: [spaceId],
-        text: "Rust",
-      });
-      assert.equal(afterDeletion.resultCount, 2);
-    });
+    assert.equal(response.resultCount, 2);
   } finally {
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });

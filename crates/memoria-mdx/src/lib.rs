@@ -10,6 +10,9 @@ mod syntax;
 mod time;
 mod validate;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};

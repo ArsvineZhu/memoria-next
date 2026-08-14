@@ -1,6 +1,3 @@
-import { readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-
 import type {
   NativeBinding,
   NativeCreateMemoryRequest,
@@ -78,11 +75,7 @@ export function deferredObservedEmbeddingProvider(
 export interface BindingHarness {
   binding: NativeBinding;
   queryRequests: NativeQueryRequest[];
-  providerSubmissions: ObservedProviderResult[];
-}
-
-export interface ObservedProviderResult extends NativeProviderResult {
-  readonly embeddings?: Array<{ key: string; values: number[] }>;
+  providerSubmissions: NativeProviderResult[];
 }
 
 interface BindingHarnessOptions {
@@ -95,7 +88,7 @@ export function createBindingHarness(
   options: BindingHarnessOptions = {},
 ): BindingHarness {
   const queryRequests: NativeQueryRequest[] = [];
-  const providerSubmissions: ObservedProviderResult[] = [];
+  const providerSubmissions: NativeProviderResult[] = [];
   const providerWork = [...(options.providerWork ?? [])];
   const status: NativeStatus = {
     authorityGeneration: "0",
@@ -185,12 +178,8 @@ export function createBindingHarness(
         _store: NativeStoreHandle,
         result: NativeProviderResult,
       ) {
-        providerSubmissions.push({
-          workId: result.workId,
-          accepted: result.accepted,
-          scores: result.scores,
-          tags: result.tags,
-        });
+        // Observe the exact object crossing the TypeScript NativeBinding boundary.
+        providerSubmissions.push(result);
       },
       feedbackSubmit(
         _store: NativeStoreHandle,
@@ -208,31 +197,16 @@ export function createBindingHarness(
 }
 
 export async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 1_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate() && Date.now() < deadline) {
+  let satisfied = await predicate();
+  while (!satisfied && Date.now() < deadline) {
     await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    satisfied = await predicate();
   }
-  if (!predicate()) {
+  if (!satisfied) {
     throw new Error("condition did not become true before timeout");
   }
-}
-
-export async function removeAuthoritySourceObjects(
-  dataDir: string,
-): Promise<number> {
-  // Leave Authority SQLite intact; only remove immutable source CAS objects.
-  const authorityObjectsDir = join(dataDir, "authority", "objects");
-  const entries = await readdir(authorityObjectsDir, { withFileTypes: true });
-  let removed = 0;
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
-    await rm(join(authorityObjectsDir, entry.name), { force: true });
-    removed += 1;
-  }
-  return removed;
 }

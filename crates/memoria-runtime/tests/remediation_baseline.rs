@@ -1,4 +1,5 @@
 use memoria_derived::DerivedCatalog;
+use memoria_mdx::test_support::{ir_compile_calls, reset_ir_compile_calls};
 use memoria_query::{MemoryQuery, QueryCompiler, QueryError};
 use memoria_runtime::{MemoriaRuntime, NeedWork};
 use memoria_types::AuthorityGeneration;
@@ -56,4 +57,35 @@ Rust systems work
         }
         other => panic!("expected embedding work, got {other:?}"),
     }
+}
+
+#[test]
+fn normal_current_query_does_not_reparse_every_authority_source() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    runtime
+        .create_memory(space, Some("career"), b"# Career\nRust systems work")
+        .unwrap();
+    runtime
+        .create_memory(space, Some("graph"), b"# Graph\nRust retrieval notes")
+        .unwrap();
+
+    reset_ir_compile_calls();
+    let response = runtime
+        .query(
+            MemoryQuery::builder()
+                .spaces(vec![space])
+                .text_cue("Rust")
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(response.results.len(), 2);
+    assert_eq!(
+        ir_compile_calls(),
+        0,
+        "normal current query reparsed Authority sources",
+    );
 }
