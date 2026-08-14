@@ -182,6 +182,7 @@ export async function runSingleBenchmarkQuery(options: {
   try {
     const response = await fixture.memoria.query(
       buildQuery(query, profile, fixture.spaceIds),
+      { diagnostics: { operatorTrace: true } },
     );
     if (!response.trace) {
       throw new Error(
@@ -253,6 +254,7 @@ async function runProfile(profile: Profile, limit: number) {
       const before = { ...fixture.counts };
       const response = await fixture.memoria.query(
         buildQuery(query, definition, fixture.spaceIds),
+        { diagnostics: { operatorTrace: true } },
       );
       const trace = response.trace;
       if (!trace) {

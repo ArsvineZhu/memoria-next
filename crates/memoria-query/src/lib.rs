@@ -63,8 +63,9 @@ pub use lexical::{LexicalCandidate, LexicalCandidateIndex, execute_lexical};
 pub use lexical_operator::LexicalOperator;
 pub use model::{
     AuthorityConsistency, EntityRef, EntityRefParseError, MemoryQuery, MemoryQueryBuilder,
-    QueryBudget, QueryConsistency, QueryConstraints, QueryCue, QueryHistory, QueryHistoryMode,
-    QueryLifecycle, QueryQuality, QueryQualityLevel, QueryScope, ReadinessBehavior,
+    QueryBudget, QueryConsistency, QueryConstraints, QueryCue, QueryDiagnostics, QueryHistory,
+    QueryHistoryMode, QueryLifecycle, QueryQuality, QueryQualityLevel, QueryScope,
+    ReadinessBehavior,
 };
 pub use planner::RetrievalProfile;
 pub use planner::{CapabilityExecution, CapabilityPlanner, CapabilityTarget};

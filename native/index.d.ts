@@ -212,6 +212,10 @@ export interface JsQueryCue {
   memories?: Array<JsQueryMemoryReference>
 }
 
+export interface JsQueryDiagnostics {
+  operatorTrace?: boolean
+}
+
 export interface JsQueryHistory {
   mode: string
   fromAuthorityGeneration?: string
@@ -233,6 +237,7 @@ export interface JsQueryRequest {
   consistency: JsQueryConsistency
   budget: JsQueryBudget
   quality: string
+  diagnostics?: JsQueryDiagnostics
 }
 
 export interface JsQueryResponse {
@@ -240,7 +245,7 @@ export interface JsQueryResponse {
   authorityGeneration: string
   degraded: boolean
   retrievalId: string
-  trace: JsQueryTrace
+  trace?: JsQueryTrace
   results: Array<JsQueryResult>
 }
 

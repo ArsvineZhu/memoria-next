@@ -110,6 +110,12 @@ impl Default for JsQueryBudget {
 }
 
 #[napi(object)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct JsQueryDiagnostics {
+    pub operator_trace: Option<bool>,
+}
+
+#[napi(object)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsQueryRequest {
     pub scope: Vec<String>,
@@ -120,6 +126,7 @@ pub struct JsQueryRequest {
     pub consistency: JsQueryConsistency,
     pub budget: JsQueryBudget,
     pub quality: String,
+    pub diagnostics: Option<JsQueryDiagnostics>,
 }
 
 impl JsQueryRequest {
@@ -140,6 +147,7 @@ impl JsQueryRequest {
             consistency: JsQueryConsistency::default(),
             budget: JsQueryBudget::default(),
             quality: "balanced".to_owned(),
+            diagnostics: None,
         }
     }
 }
@@ -154,6 +162,7 @@ pub struct QueryRequest {
     pub consistency: JsQueryConsistency,
     pub budget: JsQueryBudget,
     pub quality: String,
+    pub diagnostics: Option<JsQueryDiagnostics>,
 }
 
 impl QueryRequest {
@@ -194,6 +203,9 @@ impl QueryRequest {
         builder = builder
             .budget(parse_budget(self.budget)?)
             .quality(parse_quality(&self.quality)?);
+        if let Some(diagnostics) = self.diagnostics {
+            builder = builder.operator_trace(diagnostics.operator_trace.unwrap_or(false));
+        }
         builder.build().map_err(query_error)
     }
 }
@@ -220,6 +232,7 @@ impl TryFrom<JsQueryRequest> for QueryRequest {
             consistency: value.consistency,
             budget: value.budget,
             quality: value.quality,
+            diagnostics: value.diagnostics,
         })
     }
 }
@@ -239,6 +252,7 @@ impl From<QueryRequest> for JsQueryRequest {
             consistency: value.consistency,
             budget: value.budget,
             quality: value.quality,
+            diagnostics: value.diagnostics,
         }
     }
 }
@@ -474,7 +488,7 @@ pub struct JsQueryResponse {
     pub authority_generation: String,
     pub degraded: bool,
     pub retrieval_id: String,
-    pub trace: JsQueryTrace,
+    pub trace: Option<JsQueryTrace>,
     pub results: Vec<JsQueryResult>,
 }
 
@@ -1174,7 +1188,11 @@ fn query_work_to_js(work: QueryWork) -> JsQueryWork {
 
 fn response_to_js(response: memoria_runtime::RetrievalResponse) -> Result<JsQueryResponse> {
     let retrieval_id = response.retrieval_id.clone();
-    let trace = trace_to_js(response.trace)?;
+    let trace = if response.operator_trace {
+        Some(trace_to_js(response.trace)?)
+    } else {
+        None
+    };
     Ok(JsQueryResponse {
         result_count: u32::try_from(response.results.len())
             .map_err(|error| napi::Error::from_reason(error.to_string()))?,

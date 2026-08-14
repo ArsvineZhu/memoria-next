@@ -95,6 +95,11 @@ impl Default for QueryConsistency {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct QueryDiagnostics {
+    pub operator_trace: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueryBudget {
     pub max_results: usize,
@@ -177,6 +182,7 @@ pub struct MemoryQuery {
     pub preferred_capabilities: Vec<String>,
     pub budget: QueryBudget,
     pub quality: QueryQuality,
+    pub diagnostics: QueryDiagnostics,
 }
 
 impl MemoryQuery {
@@ -201,6 +207,7 @@ pub struct MemoryQueryBuilder {
     preferred_capabilities: Vec<String>,
     budget: QueryBudget,
     quality: QueryQuality,
+    diagnostics: QueryDiagnostics,
 }
 
 impl MemoryQueryBuilder {
@@ -362,6 +369,18 @@ impl MemoryQueryBuilder {
         self
     }
 
+    #[must_use]
+    pub fn diagnostics(mut self, diagnostics: QueryDiagnostics) -> Self {
+        self.diagnostics = diagnostics;
+        self
+    }
+
+    #[must_use]
+    pub fn operator_trace(mut self, enabled: bool) -> Self {
+        self.diagnostics.operator_trace = enabled;
+        self
+    }
+
     pub fn build(self) -> Result<MemoryQuery, QueryError> {
         let query = self.build_unchecked();
         query.validate()?;
@@ -380,6 +399,7 @@ impl MemoryQueryBuilder {
             preferred_capabilities: self.preferred_capabilities,
             budget: self.budget,
             quality: self.quality,
+            diagnostics: self.diagnostics,
         }
     }
 }

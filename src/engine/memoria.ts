@@ -10,6 +10,7 @@ import type {
   NativeProviderWorkResult,
   NativeQueryRequest,
   NativeQueryResponse,
+  NativeQueryDiagnostics,
   NativePortableMemory,
   NativePurgePlan,
   NativeSpaceProviderPolicy,
@@ -46,6 +47,7 @@ export interface MemoriaStatus {
 export interface QueryOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  diagnostics?: NativeQueryDiagnostics;
 }
 
 export interface CreateMemoryRequest {
@@ -179,6 +181,9 @@ export class Memoria {
         consistency: normalized.consistency,
         budget: normalized.budget,
         quality: normalized.quality,
+        ...(options.diagnostics === undefined
+          ? {}
+          : { diagnostics: options.diagnostics }),
       };
       const response = await this.awaitOperation(
         operationId,

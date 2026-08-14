@@ -1,6 +1,7 @@
 use memoria_napi::convert::{
     JsQueryAuthority, JsQueryBudget, JsQueryConsistency, JsQueryConstraints, JsQueryCue,
-    JsQueryHistory, JsQueryMemoryReference, JsQueryRequest, JsQueryTemporal, QueryRequest,
+    JsQueryDiagnostics, JsQueryHistory, JsQueryMemoryReference, JsQueryRequest, JsQueryTemporal,
+    QueryRequest,
 };
 use memoria_query::{AuthorityConsistency, ReadinessBehavior};
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
@@ -55,6 +56,9 @@ fn full_request() -> JsQueryRequest {
             max_evidence_tokens: 321,
         },
         quality: "thorough".to_owned(),
+        diagnostics: Some(JsQueryDiagnostics {
+            operator_trace: Some(true),
+        }),
     }
 }
 
@@ -129,6 +133,7 @@ fn history_temporal_consistency_and_budget_round_trip() {
     assert_eq!(query.budget.max_matches_per_result, 4);
     assert_eq!(query.budget.max_evidence_tokens, 321);
     assert_eq!(query.quality.to_string(), "thorough");
+    assert!(query.diagnostics.operator_trace);
 }
 
 #[test]

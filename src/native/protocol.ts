@@ -47,6 +47,10 @@ export interface NativeQueryBudget {
   maxEvidenceTokens: number;
 }
 
+export interface NativeQueryDiagnostics {
+  operatorTrace?: boolean;
+}
+
 export interface NativeQueryRequest {
   scope: string[];
   cue?: NativeQueryCue;
@@ -56,6 +60,7 @@ export interface NativeQueryRequest {
   consistency: NativeQueryConsistency;
   budget: NativeQueryBudget;
   quality: "fast" | "balanced" | "thorough";
+  diagnostics?: NativeQueryDiagnostics;
 }
 
 export interface NativeQueryResponse {

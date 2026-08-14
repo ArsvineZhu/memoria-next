@@ -103,6 +103,7 @@ test("real native query response exposes the executed physical trace", async () 
           maxEvidenceTokens: 1500,
         },
         quality: "balanced",
+        diagnostics: { operatorTrace: true },
       }),
     );
 

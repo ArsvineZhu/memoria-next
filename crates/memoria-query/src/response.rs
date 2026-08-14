@@ -8,6 +8,7 @@ pub struct RetrievalResponse {
     pub snapshot: crate::QuerySnapshot,
     pub execution: crate::CapabilityExecution,
     pub trace: crate::QueryOperatorTrace,
+    pub operator_trace: bool,
     pub results: Vec<MemoryResult>,
     pub assessment: RecallAssessment,
 }
@@ -37,6 +38,7 @@ where
             authority_generation: compiled.snapshot.authority_generation,
             ..crate::QueryOperatorTrace::default()
         },
+        operator_trace: compiled.query.diagnostics.operator_trace,
         results,
         assessment,
     })
