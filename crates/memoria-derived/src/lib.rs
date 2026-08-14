@@ -37,6 +37,11 @@ pub use manifest::{CapabilityStatus, DerivedManifest, ManifestId};
 pub use memoria_types::AuthorityGeneration;
 pub use projection::PROJECTION_SCHEMA_VERSION;
 pub use projection::ProjectionTarget;
+pub use projection::embedding_view::{
+    CONTEXT_EMBEDDING_PROJECTION_VERSION, ContextEmbeddingProjectionV1,
+    LOCAL_EMBEDDING_PROJECTION_VERSION, LocalEmbeddingProjectionV1,
+    QUERY_EMBEDDING_PROJECTION_VERSION, QueryEmbeddingProjectionV1,
+};
 pub use projection::entities::{
     EntityObservation, EntityObservationArtifact, EntityObservationBuilder, EntityRef,
 };
@@ -44,6 +49,7 @@ pub use projection::lexical::{
     LexicalDocument, LexicalHit, LexicalIndex, build_lexical, lexical_projection_hash,
 };
 pub use projection::relations::{RelationArtifact, RelationBuilder, RelationRecord};
+pub use projection::rerank_view::{RERANK_VIEW_PROJECTION_VERSION, RerankViewV1};
 pub use projection::structural::{StructuralArtifact, StructuralBuilder, StructuralEntry};
 pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembership, TagProvenance};
 pub use projection::temporal::{TemporalArtifact, TemporalAssertion, TemporalBuilder};

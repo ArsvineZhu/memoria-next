@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use memoria_mdx::{IrNode, MemoryIr, SemanticKind};
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
 
 use crate::dependency::{ProjectionInputHash, ProjectionKind};
 use crate::projection::ProjectionTarget;
+use crate::projection::embedding_view::context_embedding_text;
 use crate::projection::tags::TagProvenance;
 use crate::{DerivedError, LexicalDocument, TagDictionary, TagId};
 
@@ -38,8 +38,8 @@ impl EnrichmentProjection {
                 value: "enrichment producer signature must not be empty".to_owned(),
             });
         }
-        let content = enrichment_text(document.ir());
-        let canonical_bytes = enrichment_projection_bytes(document.ir(), &content);
+        let content = context_embedding_text(document.ir());
+        let canonical_bytes = enrichment_projection_bytes(&content);
         let input_hash = ProjectionInputHash::new(
             ProjectionKind::GeneratedTags,
             &canonical_bytes,
@@ -286,36 +286,10 @@ fn artifact_fingerprint(
     hasher.finalize().into()
 }
 
-fn enrichment_text(ir: &MemoryIr) -> String {
-    let mut output = ir.text_hierarchy().to_owned();
-    for node in ir.nodes().filter(|node| node.kind() != SemanticKind::Tag) {
-        append_text(&mut output, node);
-    }
-    output
-}
-
-fn append_text(output: &mut String, node: &IrNode) {
-    if !output.is_empty() && !output.ends_with('\n') {
-        output.push('\n');
-    }
-    output.push_str(node.text());
-}
-
-fn enrichment_projection_bytes(ir: &MemoryIr, content: &str) -> Vec<u8> {
+fn enrichment_projection_bytes(content: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"memoria-enrichment-projection-v1\0");
     put_string(&mut bytes, content.as_bytes());
-    for node in ir.nodes().filter(|node| node.kind() != SemanticKind::Tag) {
-        put_string(&mut bytes, node.kind().as_str().as_bytes());
-        put_string(
-            &mut bytes,
-            node.id()
-                .map(ToString::to_string)
-                .as_deref()
-                .unwrap_or("")
-                .as_bytes(),
-        );
-        put_string(&mut bytes, node.text().as_bytes());
-    }
     bytes
 }
 

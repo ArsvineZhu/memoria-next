@@ -6,7 +6,8 @@ use memoria_authority::{AuthorityDb, MemoryLifecycle, SourceCas, StoreLayout, St
 use memoria_derived::{
     BaseReadyReport, DerivedCatalog, DerivedCompiler, EnrichmentProjection,
     EntityObservationBuilder, ExplicitTagBuilder, GeneratedTagArtifact, LexicalDocument,
-    ProjectionInputHash, ProjectionKind, TagDictionary,
+    LocalEmbeddingProjectionV1, ProjectionInputHash, ProjectionKind, QueryEmbeddingProjectionV1,
+    TagDictionary,
 };
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
@@ -254,11 +255,12 @@ impl MemoriaRuntime {
                 maximum: error.maximum,
             }
         })?;
+        let projection = local_embedding_projection(source)?;
         let result = self
             .authority
             .create_memory(&self.cas, space_id, document_key, source)?;
         let memory_id = result.value().memory_id;
-        self.enqueue_embedding_work(memory_id, result.generation(), source);
+        self.enqueue_embedding_work(memory_id, result.generation(), projection);
         self.rebuild_base_for_space(space_id, result.generation());
         Ok(memory_id)
     }
@@ -278,6 +280,7 @@ impl MemoriaRuntime {
                 maximum: error.maximum,
             }
         })?;
+        let projection = local_embedding_projection(source)?;
         let before = self.authority_generation()?;
         let result = self.authority.create_memory_idempotent(
             &self.cas,
@@ -288,7 +291,7 @@ impl MemoriaRuntime {
         )?;
         let memory_id = result.value().memory_id;
         if result.generation() > before {
-            self.enqueue_embedding_work(memory_id, result.generation(), source);
+            self.enqueue_embedding_work(memory_id, result.generation(), projection);
             self.rebuild_base_for_space(space_id, result.generation());
         }
         Ok(memory_id)
@@ -384,12 +387,17 @@ impl MemoriaRuntime {
         })?;
         let previous_source = self.authority.read_memory(&self.cas, memory_id)?.source;
         let requires_content_embedding = self.requires_content_embedding(&previous_source, source);
+        let projection = if requires_content_embedding {
+            Some(local_embedding_projection(source)?)
+        } else {
+            None
+        };
         let result = self
             .authority
             .revise_memory(&self.cas, memory_id, expected_head, source)?;
         let record = result.value();
-        if requires_content_embedding {
-            self.enqueue_embedding_work(record.memory_id, result.generation(), source);
+        if let Some(projection) = projection {
+            self.enqueue_embedding_work(record.memory_id, result.generation(), projection);
         } else {
             self.advance_semantic_coverage();
         }
@@ -879,16 +887,16 @@ impl MemoriaRuntime {
         &mut self,
         memory_id: MemoryId,
         generation: AuthorityGeneration,
-        source: &[u8],
+        projection: LocalEmbeddingProjectionV1,
     ) {
         let work_id = format!("EW_{memory_id}_{generation}");
         let work = NeedWork::Embeddings(crate::EmbeddingBatchRequest {
             work_id,
-            signature: "memoria-embedding-v1".to_owned(),
+            signature: projection.producer_signature().to_owned(),
             dimensions: 3,
             items: vec![crate::EmbeddingItem {
                 key: memory_id.to_string(),
-                text: String::from_utf8_lossy(source).into_owned(),
+                text: projection.content().to_owned(),
             }],
         });
         self.pending_provider_work
@@ -1019,6 +1027,15 @@ impl MemoriaRuntime {
     }
 }
 
+fn local_embedding_projection(source: &[u8]) -> Result<LocalEmbeddingProjectionV1, RuntimeError> {
+    let source = String::from_utf8(source.to_vec())?;
+    let ir = compile_ir(&source)?;
+    Ok(LocalEmbeddingProjectionV1::build(
+        &ir,
+        "memoria-embedding-v1",
+    )?)
+}
+
 fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
     cues.iter()
         .filter(|cue| {
@@ -1031,13 +1048,14 @@ fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
 }
 
 fn query_embedding_work(query: &MemoryQuery) -> QueryWork {
+    let projection = QueryEmbeddingProjectionV1::build(query.cue.text.join("\n"));
     QueryWork::Embedding(EmbeddingBatchRequest {
         work_id: format!("QW_{}", MemoryId::new()),
         signature: "query-embedding-v1".to_owned(),
         dimensions: 3,
         items: vec![EmbeddingItem {
             key: "query".to_owned(),
-            text: query.cue.text.join("\n"),
+            text: projection.content().to_owned(),
         }],
     })
 }
