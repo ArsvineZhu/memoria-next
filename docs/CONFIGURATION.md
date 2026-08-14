@@ -63,6 +63,25 @@ concurrency or batch scheduling until a binding exposes that behavior.
 current contract; their detailed runtime behavior is not advertised by this
 release line.
 
+## Space policy and durable operations
+
+Provider egress is also governed by the Authority-owned policy on each Space:
+`deny`, `local-only`, or `external-allowed` for embedding, reranking, and
+enrichment. When a query spans multiple Spaces, the effective policy is the
+most restrictive policy in the scope. A global privacy denial still blocks the
+corresponding capability before work is dispatched.
+
+Backup, portable import, and purge do not use configuration flags to weaken
+their durability boundaries. Backup destinations must be outside the active
+Store; restore will not overwrite an existing target. Import requires an
+explicit idempotency key and bounded package/source sizes, and purge is
+planned before its durable cleanup journal can advance.
+
+SQLite WAL mode, foreign-key enforcement, busy timeout, and bounded write
+retries are runtime persistence policy rather than public tuning knobs. Keep
+the Store on a filesystem that supports the required SQLite locking and atomic
+rename behavior.
+
 ## Store path guidance
 
 Use a dedicated directory for each logical Store. Do not place backups inside

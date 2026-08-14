@@ -21,6 +21,8 @@
 - [ADR 0003: Adaptive V1 defaults](decisions/0003-adaptive-v1.md)
 - [ADR 0004: at-rest encryption feasibility](decisions/0004-at-rest-encryption.md)
 - [ADR 0005: incremental release baseline](decisions/0005-release-performance-baseline.md)
+- [ADR 0012: preserve and benchmark original retrieval algorithms](decisions/0012-original-retrieval-algorithms.md)
+- [ADR 0013: runtime remediation completion](decisions/0013-runtime-remediation-complete.md)
 
 ## Adjacent operational references
 

@@ -50,6 +50,22 @@ Tag dictionaries normalize global Tag identities. Space-local memberships and
 Tag association evidence remain scoped; association is retrieval evidence, not
 causal or authorization authority.
 
+## Serving truth and invalidation boundaries
+
+Current lexical, exact, structural, temporal, relation, and Tag evidence is
+served from the published Derived artifacts pinned to the query's Authority
+snapshot. A normal current query does not scan Authority source bytes or
+reparse every Memory. Authority/source reads remain part of rebuild and
+historical paths, not the current serving fast path.
+
+Semantic serving is enabled only by a successful manifest capability for the
+pinned generation and a compatible persisted ANN artifact. A text cue alone
+does not request semantic work. `semantic.required` fails with a capability
+error when the artifact/provider boundary is unavailable; `semantic.preferred`
+may degrade to the available local channels. When semantic work is used, the
+direct ANN channel and Tag Basis residual channel remain distinct and their
+operator trace is recorded.
+
 ## Query channels
 
 The structured query compiler separates scope, hard constraints, exact
@@ -72,10 +88,22 @@ provider-free lexical profile; advanced operators remain explicit until a
 broader corpus and measured budgets justify a default change. See
 [ADR 0002](decisions/0002-retrieval-defaults.md).
 
+The planner keeps the original operators behind bounded quality profiles:
+Tag-driven seeding and Space-local readout, Tag Basis projection/residuals,
+bounded Activation, independent normalized Graph Diffusion, propagation
+support, correlation-aware structure evidence, explicit relation expansion,
+RRF fusion with `k=60`, hierarchical consolidation, optional post-fusion
+reranking, and separate recall/accessibility/effort assessment. Scope and hard
+constraints are applied before every candidate channel and before reranking.
+Diffusion is not an Activation alias; its personalized normalized iterations
+are independently traced and remain available in the Thorough profile.
+
 ## Adaptive V1
 
 Adaptive state is replayed from explicit feedback events keyed by Space and
 Memory, with revision evidence retained separately. The prior has a fixed
 maximum influence and is applied only as a bounded tie-breaker over admissible
 base candidates. Accessibility decays at read time; it is not an exclusion
-filter. See [ADR 0003](decisions/0003-adaptive-v1.md).
+filter. The event log and materialized state are persisted in `adaptive.sqlite`
+and reopened before query snapshots are built, preserving the Adaptive
+generation across restart. See [ADR 0003](decisions/0003-adaptive-v1.md).

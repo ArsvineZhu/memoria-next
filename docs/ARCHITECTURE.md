@@ -43,7 +43,10 @@ Restricted declarative MDX is parsed, validated, and compiled into a canonical
 Memory IR. It supports the semantic elements needed by the current profile,
 including visible text, hierarchy, entities, explicit Tags, relations, time,
 Memory references, source locators, and quote/evidence regions. It is data, not
-executable code.
+executable code. A single canonical `EntityRef` grammar is shared by MDX,
+query, Derived, and N-API conversion. Raw HTML and runtime components outside
+the closed profile are rejected; comments and code spans remain source text and
+do not become semantic/provider input.
 
 Authority is the source of truth. Derived artifacts can be deleted and
 rebuilt. A Derived manifest binds validated artifact IDs to an Authority
@@ -63,6 +66,38 @@ query path remains local and deterministic. Provider-dependent semantic or
 rerank work may be unavailable, degraded, or explicitly denied; those states
 are represented as capability/error results rather than permission guesses.
 
+## Durability, transfer, and purge flow
+
+Authority, Derived, and Adaptive each use an explicit SQLite concurrency
+policy: WAL journaling, foreign-key enforcement where applicable, bounded
+busy timeouts, and bounded retries for immediate write transactions. Rust owns
+the transaction boundaries and the TypeScript layer does not copy live SQLite
+files as a persistence protocol.
+
+Store backup pins one Authority generation, uses SQLite online backup for the
+Authority database (and optionally Adaptive), copies and verifies the source
+CAS objects reachable from that snapshot, writes a hashed manifest, and writes
+`COMPLETE` last. Restore validates the marker, manifest, database integrity,
+Store identity, and every copied object in a staging directory before
+activation. Derived and Cache are rebuildable and are not part of the backup
+identity snapshot.
+
+Portable import allocates the target Space and Memory identities before
+rewriting package-internal `MemoryRef` values. Every rewritten document is
+revalidated, all source objects are prepared, and the Authority rows plus the
+import fingerprint/mapping are committed in one bounded transaction. External
+references remain unresolved and are reported; a retry after restart returns
+the persisted mapping, while a changed fingerprint returns an idempotency
+conflict.
+
+Purge is a durable Authority journal with the states
+`planned → committed → cleaning → completed`. Planning is explicit; reopening
+resumes only committed or cleaning work. Cleanup makes the Memory unavailable,
+rewrites Adaptive state, clears retrieval receipts, removes Derived artifacts,
+collects unreferenced source objects, runs integrity verification, and records
+completion. A failed cleanup remains resumable rather than being reported as a
+silent success.
+
 ## Query and learning flow
 
 The Host supplies a structured scope and cue. The Rust query pipeline applies
@@ -74,6 +109,8 @@ advanced graph operators are explicit capabilities.
 Adaptive ranking reads a bounded replayed model only after ordinary query
 admissibility. It learns from explicit feedback tied to a retrieval receipt;
 retrieval exposure, top-K selection, or an unused result is not feedback.
+The event log and materialized state are durable in `adaptive.sqlite`, so a
+restart preserves the Adaptive generation and replayable events.
 
 ## Host and Agent boundary
 

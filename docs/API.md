@@ -26,14 +26,14 @@ leases on the terminal boundary.
 
 ## Domain methods
 
-| Surface                                                                   | Contract                                                                               |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `memoria.spaces.create({ key })`                                          | Create a Space and return its branded `id` and key.                                    |
-| `memoria.documents.create({ space, documentKey?, mdx, idempotencyKey? })` | Commit a new Memory in the selected Space.                                             |
-| `memoria.documents.revise({ memory, expectedHead, mdx })`                 | Commit a new revision using compare-and-swap against the expected HEAD.                |
-| `memoria.query({ scope: { spaces }, cue? }, { signal?, timeoutMs? })`     | Run a scoped query and return a retrieval receipt plus result handles.                 |
-| `memoria.status()`                                                        | Read Authority generation, Base and semantic coverage, active leases, and close state. |
-| `memoria.openReadSession(query)` / `closeReadSession(id)`                 | Hold an explicit native read lease; close it when the caller is done.                  |
+| Surface                                                                   | Contract                                                                                 |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `memoria.spaces.create({ key, providerPolicy? })`                         | Create a Space and return its branded `id`, key, and snapshot-versioned provider policy. |
+| `memoria.documents.create({ space, documentKey?, mdx, idempotencyKey? })` | Commit a new Memory in the selected Space.                                               |
+| `memoria.documents.revise({ memory, expectedHead, mdx })`                 | Commit a new revision using compare-and-swap against the expected HEAD.                  |
+| `memoria.query({ scope: { spaces }, cue? }, { signal?, timeoutMs? })`     | Run a scoped query and return a retrieval receipt plus result handles.                   |
+| `memoria.status()`                                                        | Read Authority generation, Base and semantic coverage, active leases, and close state.   |
+| `memoria.openReadSession(query)` / `closeReadSession(id)`                 | Hold an explicit native read lease; close it when the caller is done.                    |
 
 The query response has this shape:
 
@@ -110,9 +110,22 @@ not converted into a broad access decision.
   `import({ packagePath, targetSpace: { key }, idempotencyKey })`;
 - `planPurge({ memory: { id } })` and `executePurge({ planId })`.
 
-Backups are managed Store snapshots. Portable export/import is a scoped data
-transfer with new target IDs and unresolved external-reference reporting. Purge
-is a planned, resumable lifecycle operation; it is not equivalent to an
+Backups are managed Store snapshots. Rust pins the Authority generation,
+creates consistent SQLite backups, copies reachable source CAS objects, and
+publishes a manifest with a final `COMPLETE` marker. Restore refuses an
+existing target and activates only after staged validation; Derived and Cache
+are rebuilt rather than treated as Authority.
+
+Portable export/import is a scoped data transfer with new target IDs. The
+native import path rewrites package-internal `MemoryRef` values from source
+IDs to target IDs, validates all rewritten MDX before one Authority commit,
+persists the request fingerprint and mapping, and reports unresolved external
+references. Retrying the same idempotency key after restart returns the same
+mapping; changing the package under that key returns `IDEMPOTENCY_CONFLICT`.
+
+Purge is a planned, durable operation with `planned`, `committed`, `cleaning`,
+and `completed` states. Reopen resumes committed/cleaning cleanup; planning
+alone does not silently start destructive work. It is not equivalent to an
 ordinary content correction.
 
 ## Agent surface
@@ -133,6 +146,6 @@ stale patch.
 Public failures are mapped to `MemoriaError` with a stable `code`. Important
 codes include `INVALID_MDX`, `HEAD_CONFLICT`, `OUT_OF_SCOPE`,
 `CAPABILITY_NOT_READY`, `PROVIDER_UNAVAILABLE`, `STORE_LOCKED`,
-`UNSUPPORTED_STORE_FORMAT`, `RESOURCE_LIMIT`, `ABORTED`, `QUERY_TIMEOUT`,
-`QUERY_ERROR`, and `STORE_CLOSED`. Use `isMemoriaError(error, code)` instead of
-parsing message text.
+`STORE_CORRUPT`, `CORRUPTION`, `UNSUPPORTED_STORE_FORMAT`, `RESOURCE_LIMIT`,
+`ABORTED`, `QUERY_TIMEOUT`, `QUERY_ERROR`, and `STORE_CLOSED`. Use
+`isMemoriaError(error, code)` instead of parsing message text.

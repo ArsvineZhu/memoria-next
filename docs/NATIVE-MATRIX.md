@@ -1,6 +1,6 @@
 # Memoria Next native matrix
 
-Status date: 2026-08-13.
+Status date: 2026-08-14.
 
 This document records the local Gate J evidence for the package and its N-API
 binding. The current workstation is Windows, so the Windows row is executed
@@ -9,17 +9,17 @@ those hosts; a Windows pass is not a cross-platform pass.
 
 ## Toolchain and artifact
 
-| Item             | Observed value                                                            |
-| ---------------- | ------------------------------------------------------------------------- |
-| Node             | `v24.19.0`                                                                |
-| pnpm             | `11.20.0`                                                                 |
-| Rust             | `rustc 1.97.1 (8bab26f4f 2026-07-14)`                                     |
-| Rust host        | `x86_64-pc-windows-msvc`                                                  |
-| Native target    | `win32-x64-msvc`                                                          |
-| Native artifact  | [`native/index.win32-x64-msvc.node`](../native/index.win32-x64-msvc.node) |
-| Artifact bytes   | `17,654,784`                                                              |
-| Artifact SHA-256 | `C32DDA31457979700368887FB52CC9F967A9C537770348EAE35E578C872A94A1`        |
-| Evidence commit  | `e02f7057b191d3675f1805d3c1d2e21c43198351`                                |
+| Item                     | Observed value                                                            |
+| ------------------------ | ------------------------------------------------------------------------- |
+| Node                     | `v24.19.0`                                                                |
+| pnpm                     | `11.20.0`                                                                 |
+| Rust                     | `rustc 1.97.1 (8bab26f4f 2026-07-14)`                                     |
+| Rust host                | `x86_64-pc-windows-msvc`                                                  |
+| Native target            | `win32-x64-msvc`                                                          |
+| Native artifact          | [`native/index.win32-x64-msvc.node`](../native/index.win32-x64-msvc.node) |
+| Artifact bytes           | `20,240,896`                                                              |
+| Artifact SHA-256         | `F971B743B53D74D283E1C0FA2DD4BE488723727B33F199E040E4FA9907346C4B`        |
+| Evidence source baseline | `622d89245c5e49eaeaaf3a8430a9ada7f0a338c5`                                |
 
 The package currently contains the Windows native artifact plus the platform
 loader and declarations. No Linux or macOS binary is checked in by this
@@ -35,6 +35,19 @@ the full workspace and package suites were also run for the Windows row.
 | Windows `win32-x64-msvc`                             | PASS: `corepack pnpm verify:public` | PASS: `second_writer_is_rejected` | PASS: `runtime_can_commit_base_ready_memory_and_query_it`, public suite | PASS: `store_layout_opens_existing_store`, `first_schema_initialization_persists_version_across_reopen` | PASS: `deleting_derived_is_recoverable` | PASS: `base_ready_requires_zero_provider_work`, local-only egress test | PASS: `continuation_rejects_a_different_query_and_expiry`, cancellation test | PASS: `backup restore preserves the Store identity universe` | PASS: `completed_purge_removes_authority_visibility_and_managed_source_blob`, purge test | PASS: `corepack pnpm verify:pack` | PASS   |
 | Linux `x86_64-unknown-linux-gnu`                     | NOT RUN: Linux host unavailable     | NOT RUN                           | NOT RUN                                                                 | NOT RUN                                                                                                 | NOT RUN                                 | NOT RUN                                                                | NOT RUN                                                                      | NOT RUN                                                      | NOT RUN                                                                                  | NOT RUN                           | OPEN   |
 | macOS `aarch64-apple-darwin` / `x86_64-apple-darwin` | NOT RUN: macOS host unavailable     | NOT RUN                           | NOT RUN                                                                 | NOT RUN                                                                                                 | NOT RUN                                 | NOT RUN                                                                | NOT RUN                                                                      | NOT RUN                                                      | NOT RUN                                                                                  | NOT RUN                           | OPEN   |
+
+The remediation-specific Windows checks are also green:
+
+- `backup_consistency`, `import_remap`, and `purge_recovery` cover online
+  backup/restore, source-aware portable import, idempotent remapping, and
+  resumable purge cleanup;
+- `entity_ref` and `referential_semantics` cover the canonical EntityRef
+  grammar, per-element Core kinds, and raw HTML/runtime rejection;
+- the Authority, Derived, and Adaptive concurrency suites cover SQLite WAL,
+  busy-timeout retries, and restart-safe durable state;
+- CAS corruption, merge-parent canonicalization, provider policy, semantic
+  publication, and packed-consumer checks are included in the workspace and
+  TypeScript suites.
 
 ## Windows evidence commands
 
@@ -52,7 +65,21 @@ corepack pnpm test
 corepack pnpm verify:docs
 corepack pnpm verify:public
 corepack pnpm verify:pack
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile fast
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile thorough
+corepack pnpm exec tsx benchmarks/incremental/run.ts
+corepack pnpm exec tsx benchmarks/adaptive/replay.ts --adaptive=on
 ```
+
+The final fixture measurements were: fast `recall@k=1`, `MRR=1`,
+`NDCG@k=0.9532`, zero provider calls and zero hard-constraint violations;
+balanced had the same quality and safety values; thorough had `recall@k=1`,
+`MRR=0.9375`, `NDCG@k=0.9387`, eight ANN/provider/rerank calls, and zero
+hard-constraint violations. The incremental harness reported two embedding,
+16 enrichment, and zero rerank calls; formatting/comment-only, EntityRef-only,
+Tag-only, temporal, relation, and source-locator changes did not rebuild
+content embeddings, while a Space move reused the immutable vector payload.
 
 The focused matrix names map to the following source tests:
 
