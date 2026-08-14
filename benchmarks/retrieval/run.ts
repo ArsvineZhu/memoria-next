@@ -1,22 +1,20 @@
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
-  asMemoryId,
-  asRevisionId,
   asSpaceId,
-  createMemoria,
-  type Memoria,
   type QueryOptionalCapability,
   type SpaceId,
 } from "../../src/index.js";
-import type {
-  EmbeddingWork,
-  ProviderSet,
-  RerankWork,
-} from "../../src/providers/types.js";
+import {
+  createRuntimeFixture,
+  directorySize,
+  readJsonLines,
+  type CorpusDocument,
+  type Fixture,
+} from "./runtime-fixture.js";
 
 type Profile =
   | "lexical"
@@ -30,23 +28,6 @@ type Profile =
   | "balanced"
   | "thorough";
 
-interface Relation {
-  target: string;
-  kind: string;
-}
-
-interface CorpusDocument {
-  id: string;
-  spaceId: string;
-  memoryId: string;
-  revisionId: string;
-  state: "current" | "historical";
-  text: string;
-  tags: string[];
-  entities: string[];
-  relations: Relation[];
-}
-
 interface QueryCase {
   id: string;
   case: string;
@@ -57,11 +38,6 @@ interface QueryCase {
   tags?: string[];
   relationKinds?: string[];
   relevant: Record<string, number>;
-}
-
-interface ProviderCounts {
-  embedding: number;
-  rerank: number;
 }
 
 interface ProfileDefinition {
@@ -101,16 +77,7 @@ interface QueryMetrics {
   };
 }
 
-interface Fixture {
-  memoria: Memoria;
-  dataDir: string;
-  spaceIds: Map<string, SpaceId>;
-  externalIdByMemoryId: Map<string, string>;
-  documentByExternalId: Map<string, CorpusDocument>;
-  counts: ProviderCounts;
-}
-
-const PROFILES: Profile[] = [
+export const PROFILES: Profile[] = [
   "lexical",
   "lexical+semantic",
   "tag-association",
@@ -123,7 +90,7 @@ const PROFILES: Profile[] = [
   "thorough",
 ];
 
-const PROFILE_DEFINITIONS: Record<Profile, ProfileDefinition> = {
+export const PROFILE_DEFINITIONS: Record<Profile, ProfileDefinition> = {
   lexical: {
     quality: "balanced",
     required: [],
@@ -201,39 +168,87 @@ const queries = await readJsonLines<QueryCase>(
   new URL("./queries.jsonl", import.meta.url),
 );
 
-const requested = requestedProfile();
+export async function runSingleBenchmarkQuery(options: {
+  fixture: string;
+}): Promise<{
+  source: "runtime";
+  queryId: string;
+  trace: NonNullable<Awaited<ReturnType<Fixture["memoria"]["query"]>>["trace"]>;
+  resultIds: string[];
+}> {
+  const query = resolveFixtureQuery(options.fixture);
+  const profile = PROFILE_DEFINITIONS[profileForQuery(query)];
+  const fixture = await createRuntimeFixture(corpus);
+  try {
+    const response = await fixture.memoria.query(
+      buildQuery(query, profile, fixture.spaceIds),
+    );
+    if (!response.trace) {
+      throw new Error(
+        "real native response did not include QueryOperatorTrace",
+      );
+    }
+    return {
+      source: "runtime",
+      queryId: query.id,
+      trace: response.trace,
+      resultIds: response.results.map((result) => result.memoryId),
+    };
+  } finally {
+    await fixture.memoria.close();
+    await rm(fixture.dataDir, { recursive: true, force: true });
+  }
+}
 
-try {
+async function main(): Promise<void> {
+  const requested = requestedProfile();
+  const limit = requestedLimit();
   if (requested === "all") {
     const results = [];
     for (const profile of PROFILES) {
-      results.push(await runProfile(profile));
+      results.push(await runProfile(profile, limit));
     }
     console.log(JSON.stringify(results, null, 2));
   } else if (PROFILES.includes(requested as Profile)) {
     console.log(
-      JSON.stringify(await runProfile(requested as Profile), null, 2),
+      JSON.stringify(await runProfile(requested as Profile, limit), null, 2),
     );
   } else {
-    console.error("usage: run.ts --profile=" + [...PROFILES, "all"].join("|"));
-    process.exitCode = 1;
+    throw new Error(
+      "usage: run.ts --profile=" + [...PROFILES, "all"].join("|"),
+    );
   }
-} catch (error) {
-  console.error(
-    error instanceof Error ? (error.stack ?? error.message) : String(error),
-  );
-  process.exitCode = 1;
 }
 
-async function runProfile(profile: Profile) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(
+      error instanceof Error ? (error.stack ?? error.message) : String(error),
+    );
+    process.exitCode = 1;
+  }
+}
+
+async function runProfile(profile: Profile, limit: number) {
   const started = performance.now();
   const definition = PROFILE_DEFINITIONS[profile];
-  const fixture = await createFixture();
+  const fixture = await createRuntimeFixture(corpus);
   const queryMetrics: QueryMetrics[] = [];
   const observedChannels = new Set<string>();
+  const profileQueries = queries.filter((query) =>
+    queryMatchesProfile(query, profile),
+  );
+  const selectedQueries = (
+    profileQueries.length > 0 ? profileQueries : queries
+  ).slice(0, limit);
 
   try {
-    for (const query of queries) {
+    for (const query of selectedQueries) {
       const queryStarted = performance.now();
       const before = { ...fixture.counts };
       const response = await fixture.memoria.query(
@@ -261,7 +276,9 @@ async function runProfile(profile: Profile) {
         fixture.counts.embedding -
         before.embedding +
         fixture.counts.rerank -
-        before.rerank;
+        before.rerank +
+        fixture.counts.enrichment -
+        before.enrichment;
       const rerankCalls = fixture.counts.rerank - before.rerank;
       queryMetrics.push({
         queryId: query.id,
@@ -310,16 +327,10 @@ async function runProfile(profile: Profile) {
       }
     }
     if (
-      profile === "rerank" &&
+      (profile === "rerank" || profile === "thorough") &&
       !queryMetrics.some((metric) => metric.rerankApplied)
     ) {
-      throw new Error("rerank profile completed without an applied rerank");
-    }
-    if (
-      profile === "thorough" &&
-      !queryMetrics.some((metric) => metric.rerankApplied)
-    ) {
-      throw new Error("thorough profile completed without an applied rerank");
+      throw new Error(profile + " profile completed without an applied rerank");
     }
 
     const elapsedMs = Math.max(0.01, performance.now() - started);
@@ -333,7 +344,7 @@ async function runProfile(profile: Profile) {
       providerMode: "deterministic-local",
       profile,
       corpusDocuments: corpus.length,
-      queryCount: queries.length,
+      queryCount: selectedQueries.length,
       topK: TOP_K,
       observedChannels: [...observedChannels].sort(),
       metrics: {
@@ -384,7 +395,7 @@ async function runProfile(profile: Profile) {
         ),
         storeBytes: await directorySize(fixture.dataDir),
         basisRankMean: mean(basisRanks),
-        basisSkippedQueries: queries.length - basisRanks.length,
+        basisSkippedQueries: selectedQueries.length - basisRanks.length,
       },
       queries: queryMetrics,
     };
@@ -392,213 +403,6 @@ async function runProfile(profile: Profile) {
     await fixture.memoria.close();
     await rm(fixture.dataDir, { recursive: true, force: true });
   }
-}
-
-async function createFixture(): Promise<Fixture> {
-  const dataDir = await mkdtemp(join(tmpdir(), "memoria-next-retrieval-"));
-  const counts: ProviderCounts = { embedding: 0, rerank: 0 };
-  const memoria = await createMemoria({
-    dataDir,
-    providers: deterministicProviders(counts),
-  });
-  const spaceIds = new Map<string, SpaceId>();
-  const externalIdByMemoryId = new Map<string, string>();
-  const documentByExternalId = new Map(
-    corpus.map((document) => [document.id, document]),
-  );
-
-  try {
-    for (const spaceKey of [
-      ...new Set(corpus.map((document) => document.spaceId)),
-    ]) {
-      const space = await memoria.spaces.create({ key: spaceKey });
-      spaceIds.set(spaceKey, space.id);
-    }
-
-    let generation = "0";
-    for (const document of corpus) {
-      const space = spaceIds.get(document.spaceId);
-      if (!space) {
-        throw new Error("missing benchmark Space " + document.spaceId);
-      }
-      const created = await memoria.documents.create({
-        space: { id: asSpaceId(space) },
-        documentKey: document.id,
-        mdx: documentMdx(document),
-      });
-      generation = created.authorityGeneration;
-      externalIdByMemoryId.set(created.memoryId, document.id);
-    }
-    await waitForCoverage(memoria, generation);
-
-    const heads = await memoria.query({
-      scope: { spaces: [...spaceIds.values()] },
-      budget: {
-        maxResults: corpus.length + 10,
-        maxMatchesPerResult: 1,
-        maxEvidenceTokens: 100,
-      },
-    });
-    const headByMemoryId = new Map(
-      heads.results.map((result) => [result.memoryId, result.revisionId]),
-    );
-
-    for (const document of corpus.filter(
-      (candidate) => candidate.relations.length > 0,
-    )) {
-      const memoryId = [...externalIdByMemoryId.entries()].find(
-        ([, externalId]) => externalId === document.id,
-      )?.[0];
-      const space = spaceIds.get(document.spaceId);
-      const expectedHead = memoryId ? headByMemoryId.get(memoryId) : undefined;
-      if (!memoryId || !space || !expectedHead) {
-        throw new Error(
-          "could not resolve relation fixture head for " + document.id,
-        );
-      }
-      const revised = await memoria.documents.revise({
-        memory: { id: asMemoryId(memoryId) },
-        expectedHead: asRevisionId(expectedHead),
-        mdx: documentMdx(
-          document,
-          document.relations.map((relation) => {
-            const target = [...externalIdByMemoryId.entries()].find(
-              ([, externalId]) => externalId === relation.target,
-            )?.[0];
-            if (!target) {
-              throw new Error(
-                "relation target " +
-                  relation.target +
-                  " is missing from fixture",
-              );
-            }
-            return target;
-          }),
-        ),
-      });
-      generation = revised.authorityGeneration;
-    }
-    await waitForCoverage(memoria, generation);
-
-    return {
-      memoria,
-      dataDir,
-      spaceIds,
-      externalIdByMemoryId,
-      documentByExternalId,
-      counts,
-    };
-  } catch (error) {
-    await memoria.close();
-    await rm(dataDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-function deterministicProviders(counts: ProviderCounts): ProviderSet {
-  return {
-    embedding: {
-      trust: "local",
-      async execute(work: EmbeddingWork) {
-        counts.embedding += 1;
-        return {
-          vectors: work.items.map((item) => ({
-            key: item.key,
-            values: anchorVector(item.text, item.key === "query"),
-          })),
-        };
-      },
-    },
-    rerank: {
-      trust: "local",
-      async execute(work: RerankWork) {
-        counts.rerank += 1;
-        return work.candidates.map((handle, index) => ({
-          handle,
-          score: rerankScore(work.query, handle, index),
-        }));
-      },
-    },
-    enrichment: {
-      trust: "local",
-      async execute() {
-        return [];
-      },
-    },
-  };
-}
-
-function anchorVector(text: string, query = false): number[] {
-  const terms = new Set(text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
-  const groups = [
-    ["career", "rust", "alex", "apollo", "cooking", "food"],
-    [
-      "systems",
-      "graph",
-      "planning",
-      "support",
-      "retrieval",
-      "sourdough",
-      "vegetables",
-    ],
-  ];
-  const vector = groups.map((group) =>
-    group.reduce((total, term) => total + (terms.has(term) ? 1 : 0), 0),
-  );
-  return vector.some((value) => value > 0)
-    ? [...vector, query ? 0.25 : 0]
-    : [0.1, 0.1, query ? 0.25 : 0];
-}
-
-function rerankScore(query: string, handle: string, index: number): number {
-  const hash = stableHash(query + "\u0000" + handle);
-  const positionBonus = Math.max(0, 1 - index / 64);
-  return Math.min(1, 0.75 * ((hash % 10_000) / 10_000) + 0.25 * positionBonus);
-}
-
-function stableHash(value: string): number {
-  let hash = 2_166_136_261;
-  for (const character of value) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return hash >>> 0;
-}
-
-function documentMdx(
-  document: CorpusDocument,
-  relationMemoryIds: string[] = [],
-): string {
-  const lines = ["# " + document.id];
-  for (const entity of document.entities) {
-    lines.push(
-      '<Entity ref="' +
-        escapeAttribute(entity) +
-        '">' +
-        escapeText(entity.split(":").at(-1) ?? entity) +
-        "</Entity>",
-    );
-  }
-  for (const tag of document.tags) {
-    lines.push('<Tag value="' + escapeAttribute(tag) + '"/>');
-  }
-  lines.push(document.text);
-  for (const memoryId of relationMemoryIds) {
-    lines.push('<MemoryRef memoryId="' + escapeAttribute(memoryId) + '"/>');
-  }
-  return lines.join("\n") + "\n";
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function escapeText(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
 }
 
 function buildQuery(
@@ -640,14 +444,43 @@ function buildQuery(
   };
 }
 
+function resolveFixtureQuery(fixture: string): QueryCase {
+  const aliases: Record<string, string> = {
+    "tag-association-01": "q-tag-rust",
+    "semantic-residual-01": "q-current-career",
+  };
+  const queryId = aliases[fixture] ?? fixture;
+  const query = queries.find((candidate) => candidate.id === queryId);
+  if (!query) {
+    throw new Error("unknown benchmark fixture " + fixture);
+  }
+  return query;
+}
+
+function profileForQuery(query: QueryCase): Profile {
+  if (query.id === "q-tag-rust") return "tag-association";
+  if (query.id === "q-current-career") return "balanced";
+  return "lexical";
+}
+
+function queryMatchesProfile(query: QueryCase, profile: Profile): boolean {
+  switch (profile) {
+    case "tag-association":
+      return query.id === "q-tag-rust";
+    case "tag-basis-residual":
+      return query.id === "q-current-career";
+    case "activation":
+    case "diffusion":
+      return query.id === "q-relation-support";
+    default:
+      return false;
+  }
+}
+
 function rankingMetrics(
   query: QueryCase,
   returned: Array<{ id: string }>,
-): {
-  recallAtK: number;
-  mrr: number;
-  ndcgAtK: number;
-} {
+): { recallAtK: number; mrr: number; ndcgAtK: number } {
   const relevant = new Set(Object.keys(query.relevant));
   const hits = returned.filter((candidate) => relevant.has(candidate.id));
   const firstHit = returned.findIndex((candidate) =>
@@ -692,59 +525,6 @@ function countHardConstraintViolations(
   }, 0);
 }
 
-async function waitForCoverage(
-  memoria: Memoria,
-  generation: string,
-  timeoutMs = 10_000,
-): Promise<void> {
-  const target = BigInt(generation);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const status = await memoria.status();
-    if (
-      BigInt(status.baseCoverage) >= target &&
-      BigInt(status.semanticCoverage) >= target &&
-      BigInt(status.semanticBuildCoverage) >= target
-    ) {
-      return;
-    }
-    await delay(2);
-  }
-  const status = await memoria.status();
-  throw new Error(
-    "runtime-backed retrieval fixture did not converge: target=" +
-      generation +
-      " base=" +
-      status.baseCoverage +
-      " semantic=" +
-      status.semanticCoverage +
-      " semanticBuild=" +
-      status.semanticBuildCoverage,
-  );
-}
-
-async function directorySize(path: string): Promise<number> {
-  const entries = await readdir(path, { withFileTypes: true });
-  let total = 0;
-  for (const entry of entries) {
-    const child = join(path, entry.name);
-    if (entry.isDirectory()) {
-      total += await directorySize(child);
-    } else {
-      total += (await stat(child)).size;
-    }
-  }
-  return total;
-}
-
-async function readJsonLines<T>(url: URL): Promise<T[]> {
-  const source = await readFile(url, "utf8");
-  return source
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as T);
-}
-
 function requestedProfile(): string {
   const argument = process.argv.find((value) => value.startsWith("--profile="));
   const index = process.argv.indexOf("--profile");
@@ -755,15 +535,23 @@ function requestedProfile(): string {
   );
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function requestedLimit(): number {
+  const argument = process.argv.find((value) => value.startsWith("--limit="));
+  const index = process.argv.indexOf("--limit");
+  const raw =
+    argument?.slice("--limit=".length) ??
+    (index >= 0 ? process.argv[index + 1] : undefined);
+  if (raw === undefined) return queries.length;
+  const limit = Number(raw);
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error("--limit must be a positive integer");
+  }
+  return Math.min(limit, queries.length);
 }
 
 function percentile(values: number[], quantile: number): number {
   const sorted = [...values].sort((left, right) => left - right);
-  if (sorted.length === 0) {
-    return 0;
-  }
+  if (sorted.length === 0) return 0;
   const index = Math.min(
     sorted.length - 1,
     Math.ceil(sorted.length * quantile) - 1,
