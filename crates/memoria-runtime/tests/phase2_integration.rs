@@ -1,14 +1,12 @@
 mod support;
 
-use memoria_derived::{DerivedCatalog, TagId};
-use memoria_query::{
-    AssociationGraph, CapabilityPlanner, MemoryQuery, PropagationBudget, QueryQualityLevel,
-    TagSeed, TagSeedProvenance, activation_propagate,
-};
+use memoria_derived::DerivedCatalog;
+use memoria_query::{CapabilityPlanner, MemoryQuery, QueryQualityLevel};
 use memoria_runtime::{
-    EmbeddingVector, MemoriaRuntime, NeedWork, ProviderRouteConfig, ProviderTrust,
-    ProviderWorkResult, SpaceProviderMode, SpaceProviderPolicy,
+    EmbeddingVector, MemoriaRuntime, NeedWork, ProviderRouteConfig, ProviderWorkResult,
+    SpaceProviderMode, SpaceProviderPolicy,
 };
+use memoria_types::MemoryId;
 use tempfile::tempdir;
 
 fn take_embedding_work(runtime: &mut MemoriaRuntime) -> memoria_runtime::EmbeddingBatchRequest {
@@ -42,18 +40,64 @@ fn serving_manifest(runtime: &MemoriaRuntime) -> memoria_derived::DerivedManifes
         .unwrap()
 }
 
-fn local_only_embedding_policy() -> SpaceProviderPolicy {
+fn semantic_membership_target(
+    runtime: &MemoriaRuntime,
+) -> (memoria_types::SpaceId, MemoryId, memoria_types::RevisionId) {
+    let catalog = DerivedCatalog::open(runtime.data_dir().join("derived/catalog.sqlite")).unwrap();
+    let manifest = catalog.serving_manifest().unwrap().unwrap();
+    let artifact_id = manifest
+        .artifacts()
+        .find(|id| catalog.artifact(*id).unwrap().kind() == "semantic")
+        .expect("semantic artifact should be serving");
+    let membership = catalog
+        .vector_memberships_for_artifact(artifact_id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("semantic membership should be serving");
+    (
+        membership.space_id,
+        membership.memory_id,
+        membership.revision_id,
+    )
+}
+
+fn all_local_only_policy() -> SpaceProviderPolicy {
     SpaceProviderPolicy {
         embedding: SpaceProviderMode::LocalOnly,
-        ..SpaceProviderPolicy::default()
+        enrichment: SpaceProviderMode::LocalOnly,
+        reranking: SpaceProviderMode::LocalOnly,
     }
 }
 
-fn seed(value: &str, provenance: TagSeedProvenance) -> TagSeed {
-    TagSeed {
-        tag_id: TagId::from_normalized(value),
-        value: value.to_owned(),
-        provenance,
+fn drain_background_work(runtime: &mut MemoriaRuntime, generated_memory: MemoryId) {
+    while let Some(work) = runtime.provider_poll_work().unwrap() {
+        match work {
+            NeedWork::Embeddings(request) => runtime
+                .provider_submit_result(ProviderWorkResult::Embeddings {
+                    work_id: request.work_id,
+                    vectors: request
+                        .items
+                        .into_iter()
+                        .map(|item| EmbeddingVector {
+                            key: item.key,
+                            values: vec![1.0, 0.0, 0.0],
+                        })
+                        .collect(),
+                })
+                .unwrap(),
+            NeedWork::Enrichment(request) => runtime
+                .provider_submit_result(ProviderWorkResult::Enrichment {
+                    work_id: request.work_id,
+                    tags: if request.projection.memory_id() == generated_memory {
+                        vec!["source".to_owned()]
+                    } else {
+                        Vec::new()
+                    },
+                })
+                .unwrap(),
+            NeedWork::Rerank(request) => panic!("unexpected background rerank {}", request.work_id),
+        }
     }
 }
 
@@ -90,48 +134,45 @@ fn phase2_semantic_publication_rebases_late_g1_work_onto_g2() {
     let manifest = serving_manifest(&runtime);
     assert_eq!(manifest.authority_generation(), mutation.generation);
     assert!(manifest.capability("semantic").is_ready());
+    let (published_space, published_memory, published_revision) =
+        semantic_membership_target(&runtime);
+    assert_eq!(published_space, space);
+    assert_eq!(published_memory, memory);
+    assert_eq!(published_revision, mutation.revision_id);
 }
 
 #[test]
-fn phase2_explicit_seed_outranks_otherwise_equal_generated_seed() {
-    let source = TagId::from_normalized("source");
-    let target = TagId::from_normalized("target");
-    let mut explicit_graph = AssociationGraph::new();
-    explicit_graph.add_edge(source, target, 1.0).unwrap();
-    let mut generated_graph = AssociationGraph::new();
-    generated_graph.add_edge(source, target, 1.0).unwrap();
+fn phase2_explicit_seed_outranks_otherwise_equal_generated_seed_in_runtime() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    let explicit_memory = runtime
+        .create_memory(
+            space,
+            Some("explicit"),
+            b"# Explicit\n<Tag value=\"source\"/>",
+        )
+        .unwrap();
+    let generated_memory = runtime
+        .create_memory(space, Some("generated"), b"# Generated")
+        .unwrap();
+    drain_background_work(&mut runtime, generated_memory);
 
-    let budget = PropagationBudget {
-        max_active_tags: 16,
-        max_edge_visits: 64,
-        max_hops: 2,
-    };
-    let explicit = activation_propagate(
-        &explicit_graph,
-        &[seed("source", TagSeedProvenance::Explicit)],
-        budget,
-    )
-    .unwrap();
-    let generated = activation_propagate(
-        &generated_graph,
-        &[seed("source", TagSeedProvenance::Generated)],
-        budget,
-    )
-    .unwrap();
+    let response = runtime
+        .query(
+            MemoryQuery::builder()
+                .spaces(vec![space])
+                .cue_tag("source")
+                .require_capability("associative")
+                .max_results(2)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
 
-    let explicit_score = explicit
-        .active_tags
-        .iter()
-        .find(|tag| tag.tag_id == target)
-        .unwrap()
-        .score;
-    let generated_score = generated
-        .active_tags
-        .iter()
-        .find(|tag| tag.tag_id == target)
-        .unwrap()
-        .score;
-    assert!(explicit_score > generated_score);
+    assert_eq!(response.results.len(), 2);
+    assert_eq!(response.results[0].memory_id, explicit_memory);
+    assert_eq!(response.results[1].memory_id, generated_memory);
 }
 
 #[test]
@@ -204,27 +245,13 @@ fn phase2_rust_trust_gate_emits_no_external_work_for_local_only_space() {
         MemoriaRuntime::open_with_provider_routes(directory.path(), ProviderRouteConfig::default())
             .unwrap();
     let space = runtime
-        .create_space_with_policy("private", local_only_embedding_policy())
+        .create_space_with_policy("private", all_local_only_policy())
         .unwrap();
     runtime
         .create_memory(space, Some("private"), b"# Private\nprivate cue")
         .unwrap();
 
-    while let Some(work) = runtime.provider_poll_work().unwrap() {
-        match work {
-            NeedWork::Embeddings(request) => {
-                assert_eq!(request.route.trust, ProviderTrust::Local);
-                panic!("external embedding work must be rejected before emission");
-            }
-            NeedWork::Enrichment(request) => runtime
-                .provider_submit_result(memoria_runtime::ProviderWorkResult::Enrichment {
-                    work_id: request.work_id,
-                    tags: Vec::new(),
-                })
-                .unwrap(),
-            NeedWork::Rerank(request) => panic!("unexpected rerank work {}", request.work_id),
-        }
-    }
+    assert!(runtime.provider_poll_work().unwrap().is_none());
 }
 
 #[test]
@@ -258,14 +285,9 @@ fn phase2_trace_candidate_counts_match_runtime_channel_work() {
         .expect("lexical work must be traced");
     assert_eq!(lexical_count, 2);
     assert_eq!(response.results.len(), 2);
+    assert_eq!(response.trace.channels_executed, vec!["lexical"]);
     assert_eq!(
-        response
-            .trace
-            .candidate_counts
-            .iter()
-            .map(|(_, count)| *count)
-            .sum::<usize>(),
-        response.trace.candidate_counts.len().saturating_mul(2),
-        "trace contains one bounded count per executed channel"
+        response.trace.candidate_counts,
+        vec![("lexical".to_owned(), 2)]
     );
 }
