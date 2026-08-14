@@ -286,30 +286,30 @@ export class Memoria {
   async importPortable(
     request: NativePortableImportRequest,
   ): Promise<NativePortableImportResult> {
-    const importPortable = this.#binding.importPortable;
-    if (!importPortable) {
+    if (!this.#binding.importPortable) {
       throw new MemoriaError(
         "UNSUPPORTED_OPERATION",
         "UNSUPPORTED_OPERATION: native portable import support is unavailable",
       );
     }
-    const result = importPortable(this.store(), request);
+    const result = this.#binding.importPortable(this.store(), request);
     this.#wakeProviderPump?.();
     return result;
   }
 
-  async createBackup(options: {
-    includeAdaptive?: boolean;
-    outputPath?: string;
-  } = {}): Promise<NativeBackupResult> {
-    const backupCreate = this.#binding.backupCreate;
-    if (!backupCreate) {
+  async createBackup(
+    options: {
+      includeAdaptive?: boolean;
+      outputPath?: string;
+    } = {},
+  ): Promise<NativeBackupResult> {
+    if (!this.#binding.backupCreate) {
       throw new MemoriaError(
         "UNSUPPORTED_OPERATION",
         "UNSUPPORTED_OPERATION: native backup support is unavailable",
       );
     }
-    return backupCreate(
+    return this.#binding.backupCreate(
       this.store(),
       options.outputPath,
       options.includeAdaptive === true,
@@ -320,14 +320,13 @@ export class Memoria {
     backupPath: string;
     targetDir: string;
   }): Promise<NativeBackupResult> {
-    const backupRestore = this.#binding.backupRestore;
-    if (!backupRestore) {
+    if (!this.#binding.backupRestore) {
       throw new MemoriaError(
         "UNSUPPORTED_OPERATION",
         "UNSUPPORTED_OPERATION: native restore support is unavailable",
       );
     }
-    return backupRestore(input.backupPath, input.targetDir);
+    return this.#binding.backupRestore(input.backupPath, input.targetDir);
   }
 
   async planPurge(memoryId: string): Promise<NativePurgePlan> {

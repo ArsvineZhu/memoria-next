@@ -78,12 +78,16 @@ test("semantic preferred is explicit and may request provider work", async () =>
         BigInt(created.authorityGeneration)
       );
     });
-    const stillDegraded = await memoria.query({
+    const semanticQuery = memoria.query({
       scope: { spaces: [asSpaceId(spaceId)] },
       cue: { text: "career" },
       consistency: { preferred: ["semantic"] },
     });
-    assert.equal(stillDegraded.degraded, true);
+    await waitFor(() => provider.pendingCount() === 1);
+    assert.equal(provider.callCount(), 2);
+    provider.resolveAll();
+    const semanticResponse = await semanticQuery;
+    assert.equal(semanticResponse.degraded, false);
   } finally {
     provider.rejectAll();
     await memoria.close();

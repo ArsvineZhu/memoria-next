@@ -58,7 +58,9 @@ test("import creates new local ids and resolves package-internal references", as
 });
 
 test("native import receives the complete package for source-aware remapping", async () => {
-  const root = await mkdtemp(join(tmpdir(), "memoria-next-import-native-test-"));
+  const root = await mkdtemp(
+    join(tmpdir(), "memoria-next-import-native-test-"),
+  );
   const packagePath = join(root, "package.json");
   const requests: NativePortableImportRequest[] = [];
   const result: NativePortableImportResult = {
@@ -118,7 +120,10 @@ test("native import receives the complete package for source-aware remapping", a
     assert.deepEqual(imported.unresolvedExternalReferences, ["M_EXTERNAL"]);
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.memories.length, 2);
-    assert.equal(requests[0]?.memories[0]?.mdx, '<MemoryRef memoryId="M_OTHER"/>');
+    assert.equal(
+      requests[0]?.memories[0]?.mdx,
+      '<MemoryRef memoryId="M_OTHER"/>',
+    );
     assert.match(requests[0]?.requestFingerprint ?? "", /^[0-9a-f]{64}$/);
   } finally {
     await rm(root, { recursive: true, force: true });

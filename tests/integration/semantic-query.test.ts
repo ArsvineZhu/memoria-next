@@ -37,12 +37,15 @@ test("semantic preferred degrades until vector coverage is ready", async () => {
     provider.resolveAll();
     await waitForSemanticBuildCoverage(memoria, created.authorityGeneration);
 
-    const stillDegraded = await memoria.query({
+    const semanticQuery = memoria.query({
       scope: { spaces: [space.id] },
       cue: { text: "career" },
       consistency: { preferred: ["semantic"] },
     });
-    assert.equal(stillDegraded.degraded, true);
+    await waitForPendingProvider(provider);
+    provider.resolveAll();
+    const semanticResponse = await semanticQuery;
+    assert.equal(semanticResponse.degraded, false);
   } finally {
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });

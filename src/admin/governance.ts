@@ -264,16 +264,20 @@ export async function importPortablePackage(
       idempotencyKey: input.idempotencyKey,
       requestFingerprint,
       originStoreId: packageValue.originStoreId,
-      memories: packageValue.memories.map(({ sourceId, spaceId, revisionId, mdx }) => ({
-        sourceId,
-        spaceId,
-        revisionId,
-        mdx,
-      })),
+      memories: packageValue.memories.map(
+        ({ sourceId, spaceId, revisionId, mdx }) => ({
+          sourceId,
+          spaceId,
+          revisionId,
+          mdx,
+        }),
+      ),
     });
     return {
       mappings: { memories: imported.mappings },
-      unresolvedExternalReferences: [...imported.unresolvedExternalReferences].sort(),
+      unresolvedExternalReferences: [
+        ...imported.unresolvedExternalReferences,
+      ].sort(),
       targetSpaceId: imported.targetSpaceId,
     };
   }
@@ -312,7 +316,9 @@ function validatePortablePackage(value: PortablePackage): void {
     value.format !== "memoria-portable-v1" ||
     typeof value.originStoreId !== "string" ||
     !Array.isArray(value.scope) ||
-    !value.scope.every((space) => typeof space === "string" && space.length > 0) ||
+    !value.scope.every(
+      (space) => typeof space === "string" && space.length > 0,
+    ) ||
     !Array.isArray(value.memories) ||
     value.memories.length === 0 ||
     value.memories.length > 4096
@@ -333,9 +339,13 @@ function validatePortablePackage(value: PortablePackage): void {
       memory.mdx.length > 4 * 1024 * 1024 ||
       (memory.references !== undefined &&
         (!Array.isArray(memory.references) ||
-          !memory.references.every((reference) => typeof reference === "string")))
+          !memory.references.every(
+            (reference) => typeof reference === "string",
+          )))
     ) {
-      throw new Error("INVALID_MDX: portable package contains an invalid memory");
+      throw new Error(
+        "INVALID_MDX: portable package contains an invalid memory",
+      );
     }
     totalSourceBytes += Buffer.byteLength(memory.mdx, "utf8");
     if (totalSourceBytes > 64 * 1024 * 1024) {

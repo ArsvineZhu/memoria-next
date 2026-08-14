@@ -42,7 +42,9 @@ test("authority mutation returns before provider completion and background pump 
       BigInt(after.semanticBuildCoverage) >=
         BigInt(created.authorityGeneration),
     );
-    assert.equal(after.semanticCoverage, "0");
+    assert(
+      BigInt(after.semanticCoverage) >= BigInt(created.authorityGeneration),
+    );
   } finally {
     await memoria.close();
     await rm(dataDir, { recursive: true, force: true });
