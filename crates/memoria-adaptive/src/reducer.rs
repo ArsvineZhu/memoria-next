@@ -15,7 +15,7 @@ where
     state
 }
 
-fn apply_event(state: &mut AdaptiveStateV1, event: &AdaptiveEvent) {
+pub(crate) fn apply_event(state: &mut AdaptiveStateV1, event: &AdaptiveEvent) {
     state.set_generation(event.generation);
     let (positive, weight) = match event.outcome {
         FeedbackOutcome::Used

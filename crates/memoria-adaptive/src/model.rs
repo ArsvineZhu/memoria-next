@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use memoria_types::{AdaptiveGeneration, MemoryId, RevisionId, SpaceId, Timestamp};
+use serde::{Deserialize, Serialize};
 
 const SATURATION_SCALE: f64 = 4.0;
 const RECENCY_HALF_LIFE_SECONDS: f64 = 30.0 * 24.0 * 60.0 * 60.0;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AdaptiveStateV1 {
     targets: BTreeMap<(SpaceId, MemoryId), TargetFamiliarity>,
     tag_affinity: BTreeMap<(SpaceId, MemoryId, String), AffinityStats>,
@@ -13,7 +14,7 @@ pub struct AdaptiveStateV1 {
     generation: AdaptiveGeneration,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TargetFamiliarity {
     pub success_count: u64,
     pub negative_count: u64,
@@ -23,13 +24,13 @@ pub struct TargetFamiliarity {
     revisions: BTreeMap<RevisionId, RevisionFamiliarity>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RevisionFamiliarity {
     pub success_count: u64,
     pub last_success_at: Option<Timestamp>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AffinityStats {
     pub positive_count: u64,
     pub negative_count: u64,
@@ -140,6 +141,18 @@ impl AdaptiveStateV1 {
 
     pub fn replay(events: &[crate::AdaptiveEvent]) -> Self {
         crate::reduce(events.iter().cloned())
+    }
+
+    pub fn from_checkpoint_and_tail<I>(checkpoint: crate::AdaptiveCheckpoint, tail: I) -> Self
+    where
+        I: IntoIterator<Item = crate::AdaptiveEvent>,
+    {
+        let mut state = checkpoint.state;
+        state.set_generation(checkpoint.generation);
+        for event in tail {
+            crate::reducer::apply_event(&mut state, &event);
+        }
+        state
     }
 }
 

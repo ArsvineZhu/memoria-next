@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use memoria_types::AdaptiveGeneration;
+use memoria_types::{AdaptiveGeneration, MemoryId, SpaceId};
 
 use crate::{AdaptiveError, AdaptiveEvent, FeedbackEventInput};
 
@@ -37,6 +37,31 @@ impl AdaptiveEventLog {
     #[must_use]
     pub fn events(&self) -> &[AdaptiveEvent] {
         &self.events
+    }
+
+    pub fn from_events<I>(events: I) -> Result<Self, AdaptiveError>
+    where
+        I: IntoIterator<Item = AdaptiveEvent>,
+    {
+        let mut log = Self::new();
+        log.events = events.into_iter().collect();
+        log.rebuild_indexes()?;
+        Ok(log)
+    }
+
+    pub fn rewrite_without_memory(&mut self, memory_id: MemoryId) -> Result<(), AdaptiveError> {
+        self.events = crate::purge::rewrite_without_memory(&self.events, memory_id);
+        self.rebuild_indexes()
+    }
+
+    pub fn reset_space(&mut self, space_id: SpaceId) -> Result<(), AdaptiveError> {
+        self.events = crate::reset::reset_space(&self.events, space_id);
+        self.rebuild_indexes()
+    }
+
+    pub fn reset_store(&mut self) -> Result<(), AdaptiveError> {
+        self.events = crate::reset::reset_store(&self.events);
+        self.rebuild_indexes()
     }
 
     pub fn append_batch<I>(&mut self, inputs: I) -> Result<AdaptiveLogCommit, AdaptiveError>
@@ -108,5 +133,33 @@ impl AdaptiveEventLog {
             generation: self.generation,
             events,
         })
+    }
+
+    fn rebuild_indexes(&mut self) -> Result<(), AdaptiveError> {
+        self.by_idempotency_key.clear();
+        self.by_event_id.clear();
+        for (index, event) in self.events.iter().enumerate() {
+            event.as_input().validate()?;
+            if self
+                .by_event_id
+                .insert(event.event_id.clone(), index)
+                .is_some()
+            {
+                return Err(AdaptiveError::EventIdConflict {
+                    event_id: event.event_id.clone(),
+                });
+            }
+            if self
+                .by_idempotency_key
+                .insert(event.idempotency_key.clone(), index)
+                .is_some()
+            {
+                return Err(AdaptiveError::IdempotencyConflict {
+                    key: event.idempotency_key.clone(),
+                });
+            }
+            self.generation = self.generation.max(event.generation);
+        }
+        Ok(())
     }
 }
