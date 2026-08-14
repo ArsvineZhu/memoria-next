@@ -42,6 +42,7 @@ impl QueryWork {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum QueryStep {
     Complete(RetrievalResponse),

@@ -172,3 +172,35 @@ fn exact_candidate_survives_even_if_semantic_rank_is_low() {
             .any(|result| result.memory_id == exact_memory)
     );
 }
+
+#[test]
+fn runtime_trace_contains_production_associative_channels() {
+    let directory = tempdir().unwrap();
+    let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+    let space = runtime.create_space("personal").unwrap();
+    runtime
+        .create_memory(
+            space,
+            Some("career"),
+            b"# Career\n<Tag value=\"systems\"/> Rust systems work",
+        )
+        .unwrap();
+    support::drain_background_work(&mut runtime, |_| vec![1.0, 0.0, 0.0]);
+    support::publish_manifest_with_capabilities(&runtime, &["associative"]);
+
+    let response = query_embedding_step(
+        &mut runtime,
+        MemoryQuery::builder()
+            .spaces(vec![space])
+            .text_cue("systems")
+            .require_capability("semantic")
+            .require_capability("associative")
+            .build()
+            .unwrap(),
+        vec![1.0, 0.0, 0.0],
+    );
+
+    assert!(response.trace.channel_executed("semantic-direct"));
+    assert!(response.trace.channel_executed("tag-readout"));
+    assert!(response.trace.channel_executed("activation"));
+}

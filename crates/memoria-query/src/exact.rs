@@ -246,7 +246,7 @@ pub fn execute_exact(compiled: &CompiledQuery, index: &ExactIndex) -> CandidateR
     }
 }
 
-fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
+pub(crate) fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
     let query = &compiled.query;
     query.scope.spaces.contains(&record.target.space_id)
         && record.current

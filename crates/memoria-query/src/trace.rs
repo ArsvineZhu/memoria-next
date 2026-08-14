@@ -39,6 +39,41 @@ impl QueryOperatorTrace {
         self.tag_basis_explained_energy = Some(explained_energy);
     }
 
+    pub fn merge(&mut self, other: Self) {
+        self.channels_executed.extend(other.channels_executed);
+        self.candidate_counts.extend(other.candidate_counts);
+        if other.tag_basis_rank.is_some() {
+            self.tag_basis_rank = other.tag_basis_rank;
+            self.tag_basis_conditioning = other.tag_basis_conditioning;
+            self.tag_basis_explained_energy = other.tag_basis_explained_energy;
+        }
+        self.activation_edge_visits = self
+            .activation_edge_visits
+            .saturating_add(other.activation_edge_visits);
+        self.activation_hops = self.activation_hops.max(other.activation_hops);
+        self.activation_truncated |= other.activation_truncated;
+        self.diffusion_iterations = self
+            .diffusion_iterations
+            .saturating_add(other.diffusion_iterations);
+        self.diffusion_convergence_delta = other
+            .diffusion_convergence_delta
+            .or(self.diffusion_convergence_delta);
+        self.diffusion_truncated |= other.diffusion_truncated;
+        self.independent_support_count = self
+            .independent_support_count
+            .saturating_add(other.independent_support_count);
+        self.correlation_suppressed_evidence = self
+            .correlation_suppressed_evidence
+            .saturating_add(other.correlation_suppressed_evidence);
+        self.relation_expansions = self
+            .relation_expansions
+            .saturating_add(other.relation_expansions);
+        self.rerank_requested |= other.rerank_requested;
+        self.rerank_applied |= other.rerank_applied;
+        self.capability_degraded |= other.capability_degraded;
+        self.authority_generation = other.authority_generation;
+    }
+
     #[must_use]
     pub fn channel_executed(&self, channel: &str) -> bool {
         self.channels_executed.iter().any(|item| item == channel)

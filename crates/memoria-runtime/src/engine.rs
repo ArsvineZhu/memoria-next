@@ -13,16 +13,19 @@ use memoria_derived::{
     EmbeddingNormalization, EnrichmentProjection, EntityObservationBuilder, ExplicitTagBuilder,
     GeneratedTagArtifact, LexicalArtifactHandle, LexicalDocument, LocalEmbeddingProjectionV1,
     ManifestId, ProjectionInputHash, ProjectionKind, QueryEmbeddingProjectionV1,
-    SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION, TagDictionary, VectorFilter,
-    VectorMembership, VectorPayloadRecord, VectorPayloadV1,
+    SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION, TagDictionary, TagGraph, TagId,
+    TagMembershipInput, TagProvenance, VectorFilter, VectorMembership, VectorPayloadRecord,
+    VectorPayloadV1,
 };
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
-    AdaptiveSnapshotIdentity, CandidatePool, ExactIndex, ExactRecord, LexicalCandidate,
-    LexicalCandidateIndex, LexicalOperator, MemoryQuery, PhysicalChannel, PhysicalQueryPlanner,
-    QueryCompiler, QueryError, ReadSession, ReadinessBehavior, RetrievalResponse,
-    SemanticCandidateIndex, SemanticResolution, assess, build_response, execute_exact,
-    execute_lexical, execute_semantic, rank_with_adaptive,
+    AdaptiveSnapshotIdentity, AlgorithmChannelInputs, CandidateEvidence, CandidatePool, ExactIndex,
+    ExactRecord, LexicalCandidate, LexicalCandidateIndex, LexicalOperator, MemoryQuery,
+    PhysicalChannel, PhysicalQueryPlanner, QueryCompiler, QueryError, QueryOperatorTrace,
+    ReadSession, ReadinessBehavior, RetrievalResponse, SemanticCandidateIndex, SemanticChannel,
+    SemanticResidualOperator, SemanticResolution, TagSeedProvenance, TagVectorCandidate, assess,
+    build_response, execute_algorithm_channels, execute_exact, execute_lexical, execute_semantic,
+    rank_with_adaptive, resolve_explicit_tag_seeds,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
@@ -223,6 +226,37 @@ impl LexicalOperator for ManifestLexicalOperator<'_> {
         Ok(LexicalCandidateIndex::from_derived_hits(hits, self.exact)
             .candidates()
             .to_vec())
+    }
+}
+
+struct RuntimeSemanticResidualOperator<'a> {
+    runtime: &'a MemoriaRuntime,
+    compiled: &'a memoria_query::CompiledQuery,
+    exact: &'a ExactIndex,
+}
+
+impl SemanticResidualOperator for RuntimeSemanticResidualOperator<'_> {
+    fn search(
+        &self,
+        query_vector: &[f32],
+        _limit: usize,
+    ) -> Result<Vec<CandidateEvidence>, QueryError> {
+        let hits = self
+            .runtime
+            .semantic_vector_hits(self.compiled, query_vector, self.exact)
+            .map_err(|error| QueryError::OperatorFailure {
+                message: error.to_string(),
+            })?;
+        Ok(execute_semantic(
+            self.compiled,
+            &SemanticCandidateIndex::from_vector_hits_with_channel(
+                hits,
+                self.exact,
+                SemanticResolution::Leaf,
+                SemanticChannel::Residual,
+            ),
+        )
+        .results)
     }
 }
 
@@ -1058,9 +1092,15 @@ impl MemoriaRuntime {
         let exact = ExactIndex::new(records);
         let plan = PhysicalQueryPlanner::plan(&compiled);
         let mut pool = CandidatePool::new();
+        let mut trace = QueryOperatorTrace {
+            authority_generation: compiled.snapshot.authority_generation,
+            capability_degraded: compiled.execution.degraded,
+            ..QueryOperatorTrace::default()
+        };
 
         if plan.channels.contains(&PhysicalChannel::Exact) {
             pool.insert_response(PhysicalChannel::Exact, execute_exact(&compiled, &exact));
+            record_runtime_channel(&mut trace, &pool, PhysicalChannel::Exact, "exact");
         }
 
         if plan.channels.contains(&PhysicalChannel::Lexical) && !exact.records().is_empty() {
@@ -1080,6 +1120,7 @@ impl MemoriaRuntime {
                 PhysicalChannel::Lexical,
                 execute_lexical(&compiled, &LexicalCandidateIndex::new(lexical_candidates)),
             );
+            record_runtime_channel(&mut trace, &pool, PhysicalChannel::Lexical, "lexical");
         }
 
         if plan.channels.contains(&PhysicalChannel::SemanticDirect) {
@@ -1098,6 +1139,29 @@ impl MemoriaRuntime {
                     ),
                 ),
             );
+            record_runtime_channel(
+                &mut trace,
+                &pool,
+                PhysicalChannel::SemanticDirect,
+                "semantic-direct",
+            );
+        }
+
+        if compiled.execution.used("semantic") || compiled.execution.used("associative") {
+            let inputs = self.algorithm_channel_inputs(&compiled, &exact)?;
+            let residual_operator = RuntimeSemanticResidualOperator {
+                runtime: self,
+                compiled: &compiled,
+                exact: &exact,
+            };
+            trace.merge(execute_algorithm_channels(
+                &compiled,
+                query_vector.as_deref().unwrap_or(&[]),
+                &exact,
+                &mut pool,
+                &inputs,
+                Some(&residual_operator),
+            )?);
         }
 
         let candidates = pool.candidates();
@@ -1107,6 +1171,7 @@ impl MemoriaRuntime {
             &compiled,
             candidates,
         )?;
+        response.trace = trace;
         let now = memoria_types::Timestamp::now()?;
         let adaptive_state = AdaptiveStateV1::replay(self.adaptive_log.events());
         response.results =
@@ -1121,6 +1186,107 @@ impl MemoriaRuntime {
         )?;
         self.receipts.insert(response.retrieval_id.clone(), receipt);
         Ok(response)
+    }
+
+    fn algorithm_channel_inputs(
+        &mut self,
+        compiled: &memoria_query::CompiledQuery,
+        exact: &ExactIndex,
+    ) -> Result<AlgorithmChannelInputs, RuntimeError> {
+        let memberships = self.derived.tag_memberships()?;
+        let mut tag_dictionary = self.tag_dictionary.clone();
+        let mut tag_graph = TagGraph::new();
+        for membership in &memberships {
+            let mut input = TagMembershipInput::new(
+                membership.space_id,
+                membership.memory_id,
+                membership.revision_id,
+                membership.normalized_value.clone(),
+                membership.provenance,
+            );
+            if let Some(node_id) = membership.node_id.as_deref() {
+                input = input.with_node_id(node_id.to_owned());
+            }
+            tag_graph.insert_membership(&mut tag_dictionary, input)?;
+        }
+        let tag_seeds = resolve_explicit_tag_seeds(&mut tag_dictionary, &compiled.query.cue.tags)?;
+        let tag_vectors = self.tag_vector_candidates(compiled, exact, &memberships)?;
+        Ok(AlgorithmChannelInputs {
+            tag_dictionary,
+            tag_graph,
+            tag_vectors,
+            tag_seeds,
+            relation_links: Vec::new(),
+        })
+    }
+
+    fn tag_vector_candidates(
+        &self,
+        compiled: &memoria_query::CompiledQuery,
+        exact: &ExactIndex,
+        memberships: &[memoria_derived::TagMembershipRecord],
+    ) -> Result<Vec<TagVectorCandidate>, RuntimeError> {
+        let manifest = self.derived.manifest(compiled.snapshot.derived_manifest)?;
+        let mut vectors_by_target = BTreeMap::<(SpaceId, MemoryId, RevisionId), Vec<f32>>::new();
+        for artifact_id in manifest.artifacts() {
+            let artifact = self.derived.artifact(artifact_id)?;
+            if !artifact.is_compatible_semantic() {
+                continue;
+            }
+            for membership in self.derived.vector_memberships_for_artifact(artifact_id)? {
+                if !compiled.query.scope.spaces.contains(&membership.space_id)
+                    || exact
+                        .record_for_target(memoria_query::CandidateTarget {
+                            space_id: membership.space_id,
+                            memory_id: membership.memory_id,
+                            revision_id: membership.revision_id,
+                        })
+                        .is_none()
+                {
+                    continue;
+                }
+                let payload =
+                    VectorPayloadV1::get(self.layout.derived_dir(), membership.payload_hash)?;
+                vectors_by_target
+                    .entry((
+                        membership.space_id,
+                        membership.memory_id,
+                        membership.revision_id,
+                    ))
+                    .or_insert_with(|| payload.values().to_vec());
+            }
+        }
+
+        let mut candidates = BTreeMap::<TagId, TagVectorCandidate>::new();
+        for membership in memberships {
+            let key = (
+                membership.space_id,
+                membership.memory_id,
+                membership.revision_id,
+            );
+            let Some(vector) = vectors_by_target.get(&key) else {
+                continue;
+            };
+            let provenance = match membership.provenance {
+                TagProvenance::Explicit => TagSeedProvenance::ExactSupport,
+                TagProvenance::Generated => TagSeedProvenance::Generated,
+            };
+            let candidate = TagVectorCandidate {
+                tag_id: membership.tag_id,
+                vector: vector.clone(),
+                provenance,
+                score: provenance.weight(),
+            };
+            candidates
+                .entry(candidate.tag_id)
+                .and_modify(|existing| {
+                    if candidate.score > existing.score {
+                        *existing = candidate.clone();
+                    }
+                })
+                .or_insert(candidate);
+        }
+        Ok(candidates.into_values().collect())
     }
 
     fn lexical_handle(
@@ -2078,6 +2244,15 @@ fn purge_plan_from_authority(operation: PurgeOperationRecord) -> Result<PurgePla
         memory_id: operation.memory_id,
         state,
     })
+}
+
+fn record_runtime_channel(
+    trace: &mut QueryOperatorTrace,
+    pool: &CandidatePool,
+    channel: PhysicalChannel,
+    name: &str,
+) {
+    *trace = std::mem::take(trace).with_channel(name, pool.keys_for_channel(channel).len());
 }
 
 fn unique_purge_suffix() -> u128 {
