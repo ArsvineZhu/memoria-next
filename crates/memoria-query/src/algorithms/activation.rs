@@ -32,7 +32,9 @@ pub struct PropagatedTag {
     pub independent_seed_count: usize,
     pub static_contribution: f32,
     pub adaptive_contribution: f32,
-    seed_ids: BTreeSet<TagId>,
+    /// Unique seed Tag IDs that independently support this propagated Tag.
+    pub support_seed_ids: Vec<TagId>,
+    pub(crate) seed_ids: BTreeSet<TagId>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -81,6 +83,7 @@ pub fn activation_propagate(
                 independent_seed_count: 1,
                 static_contribution: 1.0,
                 adaptive_contribution: 0.0,
+                support_seed_ids: vec![seed.tag_id],
                 seed_ids: BTreeSet::from([seed.tag_id]),
             },
         );
@@ -121,6 +124,7 @@ pub fn activation_propagate(
                 existing.strongest_support = existing.strongest_support.max(signal);
                 existing.seed_ids.extend(parent.seed_ids.iter().copied());
                 existing.independent_seed_count = existing.seed_ids.len();
+                existing.support_seed_ids = existing.seed_ids.iter().copied().collect();
                 merge_origins(&mut existing.seed_origins, &parent.seed_origins);
                 existing.static_contribution = existing
                     .static_contribution
@@ -149,6 +153,7 @@ pub fn activation_propagate(
                         independent_seed_count: parent.independent_seed_count,
                         static_contribution: item.score * edge.static_weight,
                         adaptive_contribution: item.score * edge.adaptive_weight,
+                        support_seed_ids: parent.seed_ids.iter().copied().collect(),
                         seed_ids: parent.seed_ids,
                     },
                 );

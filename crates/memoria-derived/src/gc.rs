@@ -118,6 +118,18 @@ impl<'a> DerivedGc<'a> {
                 continue;
             }
             transaction.execute(
+                "DELETE FROM ann_tombstones WHERE artifact_id = ?1",
+                [artifact_id.value()],
+            )?;
+            transaction.execute(
+                "DELETE FROM ann_segments WHERE artifact_id = ?1",
+                [artifact_id.value()],
+            )?;
+            transaction.execute(
+                "DELETE FROM vector_memberships WHERE artifact_id = ?1",
+                [artifact_id.value()],
+            )?;
+            transaction.execute(
                 "UPDATE artifacts SET state = 'collected' WHERE id = ?1
                  AND state NOT IN ('planned', 'building', 'staged', 'validated')",
                 [artifact_id.value()],

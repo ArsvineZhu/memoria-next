@@ -7,6 +7,8 @@ use memoria_types::Timestamp;
 use crate::adaptive::adaptive_prior;
 use crate::evidence::{CandidateEvidence, CandidateTarget, LexicalEvidence};
 
+pub const RRF_K: f32 = 60.0;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FusedCandidate {
     pub evidence: CandidateEvidence,

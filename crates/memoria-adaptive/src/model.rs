@@ -154,6 +154,24 @@ impl AdaptiveStateV1 {
         }
         state
     }
+
+    pub(crate) fn target_rows(
+        &self,
+    ) -> impl Iterator<Item = (&(SpaceId, MemoryId), &TargetFamiliarity)> {
+        self.targets.iter()
+    }
+
+    pub(crate) fn tag_affinity_rows(
+        &self,
+    ) -> impl Iterator<Item = (&(SpaceId, MemoryId, String), &AffinityStats)> {
+        self.tag_affinity.iter()
+    }
+
+    pub(crate) fn query_class_affinity_rows(
+        &self,
+    ) -> impl Iterator<Item = (&(SpaceId, MemoryId, String), &AffinityStats)> {
+        self.query_class_affinity.iter()
+    }
 }
 
 impl TargetFamiliarity {

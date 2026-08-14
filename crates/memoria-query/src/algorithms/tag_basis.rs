@@ -7,6 +7,15 @@ pub const MAX_TAG_BASIS_DIMENSIONS: usize = 4096;
 /// Maximum number of Tag vectors accepted by the bounded baseline.
 pub const MAX_TAG_BASIS_VECTORS: usize = 64;
 
+/// Tag-vector cap for the low-latency retrieval profile.
+pub const FAST_TAG_BASIS_VECTORS: usize = 12;
+
+/// Tag-vector cap for the default retrieval profile.
+pub const BALANCED_TAG_BASIS_VECTORS: usize = 24;
+
+/// Tag-vector cap for the diagnostic/high-recall retrieval profile.
+pub const THOROUGH_TAG_BASIS_VECTORS: usize = 48;
+
 const CONDITIONING_LIMIT: f64 = 1.0e6;
 const MIN_EXPLAINED_ENERGY: f64 = 1.0e-6;
 
@@ -158,6 +167,20 @@ pub fn project_tag_basis(
             explained_energy as f32,
         ))
     }
+}
+
+/// Project a query using at most the requested number of Tag vectors.
+///
+/// Callers are responsible for ordering the input by the locked seed
+/// provenance/score/TagId order before applying this profile cap. The hard
+/// safety limit remains enforced by [`project_tag_basis`].
+pub fn project_tag_basis_with_limit(
+    query: &[f32],
+    tags: &[Vec<f32>],
+    limit: usize,
+) -> Result<TagBasisResult, TagBasisError> {
+    let bounded_limit = limit.min(MAX_TAG_BASIS_VECTORS);
+    project_tag_basis(query, &tags[..tags.len().min(bounded_limit)])
 }
 
 fn validate_inputs(query: &[f32], tags: &[Vec<f32>]) -> Result<(), TagBasisError> {

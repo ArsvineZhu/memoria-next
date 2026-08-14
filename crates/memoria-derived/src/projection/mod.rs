@@ -3,6 +3,7 @@ pub mod entities;
 pub mod lexical;
 pub mod relations;
 pub mod rerank_view;
+pub mod serving;
 pub mod structural;
 pub mod tags;
 pub mod temporal;

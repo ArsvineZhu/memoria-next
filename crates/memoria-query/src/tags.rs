@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use memoria_derived::{TagGraph, TagId, TagSpaceGraph};
+use memoria_derived::{TagGraph, TagId, TagProvenance, TagSpaceGraph};
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
 
@@ -9,7 +9,23 @@ use crate::validate::QueryError;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TagSeedProvenance {
     Explicit,
+    ExactSupport,
     Semantic,
+    Generated,
+    Inherited,
+}
+
+impl TagSeedProvenance {
+    #[must_use]
+    pub const fn weight(self) -> f32 {
+        match self {
+            Self::Explicit => 1.00,
+            Self::ExactSupport => 0.95,
+            Self::Semantic => 0.70,
+            Self::Generated => 0.55,
+            Self::Inherited => 0.40,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +33,95 @@ pub struct TagSeed {
     pub tag_id: TagId,
     pub value: String,
     pub provenance: TagSeedProvenance,
+}
+
+/// A query-local Tag vector candidate used by the Tag Basis operator.
+///
+/// The vector is discovery evidence only; it never changes the authoritative
+/// Tag dictionary or membership tables.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagVectorCandidate {
+    pub tag_id: TagId,
+    pub vector: Vec<f32>,
+    pub provenance: TagSeedProvenance,
+    pub score: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagReadoutCandidate {
+    pub target: crate::CandidateTarget,
+    pub tag_id: TagId,
+    pub node_id: Option<String>,
+    pub provenance: TagProvenance,
+    pub score: f32,
+}
+
+/// Read Tag memberships into revision-pinned query candidates.
+///
+/// This function only reads the supplied Space-local graph. It never merges
+/// the composite view back into the graph and never expands the caller's
+/// authorized Space set.
+#[must_use]
+pub fn readout_tag_candidates(
+    graph: &TagGraph,
+    seed_ids: &[TagId],
+    allowed_spaces: &[SpaceId],
+) -> Vec<TagReadoutCandidate> {
+    let seeds = seed_ids.iter().copied().collect::<BTreeSet<_>>();
+    let spaces = allowed_spaces.iter().copied().collect::<BTreeSet<_>>();
+    let mut candidates = graph
+        .membership_evidence()
+        .filter(|evidence| seeds.contains(&evidence.tag_id) && spaces.contains(&evidence.space_id))
+        .map(|evidence| TagReadoutCandidate {
+            target: crate::CandidateTarget {
+                space_id: evidence.space_id,
+                memory_id: evidence.memory_id,
+                revision_id: evidence.revision_id,
+            },
+            tag_id: evidence.tag_id,
+            node_id: evidence.node_id.clone(),
+            provenance: evidence.provenance,
+            score: match evidence.provenance {
+                TagProvenance::Explicit => TagSeedProvenance::ExactSupport.weight(),
+                TagProvenance::Generated => TagSeedProvenance::Generated.weight(),
+            },
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.target.space_id.cmp(&right.target.space_id))
+            .then_with(|| left.target.memory_id.cmp(&right.target.memory_id))
+            .then_with(|| left.target.revision_id.cmp(&right.target.revision_id))
+            .then_with(|| left.tag_id.cmp(&right.tag_id))
+    });
+    candidates
+}
+
+/// Select and deterministically order Tag vectors for a bounded basis.
+///
+/// Explicit cue Tags are ordered before semantic neighbors. Semantic
+/// neighbors are ignored unless the semantic capability is active. Ties are
+/// resolved by TagId so the same query snapshot always gets the same basis.
+#[must_use]
+pub fn select_tag_basis_candidates(
+    candidates: impl IntoIterator<Item = TagVectorCandidate>,
+    semantic_active: bool,
+    limit: usize,
+) -> Vec<TagVectorCandidate> {
+    let mut selected = candidates
+        .into_iter()
+        .filter(|candidate| semantic_active || candidate.provenance != TagSeedProvenance::Semantic)
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| {
+        left.provenance
+            .cmp(&right.provenance)
+            .then_with(|| right.score.total_cmp(&left.score))
+            .then_with(|| left.tag_id.cmp(&right.tag_id))
+    });
+    selected.truncate(limit.min(crate::MAX_TAG_BASIS_VECTORS));
+    selected
 }
 
 /// Resolve deterministic explicit Tag cues through the global dictionary.

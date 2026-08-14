@@ -7,17 +7,18 @@ use memoria_authority::{
     StoreWriterLock,
 };
 use memoria_derived::{
-    BaseReadyReport, DerivedCatalog, DerivedCompiler, EmbeddingNormalization, EnrichmentProjection,
-    EntityObservationBuilder, ExplicitTagBuilder, GeneratedTagArtifact, LexicalDocument,
-    LocalEmbeddingProjectionV1, ProjectionInputHash, ProjectionKind, QueryEmbeddingProjectionV1,
-    SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION, TagDictionary, VectorPayloadRecord,
-    VectorPayloadV1,
+    AnnSegmentEntry, AnnSegmentV1, BaseReadyReport, BuildJobState, DerivedCatalog, DerivedCompiler,
+    EmbeddingNormalization, EnrichmentProjection, EntityObservationBuilder, ExplicitTagBuilder,
+    GeneratedTagArtifact, LexicalDocument, LocalEmbeddingProjectionV1, ProjectionInputHash,
+    ProjectionKind, QueryEmbeddingProjectionV1, SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION,
+    TagDictionary, VectorFilter, VectorMembership, VectorPayloadRecord, VectorPayloadV1,
 };
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
     AdaptiveSnapshotIdentity, ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex,
     MemoryQuery, QueryCompiler, QueryError, ReadSession, ReadinessBehavior, RetrievalResponse,
-    assess, build_response, execute_exact, execute_lexical, rank_with_adaptive,
+    SemanticCandidateIndex, SemanticResolution, assess, build_response, execute_exact,
+    execute_lexical, execute_semantic, rank_with_adaptive,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
@@ -176,6 +177,7 @@ struct PendingProviderWork {
     generation: AuthorityGeneration,
     work: NeedWork,
     embedding_projection: Option<LocalEmbeddingProjectionV1>,
+    job_id: Option<String>,
 }
 
 struct InflightProviderWork {
@@ -184,6 +186,7 @@ struct InflightProviderWork {
     advances_semantic: bool,
     embedding_projection: Option<LocalEmbeddingProjectionV1>,
     enrichment_projection: Option<EnrichmentProjection>,
+    job_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -211,7 +214,8 @@ impl MemoriaRuntime {
             }
         })?;
         let derived = DerivedCatalog::open(layout.derived_dir().join("catalog.sqlite"))?;
-        Ok(Self {
+        let adaptive_database = layout.adaptive_dir().join("adaptive.sqlite");
+        let mut runtime = Self {
             _writer_lock: writer_lock,
             cas: SourceCas::new(&layout),
             layout,
@@ -225,7 +229,7 @@ impl MemoriaRuntime {
             semantic_build_coverage: AuthorityGeneration::initial(),
             tag_dictionary: TagDictionary::new(),
             generated_tag_artifacts: BTreeMap::new(),
-            adaptive_log: AdaptiveEventLog::new(),
+            adaptive_log: AdaptiveEventLog::open(adaptive_database)?,
             provider_egress_policy,
             purge: PurgeCoordinator::new(),
             resource_limits: ResourceLimits::default(),
@@ -233,7 +237,12 @@ impl MemoriaRuntime {
             next_retrieval_id: 0,
             closed: false,
             last_error: None,
-        })
+        };
+        for (tag_id, normalized_value) in runtime.derived.tag_dictionary_entries()? {
+            runtime.tag_dictionary.restore(tag_id, normalized_value)?;
+        }
+        runtime.recover_after_open()?;
+        Ok(runtime)
     }
 
     pub fn close(&mut self) -> Result<(), RuntimeError> {
@@ -437,6 +446,7 @@ impl MemoriaRuntime {
         let provider_policy =
             self.space_provider_policy_at(record.space_id, result.generation())?;
         if let Some(projection) = projection {
+            self.supersede_embedding_work_for_memory(memory_id)?;
             self.enqueue_embedding_work(
                 record.memory_id,
                 result.generation(),
@@ -573,7 +583,9 @@ impl MemoriaRuntime {
             return Ok(QueryStep::Pending { operation_id, work });
         }
 
-        Ok(QueryStep::Complete(self.execute_compiled_query(compiled)?))
+        Ok(QueryStep::Complete(
+            self.execute_compiled_query(compiled, None)?,
+        ))
     }
 
     pub fn query_resume(
@@ -659,7 +671,9 @@ impl MemoriaRuntime {
                             .push(capability.to_owned());
                     }
                     self.query_operations.cleanup(now);
-                    return Ok(QueryStep::Complete(self.execute_compiled_query(fallback)?));
+                    return Ok(QueryStep::Complete(
+                        self.execute_compiled_query(fallback, None)?,
+                    ));
                 }
             }
             return Err(RuntimeError::ProviderFailure {
@@ -674,10 +688,17 @@ impl MemoriaRuntime {
                 operation_id: operation_id.to_owned(),
             }
         })?;
+        let query_vector = match &result {
+            ProviderWorkResult::Embeddings { vectors, .. } => {
+                vectors.first().map(|vector| vector.values.clone())
+            }
+            _ => None,
+        };
         if matches!(operation.work, QueryWork::Embedding(_))
             && !operation.rerank_candidates.is_empty()
         {
             let mut operation = operation;
+            operation.query_vector = query_vector;
             let candidates = std::mem::take(&mut operation.rerank_candidates);
             let work = query_rerank_work(
                 &operation.compiled.query,
@@ -693,10 +714,13 @@ impl MemoriaRuntime {
                 work,
             });
         }
+        let mut operation = operation;
+        operation.query_vector = query_vector;
         self.query_operations.cleanup(now);
-        Ok(QueryStep::Complete(
-            self.execute_compiled_query(operation.compiled)?,
-        ))
+        Ok(QueryStep::Complete(self.execute_compiled_query(
+            operation.compiled,
+            operation.query_vector,
+        )?))
     }
 
     pub fn cancel_operation(&mut self, operation_id: &str) -> Result<(), RuntimeError> {
@@ -739,14 +763,32 @@ impl MemoriaRuntime {
     fn execute_compiled_query(
         &mut self,
         compiled: memoria_query::CompiledQuery,
+        query_vector: Option<Vec<f32>>,
     ) -> Result<RetrievalResponse, RuntimeError> {
         let query_signature = adaptive_signature(&compiled.query);
         let records =
             self.records_for_query(&compiled.query, compiled.snapshot.authority_generation)?;
-        let candidates = if compiled.query.cue.text.is_empty() {
-            execute_exact(&compiled, &ExactIndex::new(records)).results
+        let exact = ExactIndex::new(records);
+        let candidates = if compiled.execution.used("semantic") {
+            if let Some(query_vector) = query_vector.as_deref() {
+                let hits = self.semantic_vector_hits(&compiled, query_vector, &exact)?;
+                execute_semantic(
+                    &compiled,
+                    &SemanticCandidateIndex::from_vector_hits(
+                        hits,
+                        &exact,
+                        SemanticResolution::Leaf,
+                    ),
+                )
+                .results
+            } else {
+                Vec::new()
+            }
+        } else if compiled.query.cue.text.is_empty() {
+            execute_exact(&compiled, &exact).results
         } else {
-            let lexical = records
+            let lexical = exact
+                .records()
                 .iter()
                 .map(|record| LexicalCandidate {
                     target: record.target,
@@ -782,19 +824,91 @@ impl MemoriaRuntime {
         Ok(response)
     }
 
+    fn semantic_vector_hits(
+        &self,
+        compiled: &memoria_query::CompiledQuery,
+        query_vector: &[f32],
+        exact: &ExactIndex,
+    ) -> Result<Vec<memoria_derived::VectorHit>, RuntimeError> {
+        let manifest = self.derived.manifest(compiled.snapshot.derived_manifest)?;
+        let limit = compiled
+            .query
+            .budget
+            .max_candidates
+            .saturating_mul(8)
+            .min(512);
+        let mut hits = Vec::new();
+        for artifact_id in manifest.artifacts() {
+            let artifact = self.derived.artifact(artifact_id)?;
+            if !artifact.is_compatible_semantic() {
+                continue;
+            }
+            let tombstones = self
+                .derived
+                .ann_tombstones(artifact_id)?
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            let segment_records = self.derived.ann_segments_for_artifact(artifact_id)?;
+            let mut segments = Vec::with_capacity(segment_records.len());
+            for record in segment_records.iter().rev() {
+                segments.push(memoria_derived::AnnSegmentV1::get(
+                    self.layout.derived_dir(),
+                    record.object_hash,
+                )?);
+            }
+            let references = segments.iter().collect::<Vec<_>>();
+            hits.extend(memoria_derived::AnnSegmentV1::merge_search(
+                references,
+                &tombstones,
+                query_vector,
+                limit,
+                &VectorFilter::any(),
+            )?);
+        }
+        hits.retain(|hit| {
+            let membership = hit.membership();
+            exact
+                .record_for_target(memoria_query::CandidateTarget {
+                    space_id: membership.space_id(),
+                    memory_id: membership.memory_id(),
+                    revision_id: membership.revision_id(),
+                })
+                .is_some()
+        });
+        Ok(hits)
+    }
+
     pub fn submit_feedback(
         &mut self,
         submission: FeedbackSubmission,
     ) -> Result<FeedbackCommit, RuntimeError> {
         self.ensure_open()?;
         let now = memoria_types::Timestamp::now()?;
-        let receipt =
-            self.receipts
-                .get(&submission.retrieval_id)
-                .ok_or_else(|| ReceiptError::NotFound {
-                    retrieval_id: submission.retrieval_id.clone(),
-                })?;
-        let inputs = receipt.resolve_feedback(&submission, now)?;
+        let inputs = if let Some(receipt) = self.receipts.get(&submission.retrieval_id) {
+            receipt.resolve_feedback(&submission, now)?
+        } else {
+            submission
+                .events
+                .iter()
+                .map(|event| {
+                    let key = format!("{}:{}", submission.idempotency_key, event.result_id);
+                    let input = self
+                        .adaptive_log
+                        .input_for_idempotency_key(&key)
+                        .ok_or_else(|| ReceiptError::NotFound {
+                            retrieval_id: submission.retrieval_id.clone(),
+                        })?;
+                    if input.retrieval_id != submission.retrieval_id
+                        || input.outcome != event.outcome
+                    {
+                        return Err(ReceiptError::NotFound {
+                            retrieval_id: submission.retrieval_id.clone(),
+                        });
+                    }
+                    Ok(input)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
         let committed = self.adaptive_log.append_batch(inputs)?;
         Ok(FeedbackCommit {
             generation: committed.generation,
@@ -885,6 +999,9 @@ impl MemoriaRuntime {
         let Some(pending) = self.pending_provider_work.pop_front() else {
             return Ok(None);
         };
+        if let Some(job_id) = &pending.job_id {
+            self.derived.mark_build_job_running(job_id)?;
+        }
         let work_id = work_id(&pending.work).to_owned();
         let metadata = match &pending.work {
             NeedWork::Embeddings(_) => InflightProviderWork {
@@ -893,6 +1010,7 @@ impl MemoriaRuntime {
                 advances_semantic: true,
                 embedding_projection: pending.embedding_projection.clone(),
                 enrichment_projection: None,
+                job_id: pending.job_id.clone(),
             },
             NeedWork::Enrichment(request) => InflightProviderWork {
                 generation: pending.generation,
@@ -900,6 +1018,7 @@ impl MemoriaRuntime {
                 advances_semantic: false,
                 embedding_projection: None,
                 enrichment_projection: Some(request.projection.clone()),
+                job_id: pending.job_id.clone(),
             },
             NeedWork::Rerank(_) => InflightProviderWork {
                 generation: pending.generation,
@@ -907,6 +1026,7 @@ impl MemoriaRuntime {
                 advances_semantic: false,
                 embedding_projection: None,
                 enrichment_projection: None,
+                job_id: pending.job_id.clone(),
             },
         };
         self.inflight_provider_work.insert(work_id, metadata);
@@ -936,6 +1056,20 @@ impl MemoriaRuntime {
             .ok_or_else(|| RuntimeError::UnexpectedProviderWork {
                 work_id: result.work_id().to_owned(),
             })?;
+        if let Some(job_id) = pending.job_id.as_deref()
+            && self.derived.build_job(job_id)?.state == BuildJobState::Superseded
+        {
+            if pending.advances_semantic {
+                if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.pending_by_generation.remove(&pending.generation);
+                    }
+                }
+                self.advance_semantic_build_coverage();
+            }
+            return Ok(());
+        }
         match result {
             ProviderWorkResult::Enrichment { tags, .. } => {
                 let Some(projection) = pending.enrichment_projection else {
@@ -949,8 +1083,28 @@ impl MemoriaRuntime {
                     &mut self.tag_dictionary,
                     tags,
                 )?;
+                for record in artifact.records() {
+                    self.derived
+                        .register_tag_dictionary_value(record.tag_id, &record.value)?;
+                    self.derived.insert_tag_membership(
+                        record.space_id,
+                        record.memory_id,
+                        record.revision_id,
+                        record.tag_id,
+                        &record.value,
+                        record.semantic_node_id.as_deref(),
+                        record.provenance,
+                        Some(&record.producer_signature),
+                        Some(record.projection_input_hash.clone()),
+                        record.score,
+                        record.confidence,
+                    )?;
+                }
                 self.generated_tag_artifacts
                     .insert(artifact.projection_input_hash().clone(), artifact);
+                if let Some(job_id) = pending.job_id.as_deref() {
+                    self.derived.mark_build_job_succeeded(job_id)?;
+                }
             }
             ProviderWorkResult::Embeddings { vectors, .. } => {
                 if pending.advances_semantic {
@@ -983,6 +1137,10 @@ impl MemoriaRuntime {
                 code,
                 message,
             } => {
+                if let Some(job_id) = pending.job_id.as_deref() {
+                    self.derived
+                        .mark_build_job_failed(job_id, &code, &message, retryable)?;
+                }
                 self.last_error = Some(format!(
                     "provider failure for `{work_id}` ({code}, retryable={retryable}): {message}"
                 ));
@@ -1009,6 +1167,37 @@ impl MemoriaRuntime {
                 self.last_error = Some(error.to_string());
             }
         }
+    }
+
+    fn recover_after_open(&mut self) -> Result<(), RuntimeError> {
+        let generation = self.authority_generation()?;
+        let spaces = self.authority.list_active_space_ids_at(generation)?;
+        let serving_manifest = self.derived.serving_manifest()?;
+        let base_ready = serving_manifest.as_ref().is_some_and(|manifest| {
+            manifest.authority_generation() >= generation
+                && manifest.capability("base-search").is_ready()
+        });
+        let semantic_ready = serving_manifest.as_ref().is_some_and(|manifest| {
+            manifest.authority_generation() >= generation
+                && manifest.capability("semantic").is_ready()
+        });
+        for space_id in spaces {
+            let policy = self.space_provider_policy_at(space_id, generation)?;
+            if !base_ready {
+                self.rebuild_base_for_space(space_id, generation, policy);
+            }
+            if semantic_ready || policy.embedding == SpaceProviderMode::Deny {
+                continue;
+            }
+            for read in self
+                .authority
+                .list_memories_at(&self.cas, space_id, generation)?
+            {
+                let projection = local_embedding_projection(&read.source)?;
+                self.enqueue_embedding_work(read.memory.memory_id, generation, projection, policy);
+            }
+        }
+        Ok(())
     }
 
     fn requires_content_embedding(&self, previous_source: &[u8], source: &[u8]) -> bool {
@@ -1040,6 +1229,19 @@ impl MemoriaRuntime {
             return;
         }
         for (index, projection) in projections.iter().enumerate() {
+            let input_hash = hex_lower(projection.input_hash().as_bytes());
+            let job_id = match self.derived.enqueue_build_job(
+                "enrichment",
+                &input_hash,
+                projection.producer_signature(),
+                generation,
+            ) {
+                Ok(job) => Some(job.job_id),
+                Err(error) => {
+                    self.last_error = Some(error.to_string());
+                    continue;
+                }
+            };
             let work = NeedWork::Enrichment(crate::EnrichmentBatchRequest {
                 work_id: format!("TG_{}_{}_{}", projection.memory_id(), generation, index),
                 signature: projection.producer_signature().to_owned(),
@@ -1050,6 +1252,7 @@ impl MemoriaRuntime {
                 generation,
                 work,
                 embedding_projection: None,
+                job_id,
             });
         }
     }
@@ -1062,6 +1265,25 @@ impl MemoriaRuntime {
         space_policy: SpaceProviderPolicy,
     ) {
         if space_policy.embedding == SpaceProviderMode::Deny {
+            return;
+        }
+        let input_hash = hex_lower(projection.input_hash().as_bytes());
+        let job = match self.derived.enqueue_build_job(
+            "embedding",
+            &input_hash,
+            projection.producer_signature(),
+            generation,
+        ) {
+            Ok(job) => job,
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+                return;
+            }
+        };
+        if matches!(
+            job.state,
+            BuildJobState::Succeeded | BuildJobState::Superseded
+        ) {
             return;
         }
         let work_id = format!("EW_{memory_id}_{generation}");
@@ -1079,8 +1301,53 @@ impl MemoriaRuntime {
             generation,
             work,
             embedding_projection: Some(projection),
+            job_id: Some(job.job_id),
         });
         *self.pending_by_generation.entry(generation).or_default() += 1;
+    }
+
+    fn supersede_embedding_work_for_memory(
+        &mut self,
+        memory_id: MemoryId,
+    ) -> Result<(), RuntimeError> {
+        let mut retained = VecDeque::with_capacity(self.pending_provider_work.len());
+        while let Some(pending) = self.pending_provider_work.pop_front() {
+            let is_target = matches!(
+                &pending.work,
+                NeedWork::Embeddings(request)
+                    if request.items.iter().any(|item| item.key == memory_id.to_string())
+            );
+            if is_target {
+                if let Some(job_id) = pending.job_id.as_deref() {
+                    self.derived.mark_build_job_superseded(job_id)?;
+                }
+                if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.pending_by_generation.remove(&pending.generation);
+                    }
+                }
+            } else {
+                retained.push_back(pending);
+            }
+        }
+        self.pending_provider_work = retained;
+        let inflight_job_ids = self
+            .inflight_provider_work
+            .values()
+            .filter_map(|inflight| {
+                let is_target = matches!(
+                    &inflight.expected_work,
+                    NeedWork::Embeddings(request)
+                        if request.items.iter().any(|item| item.key == memory_id.to_string())
+                );
+                is_target.then(|| inflight.job_id.clone()).flatten()
+            })
+            .collect::<Vec<_>>();
+        for job_id in inflight_job_ids {
+            self.derived.mark_build_job_superseded(&job_id)?;
+        }
+        Ok(())
     }
 
     fn persist_embedding_result(
@@ -1125,7 +1392,7 @@ impl MemoriaRuntime {
                 checksum: *payload_hash.as_bytes(),
                 created_at: 0,
             })?;
-            persisted.push((memory, payload_hash));
+            persisted.push((memory, payload_hash, vector.values.clone()));
         }
 
         let semantic_artifact = self.derived.stage_artifact(
@@ -1133,7 +1400,8 @@ impl MemoriaRuntime {
             SEMANTIC_ARTIFACT_VERSION,
             generation,
         )?;
-        for (memory, payload_hash) in persisted {
+        let mut ann_entries = Vec::with_capacity(persisted.len());
+        for (memory, payload_hash, values) in persisted {
             self.derived.insert_vector_membership(
                 semantic_artifact.id(),
                 memory.space_id,
@@ -1145,6 +1413,17 @@ impl MemoriaRuntime {
                 payload_hash,
                 generation,
             )?;
+            ann_entries.push(AnnSegmentEntry::new(
+                format!("memory:{}", memory.memory_id),
+                VectorMembership::from_parts(
+                    memory.space_id,
+                    memory.memory_id,
+                    memory.head_revision_id,
+                    generation,
+                    *payload_hash.as_bytes(),
+                ),
+                values,
+            )?);
         }
         let input_hash = hex_lower(projection.input_hash().as_bytes());
         let job = self.derived.enqueue_build_job(
@@ -1154,12 +1433,31 @@ impl MemoriaRuntime {
             generation,
         )?;
         self.derived.mark_build_job_succeeded(&job.job_id)?;
-        let _ = self.derived.enqueue_build_job(
+        let ann_job = self.derived.enqueue_build_job(
             "ann-segment",
             input_hash,
             &request.signature,
             generation,
         )?;
+        let segment = AnnSegmentV1::build(request.signature.clone(), ann_entries)?;
+        let object_hash = segment.put(self.layout.derived_dir())?;
+        self.derived.register_ann_segment(
+            semantic_artifact.id(),
+            object_hash,
+            u64::try_from(segment.vector_count()).map_err(memoria_derived::DerivedError::from)?,
+            segment.dimension(),
+            segment.producer_signature(),
+        )?;
+        self.derived.validate_artifact(semantic_artifact.id())?;
+        self.derived.mark_build_job_succeeded(&ann_job.job_id)?;
+        if let Some(manifest) = self.derived.serving_manifest()?
+            && manifest.authority_generation() == generation
+        {
+            let mut artifact_ids = manifest.artifacts().collect::<Vec<_>>();
+            artifact_ids.push(semantic_artifact.id());
+            self.derived
+                .publish_manifest_at_generation(artifact_ids, generation, Vec::new())?;
+        }
         Ok(())
     }
 
@@ -1232,6 +1530,36 @@ impl MemoriaRuntime {
                 compile_ir(&source)?,
             ));
         }
+        for document in &documents {
+            let target = memoria_derived::ProjectionTarget {
+                space_id: Some(document.space_id()),
+                memory_id: Some(document.memory_id()),
+                revision_id: Some(document.revision_id()),
+            };
+            for membership in ExplicitTagBuilder::build_for(document.ir(), target)?.memberships() {
+                let tag_id = self.tag_dictionary.intern(&membership.value)?;
+                let normalized = self
+                    .tag_dictionary
+                    .value(tag_id)
+                    .ok_or_else(|| memoria_derived::DerivedError::InvalidProjectionValue {
+                        value: "Tag dictionary lost explicit Tag identity".to_owned(),
+                    })?
+                    .to_owned();
+                self.derived.insert_tag_membership(
+                    document.space_id(),
+                    document.memory_id(),
+                    document.revision_id(),
+                    tag_id,
+                    normalized,
+                    membership.node_id.as_deref(),
+                    membership.provenance,
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
+            }
+        }
         Ok(self
             .compiler
             .compile_base(&mut self.derived, generation, documents)?)
@@ -1242,17 +1570,69 @@ impl MemoriaRuntime {
         query: &MemoryQuery,
         generation: AuthorityGeneration,
     ) -> Result<Vec<ExactRecord>, RuntimeError> {
+        if matches!(query.history.mode, memoria_query::QueryHistoryMode::Current) {
+            let manifest = match self.derived.serving_manifest()? {
+                Some(manifest) => manifest,
+                None => {
+                    let has_active_memory =
+                        query
+                            .scope
+                            .spaces
+                            .iter()
+                            .try_fold(false, |found, space_id| {
+                                self.authority
+                                    .has_active_memories_at(*space_id, generation)
+                                    .map(|active| found || active)
+                            })?;
+                    if !has_active_memory {
+                        return Ok(Vec::new());
+                    }
+                    return Err(RuntimeError::Query(QueryError::CapabilityNotReady {
+                        capability: "base-search".to_owned(),
+                        required: generation,
+                        available: AuthorityGeneration::initial(),
+                    }));
+                }
+            };
+            let base = manifest.capability("base-search");
+            if !base.is_ready() || base.coverage() < generation {
+                return Err(RuntimeError::Query(QueryError::CapabilityNotReady {
+                    capability: "base-search".to_owned(),
+                    required: generation,
+                    available: base.coverage(),
+                }));
+            }
+            return self
+                .derived
+                .serving_records_for_spaces(&query.scope.spaces, generation)?
+                .into_iter()
+                .map(|record| {
+                    let entities = record
+                        .entity_refs
+                        .iter()
+                        .map(|entity| memoria_query::EntityRef::new(entity.clone()))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(ExactRecord::new(
+                        record.space_id,
+                        record.memory_id,
+                        record.revision_id,
+                        record.text,
+                    )
+                    .with_entities(entities)
+                    .with_tags(record.tags)
+                    .with_node_ids(record.node_ids)
+                    .with_authority_generation(record.authority_generation)
+                    .with_current(record.current)
+                    .with_retired(record.retired))
+                })
+                .collect();
+        }
+
         let mut records = Vec::new();
         for space_id in &query.scope.spaces {
             let reads = self
                 .authority
                 .list_memories_at(&self.cas, *space_id, generation)?;
-            if self.derived.serving_manifest()?.is_none_or(|manifest| {
-                manifest.authority_generation() < generation
-                    || !manifest.capability("base-search").is_ready()
-            }) {
-                let _ = self.try_rebuild_base_for_space(*space_id, generation)?;
-            }
             for read in reads {
                 let source = String::from_utf8(read.source)?;
                 let ir = compile_ir(&source)?;

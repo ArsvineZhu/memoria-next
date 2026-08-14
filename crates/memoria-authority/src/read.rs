@@ -35,6 +35,59 @@ impl MemoryRead {
 }
 
 impl AuthorityDb {
+    pub fn list_active_space_ids_at(
+        &self,
+        generation: AuthorityGeneration,
+    ) -> Result<Vec<SpaceId>, MemoriaError> {
+        self.read(|connection| {
+            let generation_value = sqlite_generation(generation)?;
+            let mut statement = connection.prepare(
+                "SELECT space_id FROM space_state_history
+                 WHERE lifecycle = 'active'
+                   AND valid_from_generation <= ?1
+                   AND (valid_to_generation IS NULL OR ?1 < valid_to_generation)
+                 ORDER BY space_id",
+            )?;
+            let rows = statement.query_map([generation_value], |row| {
+                let bytes = row.get::<_, Vec<u8>>(0)?;
+                let bytes: [u8; 16] = bytes.try_into().map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Blob,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "space id has an invalid length",
+                        )),
+                    )
+                })?;
+                Ok(SpaceId::from_bytes(bytes))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(database_error)
+    }
+
+    pub fn has_active_memories_at(
+        &self,
+        space_id: SpaceId,
+        generation: AuthorityGeneration,
+    ) -> Result<bool, MemoriaError> {
+        self.read(|connection| {
+            let generation_value = sqlite_generation(generation)?;
+            connection.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM memory_state_history
+                    WHERE space_id = ?1 AND lifecycle = 'active'
+                      AND valid_from_generation <= ?2
+                      AND (valid_to_generation IS NULL OR ?2 < valid_to_generation)
+                )",
+                params![space_id.as_bytes().as_slice(), generation_value],
+                |row| row.get(0),
+            )
+        })
+        .map_err(database_error)
+    }
+
     pub fn get_space(&self, space_id: SpaceId) -> Result<SpaceRecord, MemoriaError> {
         self.read(|connection| {
             let generation = current_generation(connection)?;

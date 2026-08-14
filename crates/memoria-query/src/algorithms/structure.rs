@@ -2,6 +2,7 @@ use memoria_derived::TagId;
 
 use crate::algorithms::activation::PropagationTrace;
 use crate::association::AssociationGraph;
+use crate::semantic::SemanticResolution;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureEvidence {
@@ -39,4 +40,23 @@ pub fn collect_structure(
             }
         })
         .collect()
+}
+
+/// Bounded ranking bonus for structural diversity and short paths.
+#[must_use]
+pub fn structure_bonus(path_diversity: f32, min_hops: usize, resolution_uniqueness: bool) -> f32 {
+    let path_diversity = path_diversity.clamp(0.0, 1.0);
+    let hop_quality = 1.0 / (1.0 + min_hops as f32);
+    let resolution_component = f32::from(resolution_uniqueness);
+    (0.03 * path_diversity + 0.03 * hop_quality + 0.02 * resolution_component).clamp(0.0, 0.08)
+}
+
+/// Parent/child/section resolutions for one target are correlated evidence,
+/// not independent support paths.
+#[must_use]
+pub fn correlated_resolutions(resolutions: &[SemanticResolution]) -> bool {
+    resolutions.len() > 1
+        && resolutions
+            .iter()
+            .any(|resolution| *resolution != resolutions[0])
 }

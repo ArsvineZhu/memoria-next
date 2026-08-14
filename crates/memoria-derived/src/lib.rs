@@ -22,7 +22,10 @@ pub use artifact::{
     ArtifactDescriptor, ArtifactId, ArtifactState, BuildJob, BuildJobState, SEMANTIC_ARTIFACT_KIND,
     SEMANTIC_ARTIFACT_VERSION,
 };
-pub use catalog::{AnnSegmentRecord, DerivedCatalog, VectorMembershipRecord, VectorPayloadRecord};
+pub use catalog::{
+    AnnSegmentRecord, DerivedCatalog, TagMembershipRecord, VectorMembershipRecord,
+    VectorPayloadRecord,
+};
 pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 pub use embedding::{
@@ -53,6 +56,7 @@ pub use projection::lexical::{
 };
 pub use projection::relations::{RelationArtifact, RelationBuilder, RelationRecord};
 pub use projection::rerank_view::{RERANK_VIEW_PROJECTION_VERSION, RerankViewV1};
+pub use projection::serving::ServingRecord;
 pub use projection::structural::{StructuralArtifact, StructuralBuilder, StructuralEntry};
 pub use projection::tags::{ExplicitTagArtifact, ExplicitTagBuilder, TagMembership, TagProvenance};
 pub use projection::temporal::{TemporalArtifact, TemporalAssertion, TemporalBuilder};
@@ -63,8 +67,9 @@ pub use tag_graph::{
     TagAssociationEvidence, TagGraph, TagMembershipEvidence, TagMembershipInput, TagSpaceGraph,
 };
 pub use vector::{
+    ANN_DELTA_COMPACTION_THRESHOLD, ANN_TOMBSTONE_RATIO_PERCENT, AnnSegmentEntry, AnnSegmentV1,
     VectorArtifact, VectorFilter, VectorHit, VectorIndex, VectorMembership, VectorPayloadHash,
-    VectorPayloadV1, VectorSearch,
+    VectorPayloadV1, VectorSearch, should_schedule_ann_compaction,
 };
 
 #[derive(Debug, Error)]

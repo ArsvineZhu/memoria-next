@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "profiles": {
+    "fast": {
+      "tagBasisVectors": 12,
+      "activation": false,
+      "diffusion": false,
+      "relationDepth": 1,
+      "relationNeighbors": 16,
+      "rerankCandidates": 16
+    },
+    "balanced": {
+      "tagBasisVectors": 24,
+      "activation": true,
+      "diffusion": false,
+      "relationDepth": 1,
+      "relationNeighbors": 32,
+      "rerankCandidates": 32
+    },
+    "thorough": {
+      "tagBasisVectors": 48,
+      "activation": true,
+      "diffusion": true,
+      "relationDepth": 2,
+      "relationNeighbors": 64,
+      "rerankCandidates": 64
+    }
+  },
+  "promotion": {
+    "balancedRecallDeltaMax": 0.02,
+    "balancedP95LatencyMultiplierMax": 1.5,
+    "providerCallIncreaseMax": 0
+  }
+}

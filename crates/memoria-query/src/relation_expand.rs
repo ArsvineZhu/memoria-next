@@ -23,6 +23,7 @@ pub struct RelationLink {
     pub target: CandidateTarget,
     pub relation: String,
     pub candidate: CandidateEvidence,
+    authoritative: bool,
 }
 
 impl RelationLink {
@@ -38,6 +39,25 @@ impl RelationLink {
             target,
             relation: relation.into(),
             candidate,
+            authoritative: true,
+        }
+    }
+
+    /// Construct an association-graph edge. It is intentionally not eligible
+    /// for explicit Relation expansion or the Relation ranking bonus.
+    #[must_use]
+    pub fn new_association(
+        source: CandidateTarget,
+        target: CandidateTarget,
+        relation: impl Into<String>,
+        candidate: CandidateEvidence,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            relation: relation.into(),
+            candidate,
+            authoritative: false,
         }
     }
 }
@@ -70,6 +90,7 @@ pub fn expand_relations(
         let mut next_frontier = HashSet::new();
         for link in links {
             if !frontier.contains(&link.source)
+                || !link.authoritative
                 || !scope.contains(&link.target.space_id)
                 || link.candidate.target != link.target
                 || link.relation.trim().is_empty()
@@ -102,6 +123,12 @@ pub fn expand_relations(
     let mut output = by_target.into_values().collect::<Vec<_>>();
     output.sort_by(|left, right| compare_targets(left.target, right.target));
     Ok(output)
+}
+
+/// Bounded bonus from independent authoritative Relation evidence.
+#[must_use]
+pub fn relation_bonus(independent_authoritative_relation_count: usize) -> f32 {
+    (0.025 * independent_authoritative_relation_count as f32).min(0.05)
 }
 
 fn merge_evidence(target: &mut CandidateEvidence, source: CandidateEvidence) {

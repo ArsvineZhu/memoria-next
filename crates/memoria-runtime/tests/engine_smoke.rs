@@ -65,7 +65,7 @@ fn provider_work_is_queued_after_commit_and_advances_semantic_build_coverage() {
         .unwrap();
 
     let after = runtime.status();
-    assert_eq!(after.semantic_coverage.value(), 0);
+    assert_eq!(after.semantic_coverage.value(), 2);
     assert_eq!(after.semantic_build_coverage.value(), 2);
 }
 

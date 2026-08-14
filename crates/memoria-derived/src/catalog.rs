@@ -8,8 +8,10 @@ use crate::artifact::{ArtifactDescriptor, ArtifactId, ArtifactState, BuildJob, B
 use crate::gc::DerivedGc;
 use crate::lease::{ManifestLease, unix_now};
 use crate::manifest::{DerivedManifest, ManifestId};
+use crate::projection::tags::TagProvenance;
 use crate::{
-    DerivedError, EmbeddingNormalization, ProjectionInputHash, VectorPayloadHash, generation_to_sql,
+    DerivedError, EmbeddingNormalization, ProjectionInputHash, ServingRecord, TagId,
+    VectorPayloadHash, generation_to_sql,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,6 +51,22 @@ pub struct AnnSegmentRecord {
     pub dimension: u32,
     pub producer_signature: String,
     pub created_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagMembershipRecord {
+    pub membership_id: i64,
+    pub space_id: SpaceId,
+    pub memory_id: MemoryId,
+    pub revision_id: RevisionId,
+    pub tag_id: TagId,
+    pub normalized_value: String,
+    pub node_id: Option<String>,
+    pub provenance: TagProvenance,
+    pub producer_signature: Option<String>,
+    pub projection_input_hash: Option<ProjectionInputHash>,
+    pub score: Option<f32>,
+    pub confidence: Option<f32>,
 }
 
 pub struct DerivedCatalog {
@@ -128,7 +146,8 @@ impl DerivedCatalog {
                 vector_count INTEGER NOT NULL CHECK (vector_count >= 0),
                 dimension INTEGER NOT NULL CHECK (dimension > 0),
                 producer_signature TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                UNIQUE (artifact_id, object_hash)
             );
             CREATE TABLE IF NOT EXISTS ann_tombstones (
                 artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
@@ -151,6 +170,38 @@ impl DerivedCatalog {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 UNIQUE (kind, input_hash, producer_signature)
+            );
+            CREATE TABLE IF NOT EXISTS serving_records (
+                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+                authority_generation INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                entity_refs BLOB NOT NULL,
+                tags BLOB NOT NULL,
+                node_ids BLOB NOT NULL,
+                current INTEGER NOT NULL CHECK (current IN (0, 1)),
+                retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
+                PRIMARY KEY (space_id, memory_id)
+            );
+            CREATE TABLE IF NOT EXISTS tag_dictionary (
+                tag_id BLOB PRIMARY KEY CHECK (length(tag_id) = 32),
+                normalized_value TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS tag_memberships (
+                membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+                tag_id BLOB NOT NULL REFERENCES tag_dictionary(tag_id),
+                normalized_value TEXT NOT NULL,
+                node_id TEXT,
+                provenance TEXT NOT NULL CHECK (provenance IN ('explicit', 'generated')),
+                producer_signature TEXT,
+                projection_input_hash BLOB CHECK (projection_input_hash IS NULL OR length(projection_input_hash) = 32),
+                score REAL,
+                confidence REAL,
+                UNIQUE (space_id, memory_id, revision_id, tag_id, node_id, provenance, projection_input_hash)
             );
             CREATE TABLE IF NOT EXISTS leases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -328,6 +379,172 @@ impl DerivedCatalog {
         usize::try_from(count).map_err(DerivedError::from)
     }
 
+    pub fn replace_serving_records(
+        &mut self,
+        space_id: SpaceId,
+        records: &[ServingRecord],
+    ) -> Result<(), DerivedError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM serving_records WHERE space_id = ?1",
+            params![space_id.as_bytes().as_slice()],
+        )?;
+        for record in records {
+            if record.space_id != space_id {
+                return Err(DerivedError::InvalidProjectionValue {
+                    value: "serving record belongs to a different Space".to_owned(),
+                });
+            }
+            transaction.execute(
+                "INSERT INTO serving_records(
+                    space_id, memory_id, revision_id, authority_generation, text,
+                    entity_refs, tags, node_ids, current, retired
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    record.space_id.as_bytes().as_slice(),
+                    record.memory_id.as_bytes().as_slice(),
+                    record.revision_id.as_bytes().as_slice(),
+                    generation_to_sql(record.authority_generation)?,
+                    record.text,
+                    encode_strings(&record.entity_refs)?,
+                    encode_strings(&record.tags)?,
+                    encode_strings(&record.node_ids)?,
+                    i64::from(u8::from(record.current)),
+                    i64::from(u8::from(record.retired)),
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn serving_records_for_spaces(
+        &self,
+        space_ids: &[SpaceId],
+        generation: AuthorityGeneration,
+    ) -> Result<Vec<ServingRecord>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT space_id, memory_id, revision_id, authority_generation, text,
+                    entity_refs, tags, node_ids, current, retired
+             FROM serving_records ORDER BY space_id, memory_id",
+        )?;
+        let rows = statement.query_map([], decode_serving_record)?;
+        let records = rows.collect::<Result<Vec<_>, _>>()?;
+        Ok(records
+            .into_iter()
+            .filter(|record| {
+                space_ids.contains(&record.space_id) && record.authority_generation <= generation
+            })
+            .collect())
+    }
+
+    pub fn register_tag_dictionary_value(
+        &mut self,
+        tag_id: TagId,
+        normalized_value: impl AsRef<str>,
+    ) -> Result<(), DerivedError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO tag_dictionary(tag_id, normalized_value)
+             VALUES (?1, ?2)",
+            params![tag_id.as_bytes().as_slice(), normalized_value.as_ref()],
+        )?;
+        let stored = self.connection.query_row(
+            "SELECT normalized_value FROM tag_dictionary WHERE tag_id = ?1",
+            params![tag_id.as_bytes().as_slice()],
+            |row| row.get::<_, String>(0),
+        )?;
+        if stored != normalized_value.as_ref() {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "Tag dictionary identity conflicts with normalized value".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn tag_dictionary_entries(&self) -> Result<Vec<(TagId, String)>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT tag_id, normalized_value FROM tag_dictionary ORDER BY normalized_value",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((TagId::from_bytes(blob_array(row, 0)?), row.get(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DerivedError::from)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_tag_membership(
+        &mut self,
+        space_id: SpaceId,
+        memory_id: MemoryId,
+        revision_id: RevisionId,
+        tag_id: TagId,
+        normalized_value: impl AsRef<str>,
+        node_id: Option<&str>,
+        provenance: TagProvenance,
+        producer_signature: Option<&str>,
+        projection_input_hash: Option<ProjectionInputHash>,
+        score: Option<f32>,
+        confidence: Option<f32>,
+    ) -> Result<TagMembershipRecord, DerivedError> {
+        self.register_tag_dictionary_value(tag_id, normalized_value.as_ref())?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO tag_memberships(
+                space_id, memory_id, revision_id, tag_id, normalized_value, node_id,
+                provenance, producer_signature, projection_input_hash, score, confidence
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                space_id.as_bytes().as_slice(),
+                memory_id.as_bytes().as_slice(),
+                revision_id.as_bytes().as_slice(),
+                tag_id.as_bytes().as_slice(),
+                normalized_value.as_ref(),
+                node_id,
+                provenance_to_sql(provenance),
+                producer_signature,
+                projection_input_hash
+                    .as_ref()
+                    .map(|hash| hash.as_bytes().as_slice()),
+                score,
+                confidence,
+            ],
+        )?;
+        self.connection
+            .query_row(
+                "SELECT membership_id, space_id, memory_id, revision_id, tag_id,
+                        normalized_value, node_id, provenance, producer_signature,
+                        projection_input_hash, score, confidence
+                 FROM tag_memberships
+                 WHERE space_id = ?1 AND memory_id = ?2 AND revision_id = ?3
+                   AND tag_id = ?4 AND normalized_value = ?5
+                   AND provenance = ?6
+                   AND (node_id IS ?7)",
+                params![
+                    space_id.as_bytes().as_slice(),
+                    memory_id.as_bytes().as_slice(),
+                    revision_id.as_bytes().as_slice(),
+                    tag_id.as_bytes().as_slice(),
+                    normalized_value.as_ref(),
+                    provenance_to_sql(provenance),
+                    node_id,
+                ],
+                decode_tag_membership_record,
+            )
+            .map_err(DerivedError::from)
+    }
+
+    pub fn tag_memberships(&self) -> Result<Vec<TagMembershipRecord>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT membership_id, space_id, memory_id, revision_id, tag_id,
+                    normalized_value, node_id, provenance, producer_signature,
+                    projection_input_hash, score, confidence
+             FROM tag_memberships ORDER BY membership_id",
+        )?;
+        let rows = statement.query_map([], decode_tag_membership_record)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DerivedError::from)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn insert_vector_membership(
         &mut self,
@@ -408,7 +625,7 @@ impl DerivedCatalog {
     ) -> Result<AnnSegmentRecord, DerivedError> {
         let created_at = unix_now();
         self.connection.execute(
-            "INSERT INTO ann_segments(
+            "INSERT OR IGNORE INTO ann_segments(
                 artifact_id, object_hash, vector_count, dimension, producer_signature, created_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -420,8 +637,16 @@ impl DerivedCatalog {
                 created_at,
             ],
         )?;
-        let segment_id = self.connection.last_insert_rowid();
-        self.ann_segment(segment_id)
+        self.connection
+            .query_row(
+                "SELECT segment_id FROM ann_segments
+                 WHERE artifact_id = ?1 AND object_hash = ?2
+                 ORDER BY segment_id LIMIT 1",
+                params![artifact_id.value(), object_hash.as_slice()],
+                |row| row.get(0),
+            )
+            .map_err(DerivedError::from)
+            .and_then(|segment_id| self.ann_segment(segment_id))
     }
 
     pub fn ann_segment(&self, segment_id: i64) -> Result<AnnSegmentRecord, DerivedError> {
@@ -434,6 +659,29 @@ impl DerivedCatalog {
                 decode_ann_segment_record,
             )
             .map_err(DerivedError::from)
+    }
+
+    pub fn ann_segments_for_artifact(
+        &self,
+        artifact_id: ArtifactId,
+    ) -> Result<Vec<AnnSegmentRecord>, DerivedError> {
+        let mut statement = self.connection.prepare(
+            "SELECT segment_id, artifact_id, object_hash, vector_count, dimension,
+                    producer_signature, created_at
+             FROM ann_segments WHERE artifact_id = ?1 ORDER BY segment_id",
+        )?;
+        let rows = statement.query_map(params![artifact_id.value()], decode_ann_segment_record)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(DerivedError::from)
+    }
+
+    pub fn ann_segment_count(&self, artifact_id: ArtifactId) -> Result<usize, DerivedError> {
+        let count = self.connection.query_row(
+            "SELECT COUNT(*) FROM ann_segments WHERE artifact_id = ?1",
+            params![artifact_id.value()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        usize::try_from(count).map_err(DerivedError::from)
     }
 
     pub fn add_ann_tombstone(
@@ -457,6 +705,15 @@ impl DerivedCatalog {
         let rows = statement.query_map(params![artifact_id.value()], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(DerivedError::from)
+    }
+
+    pub fn ann_tombstone_count(&self, artifact_id: ArtifactId) -> Result<u64, DerivedError> {
+        let count = self.connection.query_row(
+            "SELECT COUNT(*) FROM ann_tombstones WHERE artifact_id = ?1",
+            params![artifact_id.value()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        u64::try_from(count).map_err(DerivedError::from)
     }
 
     pub fn enqueue_build_job(
@@ -501,6 +758,26 @@ impl DerivedCatalog {
             .map_err(DerivedError::from)
     }
 
+    pub fn build_job_for(
+        &self,
+        kind: &str,
+        input_hash: &str,
+        producer_signature: &str,
+    ) -> Result<Option<BuildJob>, DerivedError> {
+        let job_id = format!("BJ:{kind}:{input_hash}:{producer_signature}");
+        self.connection
+            .query_row(
+                "SELECT job_id, kind, input_hash, producer_signature, authority_generation,
+                        state, attempt_count, next_attempt_at, last_error_code,
+                        last_error_message, created_at, updated_at
+                 FROM build_jobs WHERE job_id = ?1",
+                params![job_id],
+                decode_build_job,
+            )
+            .optional()
+            .map_err(DerivedError::from)
+    }
+
     pub fn mark_build_job_running(&mut self, job_id: &str) -> Result<BuildJob, DerivedError> {
         self.connection.execute(
             "UPDATE build_jobs SET state = 'running', attempt_count = attempt_count + 1,
@@ -513,6 +790,56 @@ impl DerivedCatalog {
     pub fn mark_build_job_succeeded(&mut self, job_id: &str) -> Result<BuildJob, DerivedError> {
         self.connection.execute(
             "UPDATE build_jobs SET state = 'succeeded', updated_at = ?1 WHERE job_id = ?2",
+            params![unix_now(), job_id],
+        )?;
+        self.build_job(job_id)
+    }
+
+    pub fn mark_build_job_failed(
+        &mut self,
+        job_id: &str,
+        code: impl AsRef<str>,
+        message: impl AsRef<str>,
+        retryable: bool,
+    ) -> Result<BuildJob, DerivedError> {
+        let attempt = self.build_job(job_id)?.attempt_count;
+        let delay = if !retryable {
+            0
+        } else {
+            match attempt {
+                0 | 1 => 1,
+                2 => 5,
+                3 => 30,
+                4 => 120,
+                _ => 600,
+            }
+        };
+        let next_attempt_at = unix_now().saturating_add(delay);
+        let state = if retryable && attempt < 5 {
+            BuildJobState::Queued
+        } else {
+            BuildJobState::Failed
+        };
+        self.connection.execute(
+            "UPDATE build_jobs
+             SET state = ?1, next_attempt_at = ?2, last_error_code = ?3,
+                 last_error_message = ?4, updated_at = ?5
+             WHERE job_id = ?6",
+            params![
+                state.as_str(),
+                next_attempt_at,
+                code.as_ref(),
+                message.as_ref(),
+                unix_now(),
+                job_id,
+            ],
+        )?;
+        self.build_job(job_id)
+    }
+
+    pub fn mark_build_job_superseded(&mut self, job_id: &str) -> Result<BuildJob, DerivedError> {
+        self.connection.execute(
+            "UPDATE build_jobs SET state = 'superseded', updated_at = ?1 WHERE job_id = ?2",
             params![unix_now(), job_id],
         )?;
         self.build_job(job_id)
@@ -758,6 +1085,9 @@ impl DerivedCatalog {
             UPDATE serving_pointer SET manifest_id = NULL WHERE singleton = 1;
             DELETE FROM manifests;
             DELETE FROM artifact_dependencies;
+            DELETE FROM serving_records;
+            DELETE FROM tag_memberships;
+            DELETE FROM tag_dictionary;
             DELETE FROM build_jobs;
             DELETE FROM artifacts;
             ",
@@ -824,6 +1154,88 @@ fn decode_ann_segment_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnnSeg
     })
 }
 
+fn encode_strings(values: &[String]) -> Result<Vec<u8>, DerivedError> {
+    let count = u32::try_from(values.len())?;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&count.to_le_bytes());
+    for value in values {
+        let value = value.as_bytes();
+        let length = u32::try_from(value.len())?;
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(value);
+    }
+    Ok(bytes)
+}
+
+fn decode_strings(bytes: &[u8]) -> rusqlite::Result<Vec<String>> {
+    let mut cursor = 0_usize;
+    let count = read_u32(bytes, &mut cursor)?;
+    let mut values = Vec::with_capacity(usize::try_from(count).map_err(|_| conversion_error(0))?);
+    for _ in 0..count {
+        let length =
+            usize::try_from(read_u32(bytes, &mut cursor)?).map_err(|_| conversion_error(0))?;
+        let end = cursor
+            .checked_add(length)
+            .ok_or_else(|| conversion_error(0))?;
+        let value = bytes.get(cursor..end).ok_or_else(|| conversion_error(0))?;
+        values.push(String::from_utf8(value.to_vec()).map_err(|_| conversion_error(0))?);
+        cursor = end;
+    }
+    if cursor != bytes.len() {
+        return Err(conversion_error(0));
+    }
+    Ok(values)
+}
+
+fn read_u32(bytes: &[u8], cursor: &mut usize) -> rusqlite::Result<u32> {
+    let end = cursor.checked_add(4).ok_or_else(|| conversion_error(0))?;
+    let value = bytes.get(*cursor..end).ok_or_else(|| conversion_error(0))?;
+    *cursor = end;
+    Ok(u32::from_le_bytes(
+        value.try_into().map_err(|_| conversion_error(0))?,
+    ))
+}
+
+fn decode_serving_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ServingRecord> {
+    let authority_generation = generation_from_sql(row.get(3)?, 3)?;
+    let current = row.get::<_, i64>(8)? != 0;
+    let retired = row.get::<_, i64>(9)? != 0;
+    Ok(ServingRecord {
+        space_id: SpaceId::from_bytes(blob_array(row, 0)?),
+        memory_id: MemoryId::from_bytes(blob_array(row, 1)?),
+        revision_id: RevisionId::from_bytes(blob_array(row, 2)?),
+        authority_generation,
+        text: row.get(4)?,
+        entity_refs: decode_strings(&row.get::<_, Vec<u8>>(5)?)?,
+        tags: decode_strings(&row.get::<_, Vec<u8>>(6)?)?,
+        node_ids: decode_strings(&row.get::<_, Vec<u8>>(7)?)?,
+        current,
+        retired,
+    })
+}
+
+fn decode_tag_membership_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TagMembershipRecord> {
+    let projection_input_hash = row
+        .get::<_, Option<Vec<u8>>>(9)?
+        .map(|bytes| bytes.try_into().map(ProjectionInputHash::from_bytes))
+        .transpose()
+        .map_err(|_| conversion_error(9))?;
+    Ok(TagMembershipRecord {
+        membership_id: row.get(0)?,
+        space_id: SpaceId::from_bytes(blob_array(row, 1)?),
+        memory_id: MemoryId::from_bytes(blob_array(row, 2)?),
+        revision_id: RevisionId::from_bytes(blob_array(row, 3)?),
+        tag_id: TagId::from_bytes(blob_array(row, 4)?),
+        normalized_value: row.get(5)?,
+        node_id: row.get(6)?,
+        provenance: provenance_from_sql(row.get::<_, String>(7)?.as_str())?,
+        producer_signature: row.get(8)?,
+        projection_input_hash,
+        score: row.get(10)?,
+        confidence: row.get(11)?,
+    })
+}
+
 fn decode_build_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BuildJob> {
     let authority_generation = generation_from_sql(row.get(4)?, 4)?;
     let attempt_count = u32::try_from(row.get::<_, i64>(6)?).map_err(|_| conversion_error(6))?;
@@ -876,6 +1288,21 @@ fn normalization_from_sql(value: i64) -> rusqlite::Result<EmbeddingNormalization
         0 => Ok(EmbeddingNormalization::None),
         1 => Ok(EmbeddingNormalization::L2),
         _ => Err(conversion_error(2)),
+    }
+}
+
+fn provenance_to_sql(provenance: TagProvenance) -> &'static str {
+    match provenance {
+        TagProvenance::Explicit => "explicit",
+        TagProvenance::Generated => "generated",
+    }
+}
+
+fn provenance_from_sql(value: &str) -> rusqlite::Result<TagProvenance> {
+    match value {
+        "explicit" => Ok(TagProvenance::Explicit),
+        "generated" => Ok(TagProvenance::Generated),
+        _ => Err(conversion_error(7)),
     }
 }
 

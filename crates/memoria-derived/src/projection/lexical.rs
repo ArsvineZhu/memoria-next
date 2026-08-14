@@ -51,6 +51,11 @@ impl LexicalDocument {
     pub const fn ir(&self) -> &MemoryIr {
         &self.ir
     }
+
+    #[must_use]
+    pub fn lexical_text(&self) -> String {
+        lexical_text(&self.ir)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

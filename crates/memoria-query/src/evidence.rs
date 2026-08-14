@@ -26,6 +26,13 @@ pub struct LexicalEvidence {
 pub struct SemanticEvidence {
     pub score: f32,
     pub resolution: SemanticResolution,
+    pub channel: SemanticChannel,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SemanticChannel {
+    Direct,
+    Residual,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

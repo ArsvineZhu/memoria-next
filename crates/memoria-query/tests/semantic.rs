@@ -1,4 +1,7 @@
-use memoria_derived::DerivedCatalog;
+use memoria_derived::{
+    DerivedCatalog, EmbeddingNormalization, ProjectionInputHash, VectorPayloadHash,
+    VectorPayloadRecord,
+};
 use memoria_query::{
     ExactRecord, MemoryQuery, QueryCompiler, SemanticCandidate, SemanticCandidateIndex,
     SemanticResolution, execute_semantic,
@@ -21,6 +24,33 @@ fn compiler() -> QueryCompiler {
         .stage_artifact("semantic", 1, AuthorityGeneration::new(1))
         .unwrap();
     catalog.validate_artifact(artifact.id()).unwrap();
+    let payload_hash = VectorPayloadHash::from_bytes([0x11; 32]);
+    catalog
+        .register_vector_payload(&VectorPayloadRecord {
+            payload_hash,
+            dimension: 3,
+            normalization: EmbeddingNormalization::L2,
+            producer_signature: "test:semantic:v1".to_owned(),
+            projection_input_hash: ProjectionInputHash::from_bytes([0x22; 32]),
+            object_path: "objects/vector/11/test.vec".to_owned(),
+            byte_length: 99,
+            checksum: [0x11; 32],
+            created_at: 0,
+        })
+        .unwrap();
+    catalog
+        .insert_vector_membership(
+            artifact.id(),
+            SpaceId::from_bytes([1; 16]),
+            MemoryId::from_bytes([1; 16]),
+            RevisionId::from_bytes([1; 32]),
+            "memory:1",
+            None,
+            "leaf",
+            payload_hash,
+            AuthorityGeneration::new(1),
+        )
+        .unwrap();
     let manifest = catalog
         .publish_manifest_at_generation(
             vec![artifact.id()],

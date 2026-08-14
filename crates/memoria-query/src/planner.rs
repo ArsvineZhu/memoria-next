@@ -1,7 +1,7 @@
 use memoria_derived::DerivedManifest;
 use memoria_types::AuthorityGeneration;
 
-use crate::model::{AuthorityConsistency, MemoryQuery};
+use crate::model::{AuthorityConsistency, MemoryQuery, QueryQualityLevel};
 use crate::validate::QueryError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,9 +23,72 @@ pub struct CapabilityTarget {
     pub authority_generation: AuthorityGeneration,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetrievalProfile {
+    pub tag_basis_vectors: usize,
+    pub activation_budget: crate::PropagationBudget,
+    pub relation_budget: crate::RelationExpansionBudget,
+    pub run_diffusion: bool,
+    pub rerank_candidates: usize,
+}
+
+impl RetrievalProfile {
+    #[must_use]
+    pub const fn for_quality(level: QueryQualityLevel) -> Self {
+        match level {
+            QueryQualityLevel::Fast => Self {
+                tag_basis_vectors: crate::FAST_TAG_BASIS_VECTORS,
+                activation_budget: crate::PropagationBudget {
+                    max_active_tags: 48,
+                    max_edge_visits: 512,
+                    max_hops: 2,
+                },
+                relation_budget: crate::RelationExpansionBudget {
+                    max_hops: 1,
+                    max_added: 16,
+                },
+                run_diffusion: false,
+                rerank_candidates: 16,
+            },
+            QueryQualityLevel::Balanced => Self {
+                tag_basis_vectors: crate::BALANCED_TAG_BASIS_VECTORS,
+                activation_budget: crate::PropagationBudget {
+                    max_active_tags: 96,
+                    max_edge_visits: 1024,
+                    max_hops: 3,
+                },
+                relation_budget: crate::RelationExpansionBudget {
+                    max_hops: 1,
+                    max_added: 32,
+                },
+                run_diffusion: false,
+                rerank_candidates: 32,
+            },
+            QueryQualityLevel::Thorough => Self {
+                tag_basis_vectors: crate::THOROUGH_TAG_BASIS_VECTORS,
+                activation_budget: crate::PropagationBudget {
+                    max_active_tags: 96,
+                    max_edge_visits: 1024,
+                    max_hops: 3,
+                },
+                relation_budget: crate::RelationExpansionBudget {
+                    max_hops: 2,
+                    max_added: 64,
+                },
+                run_diffusion: true,
+                rerank_candidates: 64,
+            },
+        }
+    }
+}
+
 pub struct CapabilityPlanner;
 
 impl CapabilityPlanner {
+    #[must_use]
+    pub const fn retrieval_profile(query: &MemoryQuery) -> RetrievalProfile {
+        RetrievalProfile::for_quality(query.quality.level)
+    }
     #[must_use]
     pub fn prefers_lexical(query: &MemoryQuery) -> bool {
         !query.cue.text.is_empty()

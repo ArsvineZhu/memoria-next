@@ -36,3 +36,24 @@ impl From<&PropagatedTag> for SupportEvidence {
         }
     }
 }
+
+/// Bounded ranking bonus for independent propagation support.
+#[must_use]
+pub fn support_bonus(evidence: &SupportEvidence) -> f32 {
+    let seed_component = (1.0 + evidence.independent_seed_count as f32).ln() / 5.0_f32.ln();
+    let strength_component = evidence.strongest_support.clamp(0.0, 1.0);
+    let provenance_component = if evidence.seed_origins.is_empty() {
+        0.0
+    } else {
+        evidence
+            .seed_origins
+            .iter()
+            .map(|origin| origin.weight())
+            .sum::<f32>()
+            / evidence.seed_origins.len() as f32
+    };
+    (0.07 * seed_component.clamp(0.0, 1.0)
+        + 0.03 * strength_component
+        + 0.02 * provenance_component.clamp(0.0, 1.0))
+    .clamp(0.0, 0.12)
+}

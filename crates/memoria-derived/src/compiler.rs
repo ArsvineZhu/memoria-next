@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use memoria_mdx::SemanticDiff;
 use memoria_types::AuthorityGeneration;
 
@@ -5,8 +7,9 @@ use crate::dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 use crate::enrichment::{ENRICHMENT_PROJECTION_VERSION, EnrichmentProjection};
 use crate::projection::ProjectionTarget;
 use crate::{
-    DerivedCatalog, DerivedError, DerivedManifest, EntityObservationBuilder, ExplicitTagBuilder,
-    LexicalDocument, RelationBuilder, StructuralBuilder, TemporalBuilder,
+    AnnSegmentEntry, AnnSegmentRecord, AnnSegmentV1, ArtifactId, DerivedCatalog, DerivedError,
+    DerivedManifest, EntityObservationBuilder, ExplicitTagBuilder, LexicalDocument,
+    RelationBuilder, ServingRecord, StructuralBuilder, TemporalBuilder,
 };
 
 pub const BASE_ARTIFACT_KINDS: [&str; 7] = [
@@ -81,6 +84,24 @@ impl DerivedCompiler {
         &self.producer_signature
     }
 
+    pub fn persist_ann_segment(
+        &self,
+        catalog: &mut DerivedCatalog,
+        derived_dir: impl AsRef<Path>,
+        artifact_id: ArtifactId,
+        entries: Vec<AnnSegmentEntry>,
+    ) -> Result<AnnSegmentRecord, DerivedError> {
+        let segment = AnnSegmentV1::build(self.producer_signature.clone(), entries)?;
+        let object_hash = segment.put(derived_dir)?;
+        catalog.register_ann_segment(
+            artifact_id,
+            object_hash,
+            u64::try_from(segment.vector_count())?,
+            segment.dimension(),
+            segment.producer_signature(),
+        )
+    }
+
     pub fn compile_base<I>(
         &self,
         catalog: &mut DerivedCatalog,
@@ -100,6 +121,7 @@ impl DerivedCompiler {
             .map(|document| EnrichmentProjection::from_document(document, &enrichment_signature))
             .collect::<Result<Vec<_>, DerivedError>>()?;
 
+        let mut serving_by_space = std::collections::BTreeMap::<_, Vec<ServingRecord>>::new();
         for document in &documents {
             let target = ProjectionTarget {
                 space_id: Some(document.space_id()),
@@ -112,6 +134,13 @@ impl DerivedCompiler {
             let _ = EntityObservationBuilder::build_for(document.ir(), target)?;
             let _ = ExplicitTagBuilder::build_for(document.ir(), target)?;
             let _ = crate::build_lexical(document)?;
+            serving_by_space
+                .entry(document.space_id())
+                .or_default()
+                .push(ServingRecord::from_document(document, generation)?);
+        }
+        for (space_id, records) in serving_by_space {
+            catalog.replace_serving_records(space_id, &records)?;
         }
 
         let mut artifact_ids = Vec::with_capacity(BASE_ARTIFACT_KINDS.len());

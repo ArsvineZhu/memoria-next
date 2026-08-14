@@ -10,6 +10,27 @@ pub struct RecallAssessment {
     pub channel_coverage: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RetrievalCost {
+    pub ann_searches: usize,
+    pub candidate_count: usize,
+    pub graph_edge_visits: usize,
+    pub relation_expansions: usize,
+    pub provider_barriers: usize,
+}
+
+/// Normalize operator work into an effort signal. This is an accessibility
+/// cost indicator, not a relevance or factual-confidence score.
+#[must_use]
+pub fn effort_from_cost(cost: RetrievalCost) -> f32 {
+    let raw = cost.ann_searches as f32 / 4.0
+        + cost.candidate_count as f32 / 256.0
+        + cost.graph_edge_visits as f32 / 1024.0
+        + cost.relation_expansions as f32 / 64.0
+        + cost.provider_barriers as f32 / 2.0;
+    raw.clamp(0.0, 1.0)
+}
+
 #[must_use]
 pub fn assess(results: &[MemoryResult]) -> RecallAssessment {
     let result_count = results.len();

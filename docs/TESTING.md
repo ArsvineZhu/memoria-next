@@ -50,6 +50,9 @@ production latency:
 
 ```text
 corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile lexical
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile fast
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile thorough
 corepack pnpm exec tsx benchmarks/adaptive/replay.ts --adaptive=on
 corepack pnpm exec tsx benchmarks/encryption/measure.ts
 ```

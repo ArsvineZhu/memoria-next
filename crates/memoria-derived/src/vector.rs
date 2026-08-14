@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -21,6 +21,12 @@ const VECTOR_PAYLOAD_MAGIC: &[u8; 8] = b"MEMVEC01";
 pub const VECTOR_PAYLOAD_FORMAT_VERSION: u16 = 1;
 const VECTOR_PAYLOAD_HEADER_LENGTH: usize = 8 + 2 + 4 + 1 + 32 + 32;
 static NEXT_VECTOR_PAYLOAD_STAGING_ID: AtomicU64 = AtomicU64::new(0);
+const ANN_SEGMENT_MAGIC: &[u8; 8] = b"MEMANN01";
+const ANN_SEGMENT_FORMAT_VERSION: u16 = 1;
+static NEXT_ANN_SEGMENT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
+
+pub const ANN_DELTA_COMPACTION_THRESHOLD: usize = 8;
+pub const ANN_TOMBSTONE_RATIO_PERCENT: u64 = 20;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct VectorPayloadHash([u8; 32]);
@@ -385,6 +391,440 @@ fn hex_lower(bytes: &[u8; 32]) -> String {
     output
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnnSegmentEntry {
+    target_key: String,
+    membership: VectorMembership,
+    values: Vec<f32>,
+}
+
+impl AnnSegmentEntry {
+    pub fn new(
+        target_key: impl Into<String>,
+        membership: VectorMembership,
+        values: Vec<f32>,
+    ) -> Result<Self, DerivedError> {
+        if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "ANN segment vector values must be finite and non-empty".to_owned(),
+            });
+        }
+        let target_key = target_key.into();
+        if target_key.is_empty() {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "ANN segment target key must not be empty".to_owned(),
+            });
+        }
+        Ok(Self {
+            target_key,
+            membership,
+            values,
+        })
+    }
+
+    #[must_use]
+    pub fn target_key(&self) -> &str {
+        &self.target_key
+    }
+
+    #[must_use]
+    pub const fn membership(&self) -> VectorMembership {
+        self.membership
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &[f32] {
+        &self.values
+    }
+}
+
+/// Immutable ANN delta segment with a canonical on-disk representation.
+///
+/// USearch remains the in-process query adapter. The serialized segment keeps
+/// enough metadata to rebuild that adapter without consulting Authority.
+pub struct AnnSegmentV1 {
+    producer_signature: String,
+    dimension: u32,
+    entries: Vec<AnnSegmentEntry>,
+    index: VectorIndex,
+    synthetic_memberships: BTreeMap<VectorMembership, VectorMembership>,
+}
+
+impl AnnSegmentV1 {
+    pub fn build(
+        producer_signature: impl Into<String>,
+        entries: Vec<AnnSegmentEntry>,
+    ) -> Result<Self, DerivedError> {
+        let producer_signature = producer_signature.into();
+        if producer_signature.trim().is_empty() {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "ANN segment producer signature must not be empty".to_owned(),
+            });
+        }
+        let dimension = entries.first().map_or(0, |entry| entry.values.len());
+        if dimension == 0 {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "ANN segment must contain at least one vector".to_owned(),
+            });
+        }
+        let dimension_u32 =
+            u32::try_from(dimension).map_err(|_| DerivedError::InvalidProjectionValue {
+                value: "ANN segment dimension is out of range".to_owned(),
+            })?;
+        let mut by_target = BTreeMap::new();
+        for entry in entries {
+            if entry.values.len() != dimension {
+                return Err(DerivedError::InvalidProjectionValue {
+                    value: "ANN segment vectors have inconsistent dimensions".to_owned(),
+                });
+            }
+            by_target.insert(entry.target_key.clone(), entry);
+        }
+        let entries = by_target.into_values().collect::<Vec<_>>();
+        let signature = EmbeddingSignature::new(
+            "ann-segment",
+            producer_signature.clone(),
+            "semantic",
+            dimension,
+            EmbeddingNormalization::None,
+            1,
+        )?;
+        let mut index = VectorIndex::new(signature.clone())?;
+        let mut synthetic_memberships = BTreeMap::new();
+        for entry in &entries {
+            let vector = EmbeddingVector::new(signature.clone(), entry.values.clone())?;
+            let artifact = VectorArtifact::from_embedding(vector);
+            let synthetic = VectorMembership::new(
+                entry.membership.space_id(),
+                entry.membership.memory_id(),
+                entry.membership.revision_id(),
+                entry.membership.authority_generation(),
+                &artifact,
+            );
+            index.insert(artifact, synthetic)?;
+            synthetic_memberships.insert(synthetic, entry.membership);
+        }
+        Ok(Self {
+            producer_signature,
+            dimension: dimension_u32,
+            entries,
+            index,
+            synthetic_memberships,
+        })
+    }
+
+    #[must_use]
+    pub const fn dimension(&self) -> u32 {
+        self.dimension
+    }
+
+    #[must_use]
+    pub fn producer_signature(&self) -> &str {
+        &self.producer_signature
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = &AnnSegmentEntry> {
+        self.entries.iter()
+    }
+
+    #[must_use]
+    pub fn vector_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(ANN_SEGMENT_MAGIC);
+        bytes.extend_from_slice(&ANN_SEGMENT_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&self.dimension.to_le_bytes());
+        put_string_u32(&mut bytes, self.producer_signature.as_bytes());
+        bytes.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for entry in &self.entries {
+            put_string_u32(&mut bytes, entry.target_key.as_bytes());
+            bytes.extend_from_slice(entry.membership.space_id().as_bytes());
+            bytes.extend_from_slice(entry.membership.memory_id().as_bytes());
+            bytes.extend_from_slice(entry.membership.revision_id().as_bytes());
+            bytes.extend_from_slice(
+                &entry
+                    .membership
+                    .authority_generation()
+                    .value()
+                    .to_le_bytes(),
+            );
+            let payload_hash = entry.membership.payload_hash();
+            bytes.extend_from_slice(&payload_hash);
+            for value in &entry.values {
+                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+        }
+        bytes
+    }
+
+    #[must_use]
+    pub fn hash(&self) -> [u8; 32] {
+        Sha256::digest(self.canonical_bytes()).into()
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, DerivedError> {
+        if bytes.len() < 8 + 2 + 4 + 4 + 4 {
+            return Err(invalid_payload("ANN segment is truncated"));
+        }
+        if &bytes[..8] != ANN_SEGMENT_MAGIC {
+            return Err(invalid_payload("ANN segment magic does not match MEMANN01"));
+        }
+        let mut cursor = 8;
+        let version = read_u16(bytes, &mut cursor)?;
+        if version != ANN_SEGMENT_FORMAT_VERSION {
+            return Err(invalid_payload("unsupported ANN segment format version"));
+        }
+        let dimension = read_u32(bytes, &mut cursor)?;
+        if dimension == 0 {
+            return Err(invalid_payload("ANN segment dimension must be positive"));
+        }
+        let producer_signature = read_string_u32(bytes, &mut cursor)?;
+        let count = read_u32(bytes, &mut cursor)?;
+        let mut entries = Vec::with_capacity(
+            usize::try_from(count)
+                .map_err(|_| invalid_payload("ANN segment vector count is out of range"))?,
+        );
+        for _ in 0..count {
+            let target_key = read_string_u32(bytes, &mut cursor)?;
+            let space_id = SpaceId::from_bytes(read_fixed(bytes, &mut cursor)?);
+            let memory_id = MemoryId::from_bytes(read_fixed(bytes, &mut cursor)?);
+            let revision_id = RevisionId::from_bytes(read_fixed(bytes, &mut cursor)?);
+            let generation = AuthorityGeneration::new(read_u64(bytes, &mut cursor)?);
+            let payload_hash = read_fixed::<32>(bytes, &mut cursor)?;
+            let value_count = usize::try_from(dimension)
+                .map_err(|_| invalid_payload("ANN segment dimension is out of range"))?;
+            let mut values = Vec::with_capacity(value_count);
+            for _ in 0..value_count {
+                let value = f32::from_bits(read_u32(bytes, &mut cursor)?);
+                if !value.is_finite() {
+                    return Err(invalid_payload("ANN segment contains a non-finite value"));
+                }
+                values.push(value);
+            }
+            let membership = VectorMembership::from_parts(
+                space_id,
+                memory_id,
+                revision_id,
+                generation,
+                payload_hash,
+            );
+            entries.push(AnnSegmentEntry::new(target_key, membership, values)?);
+        }
+        let encoded_dimension = entries.first().map_or(0, |entry| entry.values.len());
+        let encoded_dimension = u32::try_from(encoded_dimension)
+            .map_err(|_| invalid_payload("ANN segment dimension is out of range"))?;
+        if cursor != bytes.len() || encoded_dimension != dimension {
+            return Err(invalid_payload("ANN segment has an invalid encoded length"));
+        }
+        Self::build(producer_signature, entries)
+    }
+
+    pub fn put(&self, derived_dir: impl AsRef<Path>) -> Result<[u8; 32], DerivedError> {
+        let hash = self.hash();
+        let path = ann_segment_path(derived_dir.as_ref(), hash);
+        if path.is_file() {
+            verify_ann_segment_file(&path, hash)?;
+            return Ok(hash);
+        }
+        if path.exists() {
+            return Err(invalid_payload("ANN segment target is not a regular file"));
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| invalid_payload("ANN segment path has no parent"))?;
+        fs::create_dir_all(parent)?;
+        let staging_path = parent.join(format!(
+            ".{}.{}.tmp",
+            hex_lower(&hash),
+            NEXT_ANN_SEGMENT_STAGING_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut staging = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging_path)?;
+        let write_result = staging
+            .write_all(&self.canonical_bytes())
+            .and_then(|()| staging.sync_all());
+        drop(staging);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&staging_path);
+            return Err(error.into());
+        }
+        if path.is_file() {
+            let _ = fs::remove_file(&staging_path);
+            verify_ann_segment_file(&path, hash)?;
+            return Ok(hash);
+        }
+        match fs::rename(&staging_path, &path) {
+            Ok(()) => {
+                sync_directory(parent)?;
+                Ok(hash)
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let _ = fs::remove_file(&staging_path);
+                verify_ann_segment_file(&path, hash)?;
+                Ok(hash)
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&staging_path);
+                Err(error.into())
+            }
+        }
+    }
+
+    pub fn get(derived_dir: impl AsRef<Path>, hash: [u8; 32]) -> Result<Self, DerivedError> {
+        let path = ann_segment_path(derived_dir.as_ref(), hash);
+        let bytes = fs::read(path)?;
+        let segment = Self::from_canonical_bytes(&bytes)?;
+        if segment.hash() != hash {
+            return Err(invalid_payload(
+                "ANN segment checksum does not match its path",
+            ));
+        }
+        Ok(segment)
+    }
+
+    pub fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        filter: &VectorFilter,
+    ) -> Result<Vec<VectorHit>, DerivedError> {
+        let synthetic_hits = self.index.search(query, limit, filter)?;
+        Ok(synthetic_hits
+            .into_iter()
+            .filter_map(|hit| {
+                self.synthetic_memberships
+                    .get(&hit.membership())
+                    .copied()
+                    .map(|membership| VectorHit {
+                        membership,
+                        score: hit.score(),
+                    })
+            })
+            .collect())
+    }
+
+    pub fn merge_search<'a>(
+        segments: impl IntoIterator<Item = &'a AnnSegmentV1>,
+        tombstones: &BTreeSet<String>,
+        query: &[f32],
+        limit: usize,
+        filter: &VectorFilter,
+    ) -> Result<Vec<VectorHit>, DerivedError> {
+        let mut seen = BTreeSet::new();
+        let mut hits = Vec::new();
+        for segment in segments {
+            for entry in &segment.entries {
+                if tombstones.contains(&entry.target_key) || !seen.insert(entry.target_key.clone())
+                {
+                    continue;
+                }
+                if !filter.matches(&entry.membership) {
+                    continue;
+                }
+                let score = cosine_similarity(query, &entry.values)?;
+                hits.push(VectorHit {
+                    membership: entry.membership,
+                    score,
+                });
+            }
+        }
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.membership.cmp(&right.membership))
+        });
+        hits.truncate(limit);
+        Ok(hits)
+    }
+}
+
+fn put_string_u32(bytes: &mut Vec<u8>, value: &[u8]) {
+    bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(value);
+}
+
+fn read_string_u32(bytes: &[u8], cursor: &mut usize) -> Result<String, DerivedError> {
+    let length = usize::try_from(read_u32(bytes, cursor)?)
+        .map_err(|_| invalid_payload("encoded ANN string length is out of range"))?;
+    let end = cursor
+        .checked_add(length)
+        .ok_or_else(|| invalid_payload("encoded ANN string length overflow"))?;
+    let value = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| invalid_payload("encoded ANN string is truncated"))?;
+    *cursor = end;
+    String::from_utf8(value.to_vec())
+        .map_err(|_| invalid_payload("encoded ANN string is not UTF-8"))
+}
+
+fn read_u64(bytes: &[u8], cursor: &mut usize) -> Result<u64, DerivedError> {
+    Ok(u64::from_le_bytes(read_fixed(bytes, cursor)?))
+}
+
+fn ann_segment_path(derived_dir: &Path, hash: [u8; 32]) -> PathBuf {
+    let hex = hex_lower(&hash);
+    derived_dir
+        .join("objects")
+        .join("ann")
+        .join(&hex[..2])
+        .join(format!("{hex}.usearch"))
+}
+
+#[must_use]
+pub fn should_schedule_ann_compaction(
+    delta_segment_count: usize,
+    tombstone_count: u64,
+    live_target_count: u64,
+) -> bool {
+    if delta_segment_count > ANN_DELTA_COMPACTION_THRESHOLD {
+        return true;
+    }
+    let total_targets = tombstone_count.saturating_add(live_target_count);
+    total_targets > 0
+        && u128::from(tombstone_count) * 100
+            > u128::from(total_targets) * u128::from(ANN_TOMBSTONE_RATIO_PERCENT)
+}
+
+fn verify_ann_segment_file(path: &Path, expected: [u8; 32]) -> Result<(), DerivedError> {
+    let bytes = fs::read(path)?;
+    let segment = AnnSegmentV1::from_canonical_bytes(&bytes)?;
+    if segment.hash() != expected {
+        return Err(invalid_payload("existing ANN segment checksum mismatch"));
+    }
+    Ok(())
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> Result<f32, DerivedError> {
+    if left.len() != right.len() {
+        return Err(DerivedError::InvalidProjectionValue {
+            value: "ANN query dimension mismatch".to_owned(),
+        });
+    }
+    if left.iter().any(|value| !value.is_finite()) {
+        return Err(DerivedError::InvalidProjectionValue {
+            value: "ANN query values must be finite".to_owned(),
+        });
+    }
+    let dot = left
+        .iter()
+        .zip(right)
+        .map(|(left, right)| left * right)
+        .sum::<f32>();
+    let left_norm = left.iter().map(|value| value * value).sum::<f32>().sqrt();
+    let right_norm = right.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if left_norm == 0.0 || right_norm == 0.0 {
+        return Ok(0.0);
+    }
+    Ok(dot / (left_norm * right_norm))
+}
+
 /// An immutable, content-addressed vector payload.
 ///
 /// The payload is independent from where a memory is currently attached. The
@@ -455,6 +895,23 @@ impl VectorMembership {
             revision_id,
             authority_generation,
             payload_hash: *artifact.payload_hash(),
+        }
+    }
+
+    #[must_use]
+    pub const fn from_parts(
+        space_id: SpaceId,
+        memory_id: MemoryId,
+        revision_id: RevisionId,
+        authority_generation: AuthorityGeneration,
+        payload_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            space_id,
+            memory_id,
+            revision_id,
+            authority_generation,
+            payload_hash,
         }
     }
 

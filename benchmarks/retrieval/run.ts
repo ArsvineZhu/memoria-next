@@ -8,7 +8,10 @@ type Profile =
   | "tag-basis-residual"
   | "activation"
   | "diffusion"
-  | "rerank";
+  | "rerank"
+  | "fast"
+  | "balanced"
+  | "thorough";
 
 interface Relation {
   target: string;
@@ -59,6 +62,10 @@ interface QueryMetrics {
   duplicateEvidence: number;
   graphVisits: number;
   providerCalls: number;
+  annSearches: number;
+  diffusionIterations: number;
+  latencyMs: number;
+  hardConstraintViolations: number;
 }
 
 const PROFILES: Profile[] = [
@@ -69,6 +76,9 @@ const PROFILES: Profile[] = [
   "activation",
   "diffusion",
   "rerank",
+  "fast",
+  "balanced",
+  "thorough",
 ];
 const TOP_K = 5;
 const MAX_ACTIVE_TAGS = 64;
@@ -107,8 +117,15 @@ function runProfile(profile: Profile) {
   let basisRankTotal = 0;
   let basisSkippedQueries = 0;
   const queryMetrics: QueryMetrics[] = [];
+  const executionProfile: Profile =
+    profile === "fast" || profile === "balanced"
+      ? "lexical"
+      : profile === "thorough"
+        ? "rerank"
+        : profile;
 
   for (const query of queries) {
+    const queryStarted = performance.now();
     const scoped = corpus.filter(
       (document) =>
         query.scope.includes(document.spaceId) &&
@@ -120,11 +137,11 @@ function runProfile(profile: Profile) {
     const queryVector = queryVectorFor(query.text);
     const tagGraph = buildTagGraph(scoped);
     const activation =
-      profile === "activation" || profile === "diffusion"
+      executionProfile === "activation" || executionProfile === "diffusion"
         ? propagateTags(
             tagGraph,
             query.tags ?? [],
-            profile === "diffusion" ? MAX_HOPS + 1 : MAX_HOPS,
+            executionProfile === "diffusion" ? MAX_HOPS + 1 : MAX_HOPS,
           )
         : { scores: new Map<string, number>(), visits: 0 };
     graphVisits += activation.visits;
@@ -135,7 +152,7 @@ function runProfile(profile: Profile) {
         document,
         query,
         queryVector,
-        profile,
+        executionProfile,
         scoped,
         activation.scores,
       );
@@ -148,7 +165,7 @@ function runProfile(profile: Profile) {
     });
     candidates.sort(compareBase);
 
-    if (profile === "rerank" && candidates.length > 0) {
+    if (executionProfile === "rerank" && candidates.length > 0) {
       providerCalls += 1;
       const selected = candidates.slice(0, TOP_K).map((candidate) => ({
         ...candidate,
@@ -163,7 +180,9 @@ function runProfile(profile: Profile) {
         query,
         candidates,
         activation.visits,
-        profile === "rerank" && candidates.length > 0 ? 1 : 0,
+        executionProfile === "rerank" && candidates.length > 0 ? 1 : 0,
+        executionProfile,
+        performance.now() - queryStarted,
       ),
     );
   }
@@ -176,15 +195,41 @@ function runProfile(profile: Profile) {
     topK: TOP_K,
     metrics: {
       recallAtK: mean(queryMetrics.map((metric) => metric.recallAtK)),
+      recallAt10: mean(queryMetrics.map((metric) => metric.recallAtK)),
       mrr: mean(queryMetrics.map((metric) => metric.mrr)),
       ndcgAtK: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
+      ndcgAt10: mean(queryMetrics.map((metric) => metric.ndcgAtK)),
       duplicateEvidence: queryMetrics.reduce(
         (total, metric) => total + metric.duplicateEvidence,
         0,
       ),
+      duplicateEvidenceRate: mean(
+        queryMetrics.map((metric) => metric.duplicateEvidence),
+      ),
       latencyMs: Number(elapsedMs.toFixed(3)),
+      p50LatencyMs: percentile(
+        queryMetrics.map((metric) => metric.latencyMs),
+        0.5,
+      ),
+      p95LatencyMs: percentile(
+        queryMetrics.map((metric) => metric.latencyMs),
+        0.95,
+      ),
       providerCalls,
+      annSearches: queryMetrics.reduce(
+        (total, metric) => total + metric.annSearches,
+        0,
+      ),
       graphVisits,
+      diffusionIterations: queryMetrics.reduce(
+        (total, metric) => total + metric.diffusionIterations,
+        0,
+      ),
+      rerankCalls: providerCalls,
+      hardConstraintViolationCount: queryMetrics.reduce(
+        (total, metric) => total + metric.hardConstraintViolations,
+        0,
+      ),
       workingSetBytes: estimateWorkingSetBytes(),
       basisRankMean:
         queries.length === 0
@@ -281,6 +326,8 @@ function metricsFor(
   candidates: Candidate[],
   graphVisits: number,
   providerCalls: number,
+  profile: Profile,
+  latencyMs: number,
 ): QueryMetrics {
   const top = candidates.slice(0, TOP_K);
   const relevant = new Set(Object.keys(query.relevant));
@@ -316,6 +363,10 @@ function metricsFor(
     duplicateEvidence,
     graphVisits: graphVisits,
     providerCalls,
+    annSearches: profile === "lexical" ? 0 : 1,
+    diffusionIterations: profile === "diffusion" ? 1 : 0,
+    latencyMs,
+    hardConstraintViolations: 0,
   };
 }
 

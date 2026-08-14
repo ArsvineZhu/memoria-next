@@ -1,0 +1,5 @@
+{"id":"preserve-tag-only","scenario":"tag-only-associative-recall","text":"Rust systems","scope":["personal"],"tags":["rust"],"profile":"activation"}
+{"id":"preserve-residual","scenario":"semantic-residual-recovery","text":"career Rust systems","scope":["personal"],"tags":["career","rust"],"profile":"tag-basis-residual"}
+{"id":"preserve-multihop","scenario":"multi-hop-tag-association","text":"support graph retrieval","scope":["personal"],"tags":["graph"],"profile":"activation"}
+{"id":"preserve-relation","scenario":"relation-supported-recall","text":"support graph retrieval","scope":["personal"],"tags":["graph"],"relationKinds":["supports"],"profile":"relation"}
+{"id":"preserve-overlap","scenario":"overlapping-resolution-evidence","text":"career Rust systems","scope":["personal"],"profile":"lexical+semantic"}

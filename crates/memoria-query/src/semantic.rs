@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, HashMap};
 use memoria_derived::VectorHit;
 use memoria_types::AuthorityGeneration;
 
+use crate::algorithms::{TagBasisError, TagBasisResult, l2_norm, project_tag_basis_with_limit};
 use crate::compile::CompiledQuery;
 use crate::evidence::{
     CandidateEvidence, CandidateResponse, CandidateTarget, ExactEvidence, HistoryEvidence,
-    PropagationEvidence, RelationEvidence, SemanticEvidence, TagEvidence,
+    PropagationEvidence, RelationEvidence, SemanticChannel, SemanticEvidence, TagEvidence,
 };
 use crate::exact::ExactIndex;
 use crate::model::EntityRef;
@@ -42,6 +43,7 @@ pub struct SemanticCandidate {
     pub purged: bool,
     pub authority_generation: AuthorityGeneration,
     pub valid_until: Option<AuthorityGeneration>,
+    pub channel: SemanticChannel,
 }
 
 impl SemanticCandidate {
@@ -63,13 +65,54 @@ impl SemanticCandidate {
             purged: record.purged,
             authority_generation: record.authority_generation,
             valid_until: record.valid_until,
+            channel: SemanticChannel::Direct,
         }
+    }
+
+    #[must_use]
+    pub fn with_channel(mut self, channel: SemanticChannel) -> Self {
+        self.channel = channel;
+        self
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SemanticCandidateIndex {
     candidates: Vec<SemanticCandidate>,
+}
+
+/// The direct semantic channel is always retained. The residual channel is
+/// an additional query against the same manifest-pinned ANN, never a
+/// replacement for the original query vector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticQueryChannels {
+    pub direct: Vec<f32>,
+    pub residual: Option<Vec<f32>>,
+    pub tag_basis: Option<TagBasisResult>,
+}
+
+pub fn build_semantic_query_channels(
+    query_vector: &[f32],
+    tag_vectors: &[Vec<f32>],
+    tag_basis_limit: usize,
+) -> Result<SemanticQueryChannels, TagBasisError> {
+    if tag_vectors.is_empty() {
+        return Ok(SemanticQueryChannels {
+            direct: query_vector.to_vec(),
+            residual: None,
+            tag_basis: None,
+        });
+    }
+    let basis = project_tag_basis_with_limit(query_vector, tag_vectors, tag_basis_limit)?;
+    let residual = basis
+        .used
+        .then(|| basis.residual.clone())
+        .filter(|vector| l2_norm(vector) > 1.0e-4);
+    Ok(SemanticQueryChannels {
+        direct: query_vector.to_vec(),
+        residual,
+        tag_basis: Some(basis),
+    })
 }
 
 impl SemanticCandidateIndex {
@@ -89,6 +132,16 @@ impl SemanticCandidateIndex {
         exact: &ExactIndex,
         resolution: SemanticResolution,
     ) -> Self {
+        Self::from_vector_hits_with_channel(hits, exact, resolution, SemanticChannel::Direct)
+    }
+
+    #[must_use]
+    pub fn from_vector_hits_with_channel(
+        hits: Vec<VectorHit>,
+        exact: &ExactIndex,
+        resolution: SemanticResolution,
+        channel: SemanticChannel,
+    ) -> Self {
         let candidates = hits
             .into_iter()
             .filter_map(|hit| {
@@ -98,9 +151,9 @@ impl SemanticCandidateIndex {
                     memory_id: membership.memory_id(),
                     revision_id: membership.revision_id(),
                 };
-                exact
-                    .record_for_target(target)
-                    .map(|record| Self::candidate_from_hit(record, hit.score(), resolution))
+                exact.record_for_target(target).map(|record| {
+                    Self::candidate_from_hit(record, hit.score(), resolution).with_channel(channel)
+                })
             })
             .collect();
         Self::new(candidates)
@@ -221,6 +274,7 @@ fn to_evidence(candidates: Vec<SemanticCandidate>) -> Option<CandidateEvidence> 
             .map(|candidate| SemanticEvidence {
                 score: candidate.score,
                 resolution: candidate.resolution,
+                channel: candidate.channel,
             })
             .collect(),
         tags: primary

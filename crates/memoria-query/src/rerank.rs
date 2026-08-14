@@ -5,8 +5,18 @@ use thiserror::Error;
 
 use crate::consolidate::MemoryResult;
 use crate::evidence::CandidateTarget;
+use crate::model::QueryQualityLevel;
 
 pub const MAX_RERANK_CANDIDATES: usize = 64;
+
+#[must_use]
+pub const fn rerank_limit_for_quality(level: QueryQualityLevel) -> usize {
+    match level {
+        QueryQualityLevel::Fast => 16,
+        QueryQualityLevel::Balanced => 32,
+        QueryQualityLevel::Thorough => 64,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RerankView {
@@ -153,16 +163,28 @@ fn to_view(result: &MemoryResult) -> RerankView {
         memory_id: result.memory_id,
         revision_id: result.revision_id,
     };
+    let text = result
+        .matches
+        .first()
+        .map(|item| item.evidence.text.clone())
+        .unwrap_or_default();
     RerankView {
         handle: rerank_handle(target),
         target,
-        text: result
-            .matches
-            .first()
-            .map(|item| item.evidence.text.clone())
-            .unwrap_or_default(),
+        text: provider_safe_rerank_text(&text),
         base_score: result.relevance,
     }
+}
+
+fn provider_safe_rerank_text(text: &str) -> String {
+    if text.contains('<') || text.contains('>') {
+        return text
+            .lines()
+            .filter(|line| !line.contains('<') && !line.contains('>'))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    text.to_owned()
 }
 
 fn validate_unique_handles(views: &[RerankView]) -> Result<(), RerankError> {

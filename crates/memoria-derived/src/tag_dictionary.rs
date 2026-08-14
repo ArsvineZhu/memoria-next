@@ -75,6 +75,36 @@ impl TagDictionary {
         Ok(tag_id)
     }
 
+    pub fn restore(
+        &mut self,
+        tag_id: TagId,
+        normalized_value: impl AsRef<str>,
+    ) -> Result<(), DerivedError> {
+        let normalized_value = normalize_tag(normalized_value.as_ref())?;
+        if TagId::from_normalized(&normalized_value) != tag_id {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "persisted Tag identity does not match normalized value".to_owned(),
+            });
+        }
+        if let Some(existing) = self.by_value.get(&normalized_value)
+            && *existing != tag_id
+        {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "persisted Tag dictionary contains a conflicting value".to_owned(),
+            });
+        }
+        if let Some(existing) = self.by_id.get(&tag_id)
+            && existing != &normalized_value
+        {
+            return Err(DerivedError::InvalidProjectionValue {
+                value: "persisted Tag dictionary contains a conflicting identity".to_owned(),
+            });
+        }
+        self.by_value.insert(normalized_value.clone(), tag_id);
+        self.by_id.insert(tag_id, normalized_value);
+        Ok(())
+    }
+
     #[must_use]
     pub fn resolve(&self, value: &str) -> Option<TagId> {
         normalize_tag(value)

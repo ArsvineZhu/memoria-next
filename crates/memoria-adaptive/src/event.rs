@@ -168,4 +168,7 @@ pub enum AdaptiveError {
 
     #[error("adaptive generation is exhausted")]
     GenerationExhausted,
+
+    #[error("adaptive storage error: {message}")]
+    Storage { message: String },
 }
