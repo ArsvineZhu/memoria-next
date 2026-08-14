@@ -12,12 +12,13 @@ use memoria_authority::{
 };
 use memoria_derived::{
     AnnSegmentEntry, AnnSegmentV1, BaseReadyReport, BuildJobState, DerivedCatalog, DerivedCompiler,
-    EmbeddingNormalization, EnrichmentProjection, EntityObservationBuilder, ExplicitTagBuilder,
-    GeneratedTagArtifact, LexicalArtifactHandle, LexicalDocument, LocalEmbeddingProjectionV1,
-    ManifestId, ProjectionInputHash, ProjectionKind, QueryEmbeddingProjectionV1,
-    SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION, TagDictionary, TagGraph, TagId,
-    TagMembershipInput, TagProvenance, VectorFilter, VectorMembership, VectorPayloadRecord,
-    VectorPayloadV1,
+    EmbeddingBuildIdentity, EmbeddingNormalization, EnrichmentProjection, EntityObservationBuilder,
+    ExplicitTagBuilder, GeneratedTagArtifact, LatestMemoryState, LexicalArtifactHandle,
+    LexicalDocument, LocalEmbeddingProjectionV1, ManifestId, ProjectionInputHash, ProjectionKind,
+    QueryEmbeddingProjectionV1, SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION,
+    SemanticPublicationDecision, TagDictionary, TagGraph, TagId, TagMembershipInput, TagProvenance,
+    VectorFilter, VectorMembership, VectorPayloadRecord, VectorPayloadV1,
+    semantic_publication_target,
 };
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
@@ -693,6 +694,35 @@ impl MemoriaRuntime {
             space_id: record.space_id,
             revision_id: record.head_revision_id,
             generation: result.generation(),
+        })
+    }
+
+    pub fn move_memory(
+        &mut self,
+        memory_id: MemoryId,
+        space_id: SpaceId,
+        document_key: Option<&str>,
+        expected_generation: AuthorityGeneration,
+    ) -> Result<MemoryMutation, RuntimeError> {
+        self.ensure_open()?;
+        let previous_space_id = self.authority.get_memory(memory_id)?.space_id;
+        let result =
+            self.authority
+                .move_memory(memory_id, space_id, document_key, expected_generation)?;
+        let record = result.value();
+        let generation = result.generation();
+        let previous_policy = self.space_provider_policy_at(previous_space_id, generation)?;
+        self.rebuild_base_for_space(previous_space_id, generation, previous_policy);
+        if previous_space_id != record.space_id {
+            let target_policy = self.space_provider_policy_at(record.space_id, generation)?;
+            self.rebuild_base_for_space(record.space_id, generation, target_policy);
+        }
+        self.advance_semantic_build_coverage();
+        Ok(MemoryMutation {
+            memory_id: record.memory_id,
+            space_id: record.space_id,
+            revision_id: record.head_revision_id,
+            generation,
         })
     }
 
@@ -1803,6 +1833,7 @@ impl MemoriaRuntime {
                         &pending.expected_work,
                         projection,
                         &vectors,
+                        pending.job_id.as_deref(),
                     )?;
                     if let Some(count) = self.pending_by_generation.get_mut(&pending.generation) {
                         *count = count.saturating_sub(1);
@@ -2079,6 +2110,7 @@ impl MemoriaRuntime {
         expected_work: &NeedWork,
         projection: &LocalEmbeddingProjectionV1,
         vectors: &[crate::EmbeddingVector],
+        job_id: Option<&str>,
     ) -> Result<(), RuntimeError> {
         let NeedWork::Embeddings(request) = expected_work else {
             return Err(RuntimeError::InvalidProviderResult {
@@ -2087,10 +2119,68 @@ impl MemoriaRuntime {
             });
         };
 
+        let first_vector = vectors
+            .first()
+            .ok_or_else(|| RuntimeError::InvalidProviderResult {
+                work_id: request.work_id.clone(),
+                message: "embedding result contained no vectors".to_owned(),
+            })?;
+        let memory_id = first_vector.key.parse::<MemoryId>()?;
+        let original_memory = self.authority.get_memory_at(memory_id, generation)?;
+        let latest_generation = self.authority_generation()?;
+        let latest_read = match self.authority.read_memory(&self.cas, memory_id) {
+            Ok(read) => read,
+            Err(MemoriaError::NotFound { .. }) => {
+                if let Some(job_id) = job_id {
+                    self.derived.mark_build_job_superseded(job_id)?;
+                }
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let latest_projection = local_embedding_projection(&latest_read.source)?;
+        let decision = semantic_publication_target(
+            &EmbeddingBuildIdentity {
+                authority_generation: generation,
+                memory_id: original_memory.memory_id,
+                revision_id: original_memory.head_revision_id,
+                space_id: original_memory.space_id,
+                projection_input_hash: projection.input_hash().clone(),
+            },
+            &LatestMemoryState {
+                authority_generation: latest_generation,
+                memory_id: latest_read.memory.memory_id,
+                revision_id: latest_read.memory.head_revision_id,
+                space_id: latest_read.memory.space_id,
+                projection_input_hash: latest_projection.input_hash().clone(),
+            },
+        );
+        let (publication_generation, target_memory_id, target_revision_id) = match decision {
+            SemanticPublicationDecision::PublishAt {
+                authority_generation,
+                memory_id,
+                revision_id,
+            } => (authority_generation, memory_id, revision_id),
+            SemanticPublicationDecision::Superseded => {
+                if let Some(job_id) = job_id {
+                    self.derived.mark_build_job_superseded(job_id)?;
+                }
+                return Ok(());
+            }
+        };
+
         let mut persisted = Vec::with_capacity(vectors.len());
         for vector in vectors {
-            let memory_id = vector.key.parse::<MemoryId>()?;
-            let memory = self.authority.get_memory_at(memory_id, generation)?;
+            let vector_memory_id = vector.key.parse::<MemoryId>()?;
+            if vector_memory_id != target_memory_id {
+                return Err(RuntimeError::InvalidProviderResult {
+                    work_id: request.work_id.clone(),
+                    message: format!(
+                        "embedding result key `{}` does not match target memory `{target_memory_id}`",
+                        vector.key
+                    ),
+                });
+            }
             let payload = VectorPayloadV1::new(
                 vector.values.clone(),
                 EmbeddingNormalization::L2,
@@ -2115,7 +2205,7 @@ impl MemoriaRuntime {
                 checksum: *payload_hash.as_bytes(),
                 created_at: 0,
             })?;
-            persisted.push((memory, payload_hash, vector.values.clone()));
+            persisted.push((payload_hash, vector.values.clone()));
         }
 
         let semantic_artifact = self.derived.stage_artifact(
@@ -2124,25 +2214,25 @@ impl MemoriaRuntime {
             generation,
         )?;
         let mut ann_entries = Vec::with_capacity(persisted.len());
-        for (memory, payload_hash, values) in persisted {
+        for (payload_hash, values) in persisted {
             self.derived.insert_vector_membership(
                 semantic_artifact.id(),
-                memory.space_id,
-                memory.memory_id,
-                memory.head_revision_id,
-                format!("memory:{}", memory.memory_id),
+                latest_read.memory.space_id,
+                target_memory_id,
+                target_revision_id,
+                format!("memory:{target_memory_id}"),
                 None,
                 "leaf",
                 payload_hash,
-                generation,
+                publication_generation,
             )?;
             ann_entries.push(AnnSegmentEntry::new(
-                format!("memory:{}", memory.memory_id),
+                format!("memory:{target_memory_id}"),
                 VectorMembership::from_parts(
-                    memory.space_id,
-                    memory.memory_id,
-                    memory.head_revision_id,
-                    generation,
+                    latest_read.memory.space_id,
+                    target_memory_id,
+                    target_revision_id,
+                    publication_generation,
                     *payload_hash.as_bytes(),
                 ),
                 values,
@@ -2174,12 +2264,21 @@ impl MemoriaRuntime {
         self.derived.validate_artifact(semantic_artifact.id())?;
         self.derived.mark_build_job_succeeded(&ann_job.job_id)?;
         if let Some(manifest) = self.derived.serving_manifest()?
-            && manifest.authority_generation() == generation
+            && manifest.authority_generation() >= publication_generation
         {
-            let mut artifact_ids = manifest.artifacts().collect::<Vec<_>>();
-            artifact_ids.push(semantic_artifact.id());
-            self.derived
-                .publish_manifest_at_generation(artifact_ids, generation, Vec::new())?;
+            let mut artifact_ids = manifest.artifacts_with(semantic_artifact.id());
+            artifact_ids.retain(|artifact_id| {
+                *artifact_id == semantic_artifact.id()
+                    || self
+                        .derived
+                        .artifact(*artifact_id)
+                        .is_ok_and(|artifact| artifact.kind() != SEMANTIC_ARTIFACT_KIND)
+            });
+            self.derived.publish_manifest_rebased_at_generation(
+                artifact_ids,
+                manifest.authority_generation(),
+                Vec::new(),
+            )?;
         }
         Ok(())
     }

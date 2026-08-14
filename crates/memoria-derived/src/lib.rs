@@ -27,7 +27,10 @@ pub use catalog::{
     AnnSegmentRecord, DerivedCatalog, LexicalArtifactRecord, TagMembershipRecord,
     VectorMembershipRecord, VectorPayloadRecord,
 };
-pub use compiler::{BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler};
+pub use compiler::{
+    BASE_ARTIFACT_KINDS, BaseReadyReport, DerivedCompiler, EmbeddingBuildIdentity,
+    LatestMemoryState, SemanticPublicationDecision, semantic_publication_target,
+};
 pub use dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 pub use embedding::{
     EmbeddingCacheKey, EmbeddingNormalization, EmbeddingPayloadCache, EmbeddingResult,

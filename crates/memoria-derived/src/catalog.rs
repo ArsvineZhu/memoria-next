@@ -1017,6 +1017,25 @@ impl DerivedCatalog {
         generation: AuthorityGeneration,
         capabilities: Vec<String>,
     ) -> Result<DerivedManifest, DerivedError> {
+        self.publish_manifest_at_generation_internal(artifact_ids, generation, capabilities, false)
+    }
+
+    pub fn publish_manifest_rebased_at_generation(
+        &mut self,
+        artifact_ids: Vec<ArtifactId>,
+        generation: AuthorityGeneration,
+        capabilities: Vec<String>,
+    ) -> Result<DerivedManifest, DerivedError> {
+        self.publish_manifest_at_generation_internal(artifact_ids, generation, capabilities, true)
+    }
+
+    fn publish_manifest_at_generation_internal(
+        &mut self,
+        artifact_ids: Vec<ArtifactId>,
+        generation: AuthorityGeneration,
+        capabilities: Vec<String>,
+        allow_older_semantic_artifact: bool,
+    ) -> Result<DerivedManifest, DerivedError> {
         let transaction = self.begin_immediate_with_retry()?;
         let mut kinds = BTreeSet::new();
         let mut has_compatible_semantic_artifact = false;
@@ -1048,7 +1067,11 @@ impl DerivedCatalog {
                 }
             })?;
             let artifact_generation = AuthorityGeneration::new(artifact_generation);
-            if artifact_generation != generation {
+            let compatible_older_semantic = allow_older_semantic_artifact
+                && kind == "semantic"
+                && version == 1
+                && artifact_generation < generation;
+            if artifact_generation != generation && !compatible_older_semantic {
                 return Err(DerivedError::ArtifactGenerationMismatch {
                     id: *id,
                     expected: generation,

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use memoria_mdx::SemanticDiff;
-use memoria_types::AuthorityGeneration;
+use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 
 use crate::dependency::{InvalidationPlan, ProjectionInputHash, ProjectionKind};
 use crate::enrichment::{ENRICHMENT_PROJECTION_VERSION, EnrichmentProjection};
@@ -21,6 +21,51 @@ pub const BASE_ARTIFACT_KINDS: [&str; 7] = [
     "explicit_tags",
     "lexical",
 ];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmbeddingBuildIdentity {
+    pub authority_generation: AuthorityGeneration,
+    pub memory_id: MemoryId,
+    pub revision_id: RevisionId,
+    pub space_id: SpaceId,
+    pub projection_input_hash: ProjectionInputHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LatestMemoryState {
+    pub authority_generation: AuthorityGeneration,
+    pub memory_id: MemoryId,
+    pub revision_id: RevisionId,
+    pub space_id: SpaceId,
+    pub projection_input_hash: ProjectionInputHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SemanticPublicationDecision {
+    PublishAt {
+        authority_generation: AuthorityGeneration,
+        memory_id: MemoryId,
+        revision_id: RevisionId,
+    },
+    Superseded,
+}
+
+#[must_use]
+pub fn semantic_publication_target(
+    original: &EmbeddingBuildIdentity,
+    latest: &LatestMemoryState,
+) -> SemanticPublicationDecision {
+    if original.memory_id != latest.memory_id
+        || original.projection_input_hash != latest.projection_input_hash
+    {
+        return SemanticPublicationDecision::Superseded;
+    }
+    SemanticPublicationDecision::PublishAt {
+        authority_generation: latest.authority_generation,
+        memory_id: latest.memory_id,
+        revision_id: latest.revision_id,
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BaseReadyReport {

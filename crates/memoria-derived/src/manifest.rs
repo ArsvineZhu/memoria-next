@@ -102,6 +102,15 @@ impl DerivedManifest {
     }
 
     #[must_use]
+    pub fn artifacts_with(&self, artifact_id: ArtifactId) -> Vec<ArtifactId> {
+        let mut artifacts = self.artifacts.clone();
+        if !artifacts.contains(&artifact_id) {
+            artifacts.push(artifact_id);
+        }
+        artifacts
+    }
+
+    #[must_use]
     pub fn capability(&self, name: &str) -> CapabilityStatus {
         CapabilityStatus::new(
             self.capabilities
