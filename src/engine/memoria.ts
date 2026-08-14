@@ -84,6 +84,7 @@ export class Memoria {
     binding: NativeBinding,
     store: NativeStoreHandle,
     providerHost?: ProviderHost,
+    dataDir = "",
   ) {
     this.#binding = binding;
     this.#store = store;
@@ -91,7 +92,7 @@ export class Memoria {
     this.spaces = createSpacesApi(this);
     this.documents = createDocumentsApi(this);
     this.feedback = createFeedbackApi(this);
-    this.admin = createAdminApi(this);
+    this.admin = createAdminApi(this, dataDir);
     if (providerHost) {
       void this.runProviderPump();
     }

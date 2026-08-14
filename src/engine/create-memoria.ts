@@ -44,5 +44,6 @@ export async function createMemoria(
           onDataEgress: createProviderEgressGuard(providerEgressPolicy),
         })
       : undefined,
+    config.dataDir,
   );
 }

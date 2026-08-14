@@ -1,3 +1,4 @@
+mod backup;
 mod discovery;
 mod engine;
 mod privacy;
@@ -6,6 +7,7 @@ mod receipt;
 mod status;
 
 pub use discovery::{EntityObservation, discover_scoped};
+pub use backup::{BackupManifest, inspect_backup};
 pub use engine::{MemoriaRuntime, MemoryMutation, RuntimeError};
 pub use memoria_query::{MemoryQuery, RetrievalResponse};
 pub use privacy::{ProviderCapability, ProviderEgressPolicy};
