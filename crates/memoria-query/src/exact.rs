@@ -253,6 +253,13 @@ fn matches_query(compiled: &CompiledQuery, record: &ExactRecord) -> bool {
         && !record.retired
         && !record.purged
         && visible_at(record, compiled.snapshot.authority_generation)
+        && (query.cue.memories.is_empty()
+            || query.cue.memories.iter().any(|reference| {
+                reference.memory_id == record.target.memory_id
+                    && reference
+                        .revision_id
+                        .is_none_or(|revision_id| revision_id == record.target.revision_id)
+            }))
         && query
             .constraints
             .memories

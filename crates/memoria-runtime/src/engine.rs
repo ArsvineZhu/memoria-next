@@ -11,14 +11,16 @@ use memoria_authority::{
 use memoria_derived::{
     AnnSegmentEntry, AnnSegmentV1, BaseReadyReport, BuildJobState, DerivedCatalog, DerivedCompiler,
     EmbeddingNormalization, EnrichmentProjection, EntityObservationBuilder, ExplicitTagBuilder,
-    GeneratedTagArtifact, LexicalDocument, LocalEmbeddingProjectionV1, ProjectionInputHash,
-    ProjectionKind, QueryEmbeddingProjectionV1, SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION,
-    TagDictionary, VectorFilter, VectorMembership, VectorPayloadRecord, VectorPayloadV1,
+    GeneratedTagArtifact, LexicalArtifactHandle, LexicalDocument, LocalEmbeddingProjectionV1,
+    ManifestId, ProjectionInputHash, ProjectionKind, QueryEmbeddingProjectionV1,
+    SEMANTIC_ARTIFACT_KIND, SEMANTIC_ARTIFACT_VERSION, TagDictionary, VectorFilter,
+    VectorMembership, VectorPayloadRecord, VectorPayloadV1,
 };
 use memoria_mdx::{SemanticDiff, compile_ir};
 use memoria_query::{
-    AdaptiveSnapshotIdentity, ExactIndex, ExactRecord, LexicalCandidate, LexicalCandidateIndex,
-    MemoryQuery, QueryCompiler, QueryError, ReadSession, ReadinessBehavior, RetrievalResponse,
+    AdaptiveSnapshotIdentity, CandidatePool, ExactIndex, ExactRecord, LexicalCandidate,
+    LexicalCandidateIndex, LexicalOperator, MemoryQuery, PhysicalChannel, PhysicalQueryPlanner,
+    QueryCompiler, QueryError, ReadSession, ReadinessBehavior, RetrievalResponse,
     SemanticCandidateIndex, SemanticResolution, assess, build_response, execute_exact,
     execute_lexical, execute_semantic, rank_with_adaptive,
 };
@@ -166,6 +168,7 @@ pub struct MemoriaRuntime {
     authority: AuthorityDb,
     cas: SourceCas,
     derived: DerivedCatalog,
+    lexical_handles: BTreeMap<ManifestId, LexicalArtifactHandle>,
     compiler: DerivedCompiler,
     pending_provider_work: VecDeque<PendingProviderWork>,
     inflight_provider_work: BTreeMap<String, InflightProviderWork>,
@@ -200,6 +203,29 @@ struct InflightProviderWork {
     job_id: Option<String>,
 }
 
+struct ManifestLexicalOperator<'a> {
+    handle: &'a LexicalArtifactHandle,
+    exact: &'a ExactIndex,
+}
+
+impl LexicalOperator for ManifestLexicalOperator<'_> {
+    fn search(
+        &self,
+        query: &str,
+        scope: &[SpaceId],
+        limit: usize,
+    ) -> Result<Vec<LexicalCandidate>, QueryError> {
+        let hits = self.handle.search(query, scope, limit).map_err(|error| {
+            QueryError::OperatorFailure {
+                message: error.to_string(),
+            }
+        })?;
+        Ok(LexicalCandidateIndex::from_derived_hits(hits, self.exact)
+            .candidates()
+            .to_vec())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryMutation {
     pub memory_id: MemoryId,
@@ -232,6 +258,7 @@ impl MemoriaRuntime {
             layout,
             authority,
             derived,
+            lexical_handles: BTreeMap::new(),
             compiler: DerivedCompiler::default(),
             pending_provider_work: VecDeque::new(),
             inflight_provider_work: BTreeMap::new(),
@@ -1029,9 +1056,39 @@ impl MemoriaRuntime {
         let records =
             self.records_for_query(&compiled.query, compiled.snapshot.authority_generation)?;
         let exact = ExactIndex::new(records);
-        let candidates = if compiled.execution.used("semantic") {
-            if let Some(query_vector) = query_vector.as_deref() {
-                let hits = self.semantic_vector_hits(&compiled, query_vector, &exact)?;
+        let plan = PhysicalQueryPlanner::plan(&compiled);
+        let mut pool = CandidatePool::new();
+
+        if plan.channels.contains(&PhysicalChannel::Exact) {
+            pool.insert_response(PhysicalChannel::Exact, execute_exact(&compiled, &exact));
+        }
+
+        if plan.channels.contains(&PhysicalChannel::Lexical) && !exact.records().is_empty() {
+            let lexical_candidates = {
+                let handle = self.lexical_handle(compiled.snapshot.derived_manifest)?;
+                let operator = ManifestLexicalOperator {
+                    handle,
+                    exact: &exact,
+                };
+                operator.search(
+                    &compiled.query.cue.text.join(" "),
+                    &compiled.query.scope.spaces,
+                    compiled.query.budget.max_candidates,
+                )?
+            };
+            pool.insert_response(
+                PhysicalChannel::Lexical,
+                execute_lexical(&compiled, &LexicalCandidateIndex::new(lexical_candidates)),
+            );
+        }
+
+        if plan.channels.contains(&PhysicalChannel::SemanticDirect) {
+            let query_vector = query_vector
+                .as_deref()
+                .ok_or(QueryError::QueryEmbeddingRequired)?;
+            let hits = self.semantic_vector_hits(&compiled, query_vector, &exact)?;
+            pool.insert_response(
+                PhysicalChannel::SemanticDirect,
                 execute_semantic(
                     &compiled,
                     &SemanticCandidateIndex::from_vector_hits(
@@ -1039,29 +1096,11 @@ impl MemoriaRuntime {
                         &exact,
                         SemanticResolution::Leaf,
                     ),
-                )
-                .results
-            } else {
-                Vec::new()
-            }
-        } else if compiled.query.cue.text.is_empty() {
-            execute_exact(&compiled, &exact).results
-        } else {
-            let lexical = exact
-                .records()
-                .iter()
-                .map(|record| LexicalCandidate {
-                    target: record.target,
-                    score: text_score(record, &compiled.query.cue.text),
-                    text: record.text.clone(),
-                    entity_refs: record.entity_refs.clone(),
-                    tags: record.tags.clone(),
-                    current: record.current,
-                    retired: record.retired,
-                })
-                .collect();
-            execute_lexical(&compiled, &LexicalCandidateIndex::new(lexical)).results
-        };
+                ),
+            );
+        }
+
+        let candidates = pool.candidates();
         self.next_retrieval_id = self.next_retrieval_id.saturating_add(1);
         let mut response = build_response(
             format!("RET_{}", self.next_retrieval_id),
@@ -1082,6 +1121,29 @@ impl MemoriaRuntime {
         )?;
         self.receipts.insert(response.retrieval_id.clone(), receipt);
         Ok(response)
+    }
+
+    fn lexical_handle(
+        &mut self,
+        manifest_id: ManifestId,
+    ) -> Result<&LexicalArtifactHandle, RuntimeError> {
+        if !self.lexical_handles.contains_key(&manifest_id) {
+            let record = self.derived.lexical_artifact_for_manifest(manifest_id)?;
+            let handle =
+                LexicalArtifactHandle::open(self.layout.derived_dir().join(record.object_path))?;
+            if *handle.hash().as_bytes() != record.object_hash {
+                return Err(RuntimeError::Derived(
+                    memoria_derived::DerivedError::InvalidProjectionValue {
+                        value: format!("lexical artifact hash mismatch for manifest {manifest_id}"),
+                    },
+                ));
+            }
+            self.lexical_handles.insert(manifest_id, handle);
+        }
+        Ok(self
+            .lexical_handles
+            .get(&manifest_id)
+            .expect("lexical handle was inserted or cached"))
     }
 
     fn semantic_vector_hits(
@@ -2031,17 +2093,6 @@ fn local_embedding_projection(source: &[u8]) -> Result<LocalEmbeddingProjectionV
         &ir,
         "memoria-embedding-v1",
     )?)
-}
-
-fn text_score(record: &ExactRecord, cues: &[String]) -> f32 {
-    cues.iter()
-        .filter(|cue| {
-            record
-                .text
-                .to_ascii_lowercase()
-                .contains(&cue.to_ascii_lowercase())
-        })
-        .count() as f32
 }
 
 fn query_embedding_work(query: &MemoryQuery, space_policy: SpaceProviderPolicy) -> QueryWork {

@@ -61,6 +61,12 @@ pub enum QueryError {
 
     #[error("a Derived Manifest is required to compile this query")]
     DerivedSnapshotUnavailable,
+
+    #[error("query operator failed: {message}")]
+    OperatorFailure { message: String },
+
+    #[error("semantic execution requires a query embedding")]
+    QueryEmbeddingRequired,
 }
 
 pub(crate) fn validate_query(query: &MemoryQuery) -> Result<(), QueryError> {

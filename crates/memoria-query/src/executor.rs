@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 
 use crate::compile::CompiledQuery;
-use crate::evidence::CandidateEvidence;
+use crate::evidence::{CandidateEvidence, CandidateResponse};
 use crate::model::{QueryConstraints, QueryScope};
 use crate::planner::{CapabilityPlanner, RetrievalProfile};
 use crate::snapshot::{AdaptiveSnapshotIdentity, QuerySnapshot};
@@ -111,6 +111,30 @@ impl CandidatePool {
         if !ranks.contains(&key) {
             ranks.push(key);
         }
+    }
+
+    pub fn insert_channel(
+        &mut self,
+        channel: PhysicalChannel,
+        candidates: impl IntoIterator<Item = CandidateEvidence>,
+    ) {
+        for evidence in candidates {
+            let target = evidence.target;
+            self.insert(
+                channel,
+                CandidateKey::new(target.space_id, target.memory_id, target.revision_id, None),
+                evidence,
+            );
+        }
+    }
+
+    pub fn insert_response(&mut self, channel: PhysicalChannel, response: CandidateResponse) {
+        self.insert_channel(channel, response.results);
+    }
+
+    #[must_use]
+    pub fn candidates(&self) -> Vec<CandidateEvidence> {
+        self.by_key.values().cloned().collect()
     }
 
     #[must_use]
