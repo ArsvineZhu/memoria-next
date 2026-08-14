@@ -1,0 +1,81 @@
+# Algorithms and projection boundaries
+
+## Restricted MDX and canonical IR
+
+The MDX crate parses Markdown syntax and a closed semantic profile. Its
+semantic lexer is protected from code spans/fenced code, rejects unsupported
+runtime constructs, validates attributes and references, and emits a
+canonical `MemoryIr` with a `SemanticHash` and source mappings. Canonical IR is
+Derived from Authority source; raw MDX is not sent directly to providers.
+
+Typed patch operations preserve source while changing a bounded semantic
+target. Transition, correction, supersession, and merge are explicit revision
+intents rather than facts inferred from graph similarity.
+
+## Semantic diff and invalidation
+
+`SemanticDiff` classifies changes into dependency categories such as visible
+text, hierarchy, entity binding/surface, explicit Tag, temporal assertion,
+relation, Memory reference, source metadata, extension, and semantic-node
+lifecycle. Projection input hashes include projection kind, version, producer
+signature, and canonical bytes.
+
+The dependency graph keeps invalidation local:
+
+- formatting-only changes do not alter semantic projections;
+- visible text reaches lexical and content/context embedding projections;
+- hierarchy reaches structural dependents;
+- explicit Tags reach the explicit-Tag and graph paths without requiring a
+  content embedding;
+- temporal edits reach temporal artifacts;
+- relation edits reach relation artifacts;
+- source metadata and lifecycle changes remain in their own structural
+  dependency path.
+
+The release incremental harness records these rules as provider-call
+assertions; see [TESTING.md](TESTING.md) when running it.
+
+## Derived artifacts
+
+The Derived compiler can build structural, temporal, relation, entity
+observation, explicit-Tag, lexical, local/context embedding, generated-Tag,
+Tag-graph, and rerank-view artifacts. Artifacts have lifecycle state and must
+be validated before entering an immutable manifest.
+
+Generated Tags are produced by an enrichment provider from a deterministic
+projection. They carry `Generated` provenance, are stored only in Derived, and
+cannot change source bytes, `SemanticHash`, or Authority.
+
+Tag dictionaries normalize global Tag identities. Space-local memberships and
+Tag association evidence remain scoped; association is retrieval evidence, not
+causal or authorization authority.
+
+## Query channels
+
+The structured query compiler separates scope, hard constraints, exact
+references, soft cues, readiness behavior, and optional capability requests.
+Candidate channels include:
+
+- exact Memory/Entity/Tag/reference evidence;
+- lexical text evidence;
+- structural and temporal evidence;
+- explicit relations and bounded relation expansion;
+- semantic vectors and optional context vectors;
+- explicit/generated Tag and Tag-basis residual evidence;
+- bounded activation/diffusion graph evidence;
+- optional provider reranking.
+
+Scope filtering and hard constraints happen before fusion or reranking. Result
+consolidation keeps one Memory result with evidence handles rather than
+duplicating the same underlying evidence. The balanced release default is the
+provider-free lexical profile; advanced operators remain explicit until a
+broader corpus and measured budgets justify a default change. See
+[ADR 0002](decisions/0002-retrieval-defaults.md).
+
+## Adaptive V1
+
+Adaptive state is replayed from explicit feedback events keyed by Space and
+Memory, with revision evidence retained separately. The prior has a fixed
+maximum influence and is applied only as a bounded tie-breaker over admissible
+base candidates. Accessibility decays at read time; it is not an exclusion
+filter. See [ADR 0003](decisions/0003-adaptive-v1.md).

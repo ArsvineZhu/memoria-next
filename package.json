@@ -39,7 +39,8 @@
     "test": "corepack pnpm test:rust && corepack pnpm test:ts",
     "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
     "verify:public": "corepack pnpm typecheck:public",
-    "verify:pack": "node scripts/verify-packed-consumer.mjs"
+    "verify:pack": "node scripts/verify-packed-consumer.mjs",
+    "verify:docs": "node scripts/verify-docs.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
