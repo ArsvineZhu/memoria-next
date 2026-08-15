@@ -34,7 +34,8 @@ pub use algorithms::{
 };
 pub use assessment::{RecallAssessment, RetrievalCost, assess, effort_from_cost};
 pub use association::{
-    AssociationEdge, AssociationError, AssociationGraph, AssociationView, MAX_ASSOCIATION_EDGES,
+    AssociationEdge, AssociationError, AssociationGraph, AssociationGraphView, AssociationView,
+    MAX_ASSOCIATION_EDGES,
 };
 pub use compile::{CompiledQuery, QueryCompiler};
 pub use consolidate::{

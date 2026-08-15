@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use memoria_derived::TagId;
 use thiserror::Error;
 
-use crate::association::AssociationGraph;
+use crate::association::AssociationGraphView;
 use crate::{TagSeed, TagSeedProvenance};
 
 const HOP_DECAY: f32 = 0.5;
@@ -53,7 +53,7 @@ struct FrontierItem {
 }
 
 pub fn activation_propagate(
-    graph: &AssociationGraph,
+    graph: &AssociationGraphView,
     seeds: &[TagSeed],
     budget: PropagationBudget,
 ) -> Result<PropagationTrace, PropagationError> {

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::TagSeed;
 use crate::algorithms::activation::{PropagatedTag, PropagationBudget, PropagationError};
-use crate::association::AssociationGraph;
+use crate::association::AssociationGraphView;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiffusionTrace {
@@ -20,7 +20,7 @@ pub struct DiffusionTrace {
 /// distributes mass over normalized outgoing positive edge signals and
 /// restarts from the original seed distribution.
 pub fn diffusion_propagate(
-    graph: &AssociationGraph,
+    graph: &AssociationGraphView,
     seeds: &[TagSeed],
     budget: PropagationBudget,
 ) -> Result<DiffusionTrace, PropagationError> {
