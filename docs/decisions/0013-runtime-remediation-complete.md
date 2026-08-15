@@ -6,11 +6,12 @@ Accepted — production serving integration complete on the executed Windows
 matrix. Linux and macOS remain open under platform disposition, and GitHub
 Actions remain disabled by design.
 
-Local gate status: PASS on the reproducible Windows matrix (Rust workspace
-executed with one test thread; TypeScript suite 100/100).
+Local gate status: PASS on the Windows matrix. The latest exact aggregate
+`cargo test --workspace` and `corepack pnpm test` commands passed; the
+TypeScript suite reported 100/100.
 
 - Baseline reviewed commit: `605bdbb4860778051c0f6c1218044db89de46e38`
-- Completion evidence commit: `9f4240873d562ea781358396f91056ed2fb72901`
+- Completion evidence commit: `0894862b309c31d1c8d077090807efaae1aa762d`
 - Validation record: [runtime retrieval validation](../reports/runtime-retrieval-validation.md)
 
 ## Decision
@@ -125,7 +126,8 @@ profile decision, not a claim that the algorithms are absent or incorrect.
 - Benchmark result files are ignored machine artifacts. Their exact paths and
   SHA-256 values are recorded for this validation run, but they are not
   committed as package data.
-- The default parallel Rust workspace wrapper can encounter transient Windows
-  OS error 33 while temporary Derived/Tantivy files are created or removed;
-  the serialized workspace gate passes and the failure is not a serving
+- An earlier default parallel Rust workspace run encountered transient Windows
+  OS error 33 while temporary Derived/Tantivy files were created or removed;
+  the latest exact default rerun passed. The serialized workspace gate remains
+  a reproducible fallback, and the transient file-lock event is not a serving
   assertion or product error.

@@ -20,14 +20,18 @@ system has passed. GitHub Actions are intentionally disabled for this line.
 ## Local verification gates
 
 The following checks passed on 2026-08-14 from the runtime evidence commit
-`9f4240873d562ea781358396f91056ed2fb72901`:
+`0894862b309c31d1c8d077090807efaae1aa762d`; the exact aggregate Rust and
+TypeScript commands were rerun successfully at the current documentation
+HEAD:
 
 - [x] `cargo fmt --all -- --check`
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo test --workspace`
 - [x] `cargo test --workspace -- --test-threads=1`
 - [x] `corepack pnpm format:check`
 - [x] `corepack pnpm lint`
 - [x] `corepack pnpm typecheck`
+- [x] `corepack pnpm test` — exact aggregate command passed; Rust and 100 TypeScript tests passed.
 - [x] `corepack pnpm test:ts` — 100 TypeScript tests passed after the Rust suite.
 - [x] `corepack pnpm verify:docs`
 - [x] `corepack pnpm verify:public`
@@ -35,6 +39,8 @@ The following checks passed on 2026-08-14 from the runtime evidence commit
 - [x] `corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile fast`
 - [x] `corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced`
 - [x] `corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile thorough`
+- [x] `corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced --ablation all`
+- [x] `corepack pnpm exec tsx benchmarks/retrieval/run.ts --evaluate-acceptance`
 - [x] `corepack pnpm exec tsx benchmarks/incremental/run.ts`
 - [x] `corepack pnpm exec tsx benchmarks/adaptive/replay.ts --adaptive=on`
 
@@ -46,11 +52,11 @@ behavior, not production-scale latency claims. The acceptance runner kept the
 provider-free lexical profile as the Balanced default and retained advanced
 operators as explicit capabilities.
 
-The default parallel `cargo test --workspace` wrapper was also attempted, but
-this Windows workstation intermittently returned OS error 33 while temporary
-Derived/Tantivy files were being created or removed. The full Rust workspace
-passed with one test thread; this is an environment-specific test execution
-note, not a serving assertion failure.
+An earlier default parallel `cargo test --workspace` run on this Windows
+workstation intermittently returned OS error 33 while temporary Derived/Tantivy
+files were being created or removed. The latest exact `cargo test --workspace`
+and `corepack pnpm test` reruns passed; the serialized Rust command remains an
+environment-specific reproducible fallback, not a serving assertion failure.
 
 The incremental harness recorded two embedding, 16 enrichment, and zero
 rerank calls. Formatting/comment-only, EntityRef-only, explicit-Tag-only,

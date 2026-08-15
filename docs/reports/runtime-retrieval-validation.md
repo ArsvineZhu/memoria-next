@@ -6,7 +6,7 @@ Local gate status: PASS.
 - Platform: Windows `win32/x64-msvc`
 - Node: `v24.19.0`
 - Reviewed baseline: `605bdbb4860778051c0f6c1218044db89de46e38`
-- Runtime evidence commit: `9f4240873d562ea781358396f91056ed2fb72901`
+- Runtime evidence commit: `0894862b309c31d1c8d077090807efaae1aa762d`
 
 This record is the release evidence for ADR 0013. The retrieval benchmark
 creates a temporary real Store, writes through Authority, waits for Derived
@@ -20,11 +20,13 @@ The following local commands passed:
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
 cargo test --workspace -- --test-threads=1
 
 corepack pnpm format:check
 corepack pnpm lint
 corepack pnpm typecheck
+corepack pnpm test
 corepack pnpm test:ts
 corepack pnpm verify:docs
 corepack pnpm verify:public
@@ -41,11 +43,13 @@ The TypeScript suite completed with 100 passing tests. The incremental
 invalidation/cost gate passed with 2 embedding calls, 16 enrichment calls, and
 0 rerank calls.
 
-The default parallel `cargo test --workspace` wrapper was also attempted. On
-this Windows workstation it intermittently hit transient OS error 33 while
-creating or removing temporary Derived/Tantivy files; the affected assertions
-were otherwise passing serving tests. The full Rust workspace passed with one
-test thread, which is the reproducible matrix recorded above.
+A final rerun for the runtime evidence source state passed both exact aggregate
+commands: `cargo test --workspace` and `corepack pnpm test`. An earlier default
+parallel run on this Windows workstation intermittently hit transient OS error
+33 while creating or removing temporary Derived/Tantivy files; the affected
+assertions were otherwise passing serving tests. The serialized Rust command
+is retained as a reproducible fallback, but the latest exact default command
+also passed.
 
 ## Runtime benchmark artifacts
 
@@ -55,17 +59,17 @@ machine-specific output to the repository.
 
 | Profile  | JSON artifact                                                        | SHA-256                                                            |
 | -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| fast     | `benchmarks/retrieval/results/2026-08-15T00-17-57-663Z-9f42408.json` | `30DF5979742F41AEDB8DD5254068ACD71F92D03AF2DDFC523DB4315ABF03650A` |
-| balanced | `benchmarks/retrieval/results/2026-08-15T00-18-04-907Z-9f42408.json` | `F3E0A5F745DA319AA86DC09BF699ADCA87F9CE3F47F9209072154A81718BBD4E` |
-| thorough | `benchmarks/retrieval/results/2026-08-15T00-18-11-682Z-9f42408.json` | `4C737243363EAFCAF4AF9620E3C81A5A7BAC37FAD14E41D6C3B986BC3C5E603B` |
+| fast     | `benchmarks/retrieval/results/2026-08-15T00-56-00-360Z-0894862.json` | `7CBCF4FA09D7963525B5FB237F38A2BECCBF50698BCF06F5F0C909862CE7D48A` |
+| balanced | `benchmarks/retrieval/results/2026-08-15T00-56-13-302Z-0894862.json` | `451A00CF99341FABFD1AB7C3A0185CC7284CC18A00FDF1B33637305857AE2803` |
+| thorough | `benchmarks/retrieval/results/2026-08-15T00-56-17-557Z-0894862.json` | `BC2049E2A6DE224037B52DB2ACBB2082B0766978BD5D2F7FCC469234DBBADFA2` |
 
 The matching Markdown reports are generated beside each JSON artifact.
 
 | Profile  | Recall@10 |    MRR | nDCG@10 | P95 ms | Hard violations | Embedding | Rerank | Enrichment | Adaptive |
 | -------- | --------: | -----: | ------: | -----: | --------------: | --------: | -----: | ---------: | -------: |
-| fast     |    0.4583 | 0.5000 |  0.4427 |  9.436 |               0 |         0 |      0 |          0 |        0 |
-| balanced |    0.4583 | 0.4375 |  0.3932 |  8.891 |               0 |         0 |      0 |          0 |        0 |
-| thorough |    1.0000 | 0.5458 |  0.5865 | 49.651 |               0 |         8 |      8 |          0 |        0 |
+| fast     |    0.4583 | 0.4000 |  0.3904 |  9.222 |               0 |         0 |      0 |          0 |        0 |
+| balanced |    0.4583 | 0.4375 |  0.3966 | 11.321 |               0 |         0 |      0 |          0 |        0 |
+| thorough |    1.0000 | 0.6637 |  0.5684 | 51.518 |               0 |         8 |      8 |          0 |        0 |
 
 The Thorough trace observed lexical, semantic-direct, semantic-residual,
 Tag readout, Activation, Diffusion, Relation, fusion/consolidation, and real
@@ -80,15 +84,15 @@ corepack pnpm exec tsx benchmarks/retrieval/run.ts --evaluate-acceptance
 
 Acceptance compares the same eight-query fixture set for baseline and
 candidate profiles. The baseline was provider-free Balanced lexical:
-Recall@10 0.4583, nDCG@10 0.3810, P95 9.886 ms, and zero provider calls.
+Recall@10 0.4583, nDCG@10 0.3461, P95 9.984 ms, and zero provider calls.
 
 | Candidate          | Target recall delta | nDCG delta | P95 increase | Decision                      |
 | ------------------ | ------------------: | ---------: | -----------: | ----------------------------- |
-| lexical+semantic   |             +1.0000 |    +0.5193 |     +426.09% | not promoted: latency         |
-| tag-basis-residual |             +1.0000 |    +0.3643 |     +469.97% | not promoted: latency         |
-| activation         |             +0.0000 |    +0.2363 |     +218.14% | not promoted: recall, latency |
-| diffusion          |             +0.0000 |    +0.1714 |     +297.77% | not promoted: recall, latency |
-| rerank             |             +0.0000 |    +0.0279 |       -5.75% | not promoted: recall          |
+| lexical+semantic   |             +1.0000 |    +0.3177 |     +525.50% | not promoted: latency         |
+| tag-basis-residual |             +1.0000 |    +0.4507 |     +457.65% | not promoted: latency         |
+| activation         |             +0.0000 |    +0.2497 |     +149.08% | not promoted: recall, latency |
+| diffusion          |             +0.0000 |    +0.2930 |     +211.31% | not promoted: recall, latency |
+| rerank             |             +0.0000 |    -0.0160 |       +2.18% | not promoted: recall, nDCG    |
 
 All candidates had zero hard-constraint violations and no unrequested provider
 calls. The machine decision is therefore `balancedDefaultProfiles: ["lexical"]`;
