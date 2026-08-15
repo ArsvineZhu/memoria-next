@@ -1,5 +1,5 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use memoria_adaptive::AdaptiveReadSnapshot;
@@ -11,8 +11,8 @@ use memoria_types::MemoryId;
 
 use crate::privacy::ProviderRoute;
 use crate::provider::{EmbeddingBatchRequest, NeedWork, RerankBatchRequest};
+use moka::sync::Cache;
 
-pub const QUERY_OPERATION_TTL: Duration = Duration::from_secs(5 * 60);
 pub const READINESS_RETRY_AFTER_MS: u32 = 25;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,18 +127,16 @@ pub struct QueryOperation {
     pub(crate) rerank_scores: Option<Vec<RerankScore>>,
     pub(crate) trace: Option<QueryOperatorTrace>,
     pub(crate) adaptive_snapshot: Option<AdaptiveReadSnapshot>,
-    pub(crate) created_at: Instant,
-    pub(crate) expires_at: Instant,
     pub(crate) readiness_deadline: Option<Instant>,
     pub(crate) deadline_unix_ms: Option<u64>,
     pub(crate) cancelled: bool,
+    pub(crate) expired_for_test: bool,
 }
 
 impl QueryOperation {
     #[must_use]
-    pub fn is_expired(&self, now: Instant) -> bool {
-        now >= self.expires_at
-            || now.saturating_duration_since(self.created_at) >= QUERY_OPERATION_TTL
+    pub fn is_expired(&self, _now: Instant) -> bool {
+        self.expired_for_test
     }
 
     fn apply_state(&mut self, state: QueryOperationState) {
@@ -152,12 +150,26 @@ impl QueryOperation {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct QueryOperationTable {
-    operations: RefCell<BTreeMap<String, QueryOperation>>,
+    operations: Cache<String, Arc<Mutex<QueryOperation>>>,
+    expired_for_test: Mutex<HashSet<String>>,
+}
+
+impl Default for QueryOperationTable {
+    fn default() -> Self {
+        Self::from_cache(crate::cache::RuntimeCaches::new().query_operation_cache())
+    }
 }
 
 impl QueryOperationTable {
+    pub(crate) fn from_cache(operations: Cache<String, Arc<Mutex<QueryOperation>>>) -> Self {
+        Self {
+            operations,
+            expired_for_test: Mutex::new(HashSet::new()),
+        }
+    }
+
     pub fn insert_provider(
         &self,
         query: MemoryQuery,
@@ -165,79 +177,67 @@ impl QueryOperationTable {
         work: QueryWork,
         payload: QueryOperationPayload,
     ) -> String {
-        let now = Instant::now();
-        let mut operations = self.operations.borrow_mut();
-        loop {
-            let operation_id = MemoryId::new().to_string();
-            if !operations.contains_key(&operation_id) {
-                let mut operation = QueryOperation {
-                    query,
-                    compiled: Some(compiled),
-                    plan: None,
-                    stage: match &work {
-                        QueryWork::Embedding(_) => QueryOperationStage::WaitingForQueryEmbedding,
-                        QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
-                    },
-                    work: Some(work),
-                    pending_response: payload.pending_response,
-                    query_vector: None,
-                    tag_basis: None,
-                    candidate_pool: CandidatePool::default(),
-                    fused_candidates: Vec::new(),
-                    consolidated: Vec::new(),
-                    rerank_batch: payload.rerank_batch,
-                    rerank_scores: None,
-                    trace: None,
-                    adaptive_snapshot: payload.adaptive_snapshot,
-                    created_at: now,
-                    expires_at: now + QUERY_OPERATION_TTL,
-                    readiness_deadline: None,
-                    deadline_unix_ms: None,
-                    cancelled: false,
-                };
-                operation.apply_state(payload.state);
-                operations.insert(operation_id.clone(), operation);
-                return operation_id;
-            }
-        }
+        let operation_id = MemoryId::new().to_string();
+        let mut operation = QueryOperation {
+            query,
+            compiled: Some(compiled),
+            plan: None,
+            stage: match &work {
+                QueryWork::Embedding(_) => QueryOperationStage::WaitingForQueryEmbedding,
+                QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
+            },
+            work: Some(work),
+            pending_response: payload.pending_response,
+            query_vector: None,
+            tag_basis: None,
+            candidate_pool: CandidatePool::default(),
+            fused_candidates: Vec::new(),
+            consolidated: Vec::new(),
+            rerank_batch: payload.rerank_batch,
+            rerank_scores: None,
+            trace: None,
+            adaptive_snapshot: payload.adaptive_snapshot,
+            readiness_deadline: None,
+            deadline_unix_ms: None,
+            cancelled: false,
+            expired_for_test: false,
+        };
+        operation.apply_state(payload.state);
+        self.operations
+            .insert(operation_id.clone(), Arc::new(Mutex::new(operation)));
+        operation_id
     }
 
     pub fn insert_readiness(&self, query: MemoryQuery, timeout: Duration) -> String {
         let now = Instant::now();
         let deadline = now + timeout;
         let deadline_unix_ms = unix_millis_after(timeout);
-        let mut operations = self.operations.borrow_mut();
-        loop {
-            let operation_id = MemoryId::new().to_string();
-            if !operations.contains_key(&operation_id) {
-                operations.insert(
-                    operation_id.clone(),
-                    QueryOperation {
-                        query,
-                        compiled: None,
-                        plan: None,
-                        stage: QueryOperationStage::WaitingForCapabilities,
-                        work: None,
-                        pending_response: None,
-                        query_vector: None,
-                        tag_basis: None,
-                        candidate_pool: CandidatePool::default(),
-                        fused_candidates: Vec::new(),
-                        consolidated: Vec::new(),
-                        rerank_batch: None,
-                        rerank_scores: None,
-                        trace: None,
-                        adaptive_snapshot: None,
-                        created_at: now,
-                        expires_at: now + QUERY_OPERATION_TTL,
-                        readiness_deadline: Some(deadline),
-                        deadline_unix_ms: Some(deadline_unix_ms),
-                        cancelled: false,
-                    },
-                );
-                return operation_id;
-            }
-        }
+        let operation_id = MemoryId::new().to_string();
+        self.operations.insert(
+            operation_id.clone(),
+            Arc::new(Mutex::new(QueryOperation {
+                query,
+                compiled: None,
+                plan: None,
+                stage: QueryOperationStage::WaitingForCapabilities,
+                work: None,
+                pending_response: None,
+                query_vector: None,
+                tag_basis: None,
+                candidate_pool: CandidatePool::default(),
+                fused_candidates: Vec::new(),
+                consolidated: Vec::new(),
+                rerank_batch: None,
+                rerank_scores: None,
+                trace: None,
+                adaptive_snapshot: None,
+                readiness_deadline: Some(deadline),
+                deadline_unix_ms: Some(deadline_unix_ms),
+                cancelled: false,
+                expired_for_test: false,
+            })),
+        );
+        operation_id
     }
 
     pub fn replace_provider(
@@ -247,10 +247,13 @@ impl QueryOperationTable {
         work: QueryWork,
         payload: QueryOperationPayload,
     ) {
-        let mut operations = self.operations.borrow_mut();
-        let operation = operations
-            .get_mut(operation_id)
+        let operation = self
+            .operations
+            .get(operation_id)
             .expect("query continuation operation must exist");
+        let mut operation = operation
+            .lock()
+            .expect("query operation mutex must not be poisoned");
         operation.query = compiled.query.clone();
         operation.compiled = Some(compiled);
         operation.stage = match &work {
@@ -268,7 +271,11 @@ impl QueryOperationTable {
     }
 
     pub fn readiness_step(&self, operation_id: &str) -> Option<QueryStep> {
-        let operation = self.operations.borrow().get(operation_id)?.clone();
+        let operation = self.operations.get(operation_id)?;
+        let operation = operation
+            .lock()
+            .expect("query operation mutex must not be poisoned")
+            .clone();
         if operation.stage != QueryOperationStage::WaitingForCapabilities {
             return None;
         }
@@ -280,36 +287,66 @@ impl QueryOperationTable {
     }
 
     pub fn get(&self, operation_id: &str) -> Option<QueryOperation> {
-        self.operations.borrow().get(operation_id).cloned()
+        self.operations.get(operation_id).map(|operation| {
+            operation
+                .lock()
+                .expect("query operation mutex must not be poisoned")
+                .clone()
+        })
     }
 
     pub fn remove(&self, operation_id: &str) -> Option<QueryOperation> {
-        self.operations.borrow_mut().remove(operation_id)
+        let operation = self.operations.get(operation_id)?;
+        let operation = operation
+            .lock()
+            .expect("query operation mutex must not be poisoned")
+            .clone();
+        self.operations.invalidate(operation_id);
+        self.operations.run_pending_tasks();
+        Some(operation)
     }
 
     pub fn replace(&self, operation_id: String, operation: QueryOperation) {
-        self.operations.borrow_mut().insert(operation_id, operation);
+        self.operations
+            .insert(operation_id, Arc::new(Mutex::new(operation)));
     }
 
     pub fn cancel(&self, operation_id: &str) -> bool {
-        if let Some(operation) = self.operations.borrow_mut().get_mut(operation_id) {
-            operation.cancelled = true;
+        if let Some(operation) = self.operations.get(operation_id) {
+            operation
+                .lock()
+                .expect("query operation mutex must not be poisoned")
+                .cancelled = true;
             true
         } else {
             false
         }
     }
 
-    pub fn cleanup(&self, now: Instant) {
-        self.operations
-            .borrow_mut()
-            .retain(|_, operation| !operation.is_expired(now));
+    pub fn expire_for_test(&self, operation_id: &str) {
+        self.expired_for_test
+            .lock()
+            .expect("query operation test mutex must not be poisoned")
+            .insert(operation_id.to_owned());
+        if let Some(operation) = self.operations.get(operation_id) {
+            operation
+                .lock()
+                .expect("query operation mutex must not be poisoned")
+                .expired_for_test = true;
+        }
     }
 
-    pub fn expire_for_test(&self, operation_id: &str) {
-        if let Some(operation) = self.operations.borrow_mut().get_mut(operation_id) {
-            operation.expires_at = Instant::now() - Duration::from_secs(1);
+    pub fn purge_expired_for_test(&self) {
+        let operation_ids = std::mem::take(
+            &mut *self
+                .expired_for_test
+                .lock()
+                .expect("query operation test mutex must not be poisoned"),
+        );
+        for operation_id in operation_ids {
+            self.operations.invalidate(&operation_id);
         }
+        self.operations.run_pending_tasks();
     }
 }
 

@@ -37,6 +37,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::backup;
+use crate::cache::RuntimeCaches;
 use crate::limits::{ResourceLimits, check_source_bytes};
 use crate::privacy::{
     ProviderCapability, ProviderEgressPolicy, ProviderRouteConfig, ProviderRouteDecision,
@@ -194,6 +195,7 @@ pub struct MemoriaRuntime {
     pending_provider_work: VecDeque<PendingProviderWork>,
     inflight_provider_work: BTreeMap<String, InflightProviderWork>,
     pending_by_generation: BTreeMap<AuthorityGeneration, usize>,
+    runtime_caches: RuntimeCaches,
     query_operations: QueryOperationTable,
     semantic_build_coverage: AuthorityGeneration,
     tag_dictionary: TagDictionary,
@@ -337,6 +339,9 @@ impl MemoriaRuntime {
         })?;
         let derived = DerivedCatalog::open(layout.derived_dir().join("catalog.sqlite"))?;
         let adaptive_database = layout.adaptive_dir().join("adaptive.sqlite");
+        let runtime_caches = RuntimeCaches::new();
+        let query_operations =
+            QueryOperationTable::from_cache(runtime_caches.query_operation_cache());
         let mut runtime = Self {
             _writer_lock: writer_lock,
             cas: SourceCas::new(&layout),
@@ -348,7 +353,8 @@ impl MemoriaRuntime {
             pending_provider_work: VecDeque::new(),
             inflight_provider_work: BTreeMap::new(),
             pending_by_generation: BTreeMap::new(),
-            query_operations: QueryOperationTable::default(),
+            runtime_caches,
+            query_operations,
             semantic_build_coverage: AuthorityGeneration::initial(),
             tag_dictionary: TagDictionary::new(),
             generated_tag_artifacts: BTreeMap::new(),
@@ -371,7 +377,7 @@ impl MemoriaRuntime {
 
     pub fn close(&mut self) -> Result<(), RuntimeError> {
         self.closed = true;
-        self.query_operations = QueryOperationTable::default();
+        self.runtime_caches.clear();
         Ok(())
     }
 
@@ -808,7 +814,6 @@ impl MemoriaRuntime {
             scope_count = query.scope.spaces.len(),
         )
         .entered();
-        self.query_operations.cleanup(std::time::Instant::now());
         query.validate()?;
 
         let compiled = match self.compile_query(query.clone()) {
@@ -1128,7 +1133,6 @@ impl MemoriaRuntime {
         };
         if operation.is_expired(now) {
             self.query_operations.remove(operation_id);
-            self.query_operations.cleanup(now);
             return Err(RuntimeError::QueryOperationExpired {
                 operation_id: operation_id.to_owned(),
             });
@@ -1209,7 +1213,6 @@ impl MemoriaRuntime {
                             .degraded_capabilities
                             .push(capability.to_owned());
                     }
-                    self.query_operations.cleanup(now);
                     return Ok(QueryStep::Complete(
                         self.execute_compiled_query(fallback, None)?,
                     ));
@@ -1266,7 +1269,6 @@ impl MemoriaRuntime {
                 operation.adaptive_snapshot.as_ref(),
             )?;
             self.query_operations.remove(operation_id);
-            self.query_operations.cleanup(now);
             return Ok(QueryStep::Complete(finalized));
         }
 
@@ -1298,7 +1300,6 @@ impl MemoriaRuntime {
         }
 
         self.query_operations.remove(operation_id);
-        self.query_operations.cleanup(now);
         Ok(QueryStep::Complete(self.finalize_query_response(
             &compiled,
             stage.response,
@@ -1308,7 +1309,6 @@ impl MemoriaRuntime {
 
     pub fn cancel_operation(&mut self, operation_id: &str) -> Result<(), RuntimeError> {
         self.ensure_open()?;
-        self.query_operations.cleanup(std::time::Instant::now());
         if self.query_operations.cancel(operation_id) {
             Ok(())
         } else {
@@ -1857,7 +1857,7 @@ impl MemoriaRuntime {
 
     #[must_use]
     pub fn status(&self) -> RuntimeStatus {
-        self.query_operations.cleanup(std::time::Instant::now());
+        self.query_operations.purge_expired_for_test();
         let authority_generation = self
             .authority
             .current_generation()

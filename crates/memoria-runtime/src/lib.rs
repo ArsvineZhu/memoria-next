@@ -1,4 +1,5 @@
 mod backup;
+mod cache;
 mod diagnostics;
 mod discovery;
 mod engine;
@@ -12,6 +13,7 @@ mod status;
 mod transfer;
 
 pub use backup::{BackupError, BackupManifest, create_backup, inspect_backup, restore_backup};
+pub use cache::{AssociationCacheKey, QueryEmbeddingCacheKey, RuntimeCaches};
 pub use diagnostics::{RedactedDiagnostic, redact_text};
 pub use discovery::{EntityObservation, discover_scoped};
 pub use engine::{MemoriaRuntime, MemoryMutation, RuntimeError};
