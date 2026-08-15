@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+atomic-write-file = "=0.3.0"
 fs2 = "0.4.3"
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
