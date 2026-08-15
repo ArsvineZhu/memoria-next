@@ -7,6 +7,7 @@ use std::{
 
 use memoria_types::{AuthorityGeneration, MemoriaError};
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
+use rusqlite_migration::{M, Migrations, SchemaVersion};
 
 use crate::model::{
     AuthorityTransaction, AuthorityWriteAction, AuthorityWriteResult, authority_generation,
@@ -15,6 +16,9 @@ use crate::model::{
 use crate::schema::{
     SCHEMA_V1, SCHEMA_V1_COLUMNS, SCHEMA_V1_TABLES, SCHEMA_V1_TRIGGERS, SCHEMA_V1_VERSION,
 };
+
+const MIGRATION_LIST: &[M<'_>] = &[M::up(SCHEMA_V1)];
+const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATION_LIST);
 
 #[derive(Clone, Debug)]
 pub struct AuthorityDb {
@@ -201,27 +205,19 @@ fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
 }
 
 fn initialize_schema(connection: &mut Connection) -> rusqlite::Result<()> {
-    match read_user_version(connection)? {
-        0 if !has_user_objects(connection)? => {
-            let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            transaction.execute_batch(SCHEMA_V1)?;
-            transaction.pragma_update(None, "user_version", SCHEMA_V1_VERSION)?;
-            validate_schema_v1(&transaction)?;
-            transaction.commit()
-        }
-        0 => Err(schema_error(
+    let current_version = MIGRATIONS
+        .current_version(connection)
+        .map_err(|error| schema_error(error.to_string()))?;
+    if matches!(current_version, SchemaVersion::NoneSet) && has_user_objects(connection)? {
+        return Err(schema_error(
             "cannot initialize Authority schema over an existing unversioned database",
-        )),
-        SCHEMA_V1_VERSION => validate_schema_v1(connection),
-        version => Err(schema_error(format!(
-            "unsupported Authority schema user_version {version}; expected {SCHEMA_V1_VERSION}"
-        ))),
+        ));
     }
-}
 
-fn read_user_version(connection: &Connection) -> rusqlite::Result<i64> {
-    connection.query_row("PRAGMA user_version", [], |row| row.get(0))
+    MIGRATIONS
+        .to_latest(connection)
+        .map_err(|error| schema_error(format!("Authority schema migration failed: {error}")))?;
+    validate_schema_v1(connection)
 }
 
 fn has_user_objects(connection: &Connection) -> rusqlite::Result<bool> {

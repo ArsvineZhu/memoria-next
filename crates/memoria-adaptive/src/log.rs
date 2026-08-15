@@ -5,6 +5,7 @@ use memoria_types::{AdaptiveGeneration, MemoryId, SpaceId};
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+use rusqlite_migration::{M, Migrations};
 use sha2::{Digest, Sha256};
 use std::{thread, time::Duration};
 
@@ -12,6 +13,62 @@ use crate::{
     AdaptiveCheckpoint, AdaptiveError, AdaptiveEvent, AdaptiveReadSnapshot, AdaptiveStateV1,
     FeedbackEventInput,
 };
+
+const SCHEMA_V1: &str = r#"
+CREATE TABLE IF NOT EXISTS adaptive_meta(
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS adaptive_events(
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    generation INTEGER NOT NULL,
+    retrieval_id TEXT NOT NULL,
+    space_id BLOB NOT NULL CHECK(length(space_id) = 16),
+    memory_id BLOB NOT NULL CHECK(length(memory_id) = 16),
+    revision_id BLOB NOT NULL CHECK(length(revision_id) = 32),
+    semantic_node_id TEXT,
+    query_signature TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    occurred_at_nanos INTEGER NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    fingerprint TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS adaptive_familiarity(
+    space_id BLOB NOT NULL,
+    memory_id BLOB NOT NULL,
+    success_count INTEGER NOT NULL,
+    negative_count INTEGER NOT NULL,
+    positive_weight REAL NOT NULL,
+    last_success_at INTEGER,
+    last_feedback_generation INTEGER NOT NULL,
+    PRIMARY KEY(space_id, memory_id)
+);
+CREATE TABLE IF NOT EXISTS adaptive_tag_affinity(
+    space_id BLOB NOT NULL,
+    tag_id TEXT NOT NULL,
+    memory_id BLOB NOT NULL,
+    positive_count INTEGER NOT NULL,
+    negative_count INTEGER NOT NULL,
+    positive_weight REAL NOT NULL,
+    negative_weight REAL NOT NULL,
+    PRIMARY KEY(space_id, tag_id, memory_id)
+);
+CREATE TABLE IF NOT EXISTS adaptive_query_class_affinity(
+    space_id BLOB NOT NULL,
+    query_class TEXT NOT NULL,
+    memory_id BLOB NOT NULL,
+    positive_count INTEGER NOT NULL,
+    negative_count INTEGER NOT NULL,
+    positive_weight REAL NOT NULL,
+    negative_weight REAL NOT NULL,
+    PRIMARY KEY(space_id, query_class, memory_id)
+);
+"#;
+
+const MIGRATION_LIST: &[M<'_>] = &[M::up(SCHEMA_V1)];
+const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATION_LIST);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdaptiveLogCommit {
@@ -340,60 +397,9 @@ fn configure_connection(connection: &Connection) -> Result<(), AdaptiveError> {
 }
 
 fn initialize_schema(connection: &mut Connection) -> Result<(), AdaptiveError> {
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS adaptive_meta(
-                 key TEXT PRIMARY KEY,
-                 value TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS adaptive_events(
-                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                 event_id TEXT NOT NULL UNIQUE,
-                 generation INTEGER NOT NULL,
-                 retrieval_id TEXT NOT NULL,
-                 space_id BLOB NOT NULL CHECK(length(space_id) = 16),
-                 memory_id BLOB NOT NULL CHECK(length(memory_id) = 16),
-                 revision_id BLOB NOT NULL CHECK(length(revision_id) = 32),
-                 semantic_node_id TEXT,
-                 query_signature TEXT NOT NULL,
-                 outcome TEXT NOT NULL,
-                 occurred_at INTEGER NOT NULL,
-                 occurred_at_nanos INTEGER NOT NULL,
-                 idempotency_key TEXT NOT NULL UNIQUE,
-                 fingerprint TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS adaptive_familiarity(
-                 space_id BLOB NOT NULL,
-                 memory_id BLOB NOT NULL,
-                 success_count INTEGER NOT NULL,
-                 negative_count INTEGER NOT NULL,
-                 positive_weight REAL NOT NULL,
-                 last_success_at INTEGER,
-                 last_feedback_generation INTEGER NOT NULL,
-                 PRIMARY KEY(space_id, memory_id)
-             );
-             CREATE TABLE IF NOT EXISTS adaptive_tag_affinity(
-                 space_id BLOB NOT NULL,
-                 tag_id TEXT NOT NULL,
-                 memory_id BLOB NOT NULL,
-                 positive_count INTEGER NOT NULL,
-                 negative_count INTEGER NOT NULL,
-                 positive_weight REAL NOT NULL,
-                 negative_weight REAL NOT NULL,
-                 PRIMARY KEY(space_id, tag_id, memory_id)
-             );
-             CREATE TABLE IF NOT EXISTS adaptive_query_class_affinity(
-                 space_id BLOB NOT NULL,
-                 query_class TEXT NOT NULL,
-                 memory_id BLOB NOT NULL,
-                 positive_count INTEGER NOT NULL,
-                 negative_count INTEGER NOT NULL,
-                 positive_weight REAL NOT NULL,
-                 negative_weight REAL NOT NULL,
-                 PRIMARY KEY(space_id, query_class, memory_id)
-             );",
-        )
-        .map_err(storage_error)
+    MIGRATIONS
+        .to_latest(connection)
+        .map_err(|error| storage_error(format!("adaptive schema migration failed: {error}")))
 }
 
 fn persist_append(

@@ -5,6 +5,7 @@ use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+use rusqlite_migration::{M, Migrations};
 
 use crate::artifact::{ArtifactDescriptor, ArtifactId, ArtifactState, BuildJob, BuildJobState};
 use crate::gc::DerivedGc;
@@ -84,166 +85,171 @@ pub struct DerivedCatalog {
     database_path: PathBuf,
 }
 
+const SCHEMA_V1: &str = r#"
+CREATE TABLE IF NOT EXISTS artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    authority_generation INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+        'planned', 'building', 'staged', 'validated', 'published',
+        'failed', 'superseded', 'collected'
+    ))
+);
+CREATE TABLE IF NOT EXISTS artifact_dependencies (
+    artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    dependency_artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    PRIMARY KEY (artifact_id, dependency_artifact_id)
+);
+CREATE TABLE IF NOT EXISTS manifests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    authority_generation INTEGER NOT NULL,
+    immutable INTEGER NOT NULL DEFAULT 1 CHECK (immutable = 1)
+);
+CREATE TABLE IF NOT EXISTS manifest_artifacts (
+    manifest_id INTEGER NOT NULL REFERENCES manifests(id),
+    artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    PRIMARY KEY (manifest_id, artifact_id)
+);
+CREATE TABLE IF NOT EXISTS manifest_capabilities (
+    manifest_id INTEGER NOT NULL REFERENCES manifests(id),
+    capability TEXT NOT NULL,
+    PRIMARY KEY (manifest_id, capability)
+);
+CREATE TABLE IF NOT EXISTS vector_payloads (
+    payload_hash BLOB PRIMARY KEY CHECK (length(payload_hash) = 32),
+    dimension INTEGER NOT NULL CHECK (dimension > 0),
+    normalization INTEGER NOT NULL CHECK (normalization IN (0, 1)),
+    producer_signature TEXT NOT NULL,
+    projection_input_hash BLOB NOT NULL CHECK (length(projection_input_hash) = 32),
+    object_path TEXT NOT NULL,
+    byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+    checksum BLOB NOT NULL CHECK (length(checksum) = 32),
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vector_memberships (
+    membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+    memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+    revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+    derived_unit_id TEXT NOT NULL,
+    semantic_node_id TEXT,
+    resolution TEXT NOT NULL,
+    payload_hash BLOB NOT NULL REFERENCES vector_payloads(payload_hash),
+    live_from_artifact_generation INTEGER NOT NULL,
+    live_to_artifact_generation INTEGER,
+    UNIQUE (artifact_id, space_id, memory_id, revision_id, derived_unit_id, resolution)
+);
+CREATE TABLE IF NOT EXISTS ann_segments (
+    segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    object_hash BLOB NOT NULL CHECK (length(object_hash) = 32),
+    vector_count INTEGER NOT NULL CHECK (vector_count >= 0),
+    dimension INTEGER NOT NULL CHECK (dimension > 0),
+    producer_signature TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (artifact_id, object_hash)
+);
+CREATE TABLE IF NOT EXISTS ann_tombstones (
+    artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+    target_key TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, target_key)
+);
+CREATE TABLE IF NOT EXISTS lexical_artifacts (
+    artifact_id INTEGER PRIMARY KEY REFERENCES artifacts(id),
+    object_hash BLOB NOT NULL CHECK (length(object_hash) = 32),
+    object_path TEXT NOT NULL,
+    document_count INTEGER NOT NULL CHECK (document_count >= 0)
+);
+CREATE TABLE IF NOT EXISTS build_jobs (
+    job_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    producer_signature TEXT NOT NULL,
+    authority_generation INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+        'queued', 'running', 'succeeded', 'failed', 'superseded'
+    )),
+    attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+    next_attempt_at INTEGER NOT NULL,
+    last_error_code TEXT,
+    last_error_message TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (kind, input_hash, producer_signature)
+);
+CREATE TABLE IF NOT EXISTS serving_records (
+    space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+    memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+    revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+    authority_generation INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    entity_refs BLOB NOT NULL,
+    tags BLOB NOT NULL,
+    node_ids BLOB NOT NULL,
+    current INTEGER NOT NULL CHECK (current IN (0, 1)),
+    retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
+    PRIMARY KEY (space_id, memory_id)
+);
+CREATE TABLE IF NOT EXISTS serving_relations (
+    space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+    memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+    revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+    relation TEXT NOT NULL,
+    PRIMARY KEY (space_id, memory_id, revision_id, relation)
+);
+CREATE TABLE IF NOT EXISTS tag_dictionary (
+    tag_id BLOB PRIMARY KEY CHECK (length(tag_id) = 32),
+    normalized_value TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS tag_memberships (
+    membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    space_id BLOB NOT NULL CHECK (length(space_id) = 16),
+    memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
+    revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
+    tag_id BLOB NOT NULL REFERENCES tag_dictionary(tag_id),
+    normalized_value TEXT NOT NULL,
+    node_id TEXT,
+    provenance TEXT NOT NULL CHECK (provenance IN ('explicit', 'generated')),
+    producer_signature TEXT,
+    projection_input_hash BLOB CHECK (projection_input_hash IS NULL OR length(projection_input_hash) = 32),
+    score REAL,
+    confidence REAL,
+    UNIQUE (space_id, memory_id, revision_id, tag_id, node_id, provenance, projection_input_hash)
+);
+CREATE TABLE IF NOT EXISTS leases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manifest_id INTEGER NOT NULL REFERENCES manifests(id),
+    expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS serving_pointer (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    manifest_id INTEGER REFERENCES manifests(id)
+);
+INSERT OR IGNORE INTO serving_pointer(singleton, manifest_id)
+    VALUES (1, NULL);
+"#;
+
+const MIGRATION_LIST: &[M<'_>] = &[M::up(SCHEMA_V1)];
+const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATION_LIST);
+
 impl DerivedCatalog {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, DerivedError> {
         let database_path = path.as_ref().to_path_buf();
         if let Some(parent) = database_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let connection = Connection::open(&database_path)?;
+        let mut connection = Connection::open(&database_path)?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;
              PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
              PRAGMA busy_timeout = 5000;",
         )?;
-        connection.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS artifacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL,
-                version INTEGER NOT NULL,
-                authority_generation INTEGER NOT NULL,
-                state TEXT NOT NULL CHECK (state IN (
-                    'planned', 'building', 'staged', 'validated', 'published',
-                    'failed', 'superseded', 'collected'
-                ))
-            );
-            CREATE TABLE IF NOT EXISTS artifact_dependencies (
-                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
-                dependency_artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
-                PRIMARY KEY (artifact_id, dependency_artifact_id)
-            );
-            CREATE TABLE IF NOT EXISTS manifests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                authority_generation INTEGER NOT NULL,
-                immutable INTEGER NOT NULL DEFAULT 1 CHECK (immutable = 1)
-            );
-            CREATE TABLE IF NOT EXISTS manifest_artifacts (
-                manifest_id INTEGER NOT NULL REFERENCES manifests(id),
-                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
-                PRIMARY KEY (manifest_id, artifact_id)
-            );
-            CREATE TABLE IF NOT EXISTS manifest_capabilities (
-                manifest_id INTEGER NOT NULL REFERENCES manifests(id),
-                capability TEXT NOT NULL,
-                PRIMARY KEY (manifest_id, capability)
-            );
-            CREATE TABLE IF NOT EXISTS vector_payloads (
-                payload_hash BLOB PRIMARY KEY CHECK (length(payload_hash) = 32),
-                dimension INTEGER NOT NULL CHECK (dimension > 0),
-                normalization INTEGER NOT NULL CHECK (normalization IN (0, 1)),
-                producer_signature TEXT NOT NULL,
-                projection_input_hash BLOB NOT NULL CHECK (length(projection_input_hash) = 32),
-                object_path TEXT NOT NULL,
-                byte_length INTEGER NOT NULL CHECK (byte_length > 0),
-                checksum BLOB NOT NULL CHECK (length(checksum) = 32),
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS vector_memberships (
-                membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
-                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
-                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
-                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
-                derived_unit_id TEXT NOT NULL,
-                semantic_node_id TEXT,
-                resolution TEXT NOT NULL,
-                payload_hash BLOB NOT NULL REFERENCES vector_payloads(payload_hash),
-                live_from_artifact_generation INTEGER NOT NULL,
-                live_to_artifact_generation INTEGER,
-                UNIQUE (artifact_id, space_id, memory_id, revision_id, derived_unit_id, resolution)
-            );
-            CREATE TABLE IF NOT EXISTS ann_segments (
-                segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
-                object_hash BLOB NOT NULL CHECK (length(object_hash) = 32),
-                vector_count INTEGER NOT NULL CHECK (vector_count >= 0),
-                dimension INTEGER NOT NULL CHECK (dimension > 0),
-                producer_signature TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                UNIQUE (artifact_id, object_hash)
-            );
-            CREATE TABLE IF NOT EXISTS ann_tombstones (
-                artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
-                target_key TEXT NOT NULL,
-                PRIMARY KEY (artifact_id, target_key)
-            );
-            CREATE TABLE IF NOT EXISTS lexical_artifacts (
-                artifact_id INTEGER PRIMARY KEY REFERENCES artifacts(id),
-                object_hash BLOB NOT NULL CHECK (length(object_hash) = 32),
-                object_path TEXT NOT NULL,
-                document_count INTEGER NOT NULL CHECK (document_count >= 0)
-            );
-            CREATE TABLE IF NOT EXISTS build_jobs (
-                job_id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL,
-                input_hash TEXT NOT NULL,
-                producer_signature TEXT NOT NULL,
-                authority_generation INTEGER NOT NULL,
-                state TEXT NOT NULL CHECK (state IN (
-                    'queued', 'running', 'succeeded', 'failed', 'superseded'
-                )),
-                attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
-                next_attempt_at INTEGER NOT NULL,
-                last_error_code TEXT,
-                last_error_message TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                UNIQUE (kind, input_hash, producer_signature)
-            );
-            CREATE TABLE IF NOT EXISTS serving_records (
-                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
-                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
-                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
-                authority_generation INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                entity_refs BLOB NOT NULL,
-                tags BLOB NOT NULL,
-                node_ids BLOB NOT NULL,
-                current INTEGER NOT NULL CHECK (current IN (0, 1)),
-                retired INTEGER NOT NULL CHECK (retired IN (0, 1)),
-                PRIMARY KEY (space_id, memory_id)
-            );
-            CREATE TABLE IF NOT EXISTS serving_relations (
-                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
-                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
-                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
-                relation TEXT NOT NULL,
-                PRIMARY KEY (space_id, memory_id, revision_id, relation)
-            );
-            CREATE TABLE IF NOT EXISTS tag_dictionary (
-                tag_id BLOB PRIMARY KEY CHECK (length(tag_id) = 32),
-                normalized_value TEXT NOT NULL UNIQUE
-            );
-            CREATE TABLE IF NOT EXISTS tag_memberships (
-                membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                space_id BLOB NOT NULL CHECK (length(space_id) = 16),
-                memory_id BLOB NOT NULL CHECK (length(memory_id) = 16),
-                revision_id BLOB NOT NULL CHECK (length(revision_id) = 32),
-                tag_id BLOB NOT NULL REFERENCES tag_dictionary(tag_id),
-                normalized_value TEXT NOT NULL,
-                node_id TEXT,
-                provenance TEXT NOT NULL CHECK (provenance IN ('explicit', 'generated')),
-                producer_signature TEXT,
-                projection_input_hash BLOB CHECK (projection_input_hash IS NULL OR length(projection_input_hash) = 32),
-                score REAL,
-                confidence REAL,
-                UNIQUE (space_id, memory_id, revision_id, tag_id, node_id, provenance, projection_input_hash)
-            );
-            CREATE TABLE IF NOT EXISTS leases (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                manifest_id INTEGER NOT NULL REFERENCES manifests(id),
-                expires_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS serving_pointer (
-                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                manifest_id INTEGER REFERENCES manifests(id)
-            );
-            INSERT OR IGNORE INTO serving_pointer(singleton, manifest_id)
-                VALUES (1, NULL);
-            ",
-        )?;
+        MIGRATIONS.to_latest(&mut connection).map_err(|error| {
+            DerivedError::Sql(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+        })?;
         connection.execute(
             "UPDATE build_jobs SET state = 'queued', updated_at = ?1 WHERE state = 'running'",
             params![unix_now()],

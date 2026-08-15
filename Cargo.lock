@@ -845,6 +845,7 @@ version = "0.1.0"
 dependencies = [
  "memoria-types",
  "rusqlite",
+ "rusqlite_migration",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -859,6 +860,7 @@ dependencies = [
  "fs2",
  "memoria-types",
  "rusqlite",
+ "rusqlite_migration",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -872,6 +874,7 @@ dependencies = [
  "memoria-mdx",
  "memoria-types",
  "rusqlite",
+ "rusqlite_migration",
  "sha2 0.11.0",
  "tantivy",
  "tempfile",
@@ -1357,6 +1360,16 @@ dependencies = [
  "libsqlite3-sys",
  "smallvec",
  "sqlite-wasm-rs",
+]
+
+[[package]]
+name = "rusqlite_migration"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03451d4dc523c0a96d9e412c574670b3f5f184c3988b77a435876be25477bbd3"
+dependencies = [
+ "log",
+ "rusqlite",
 ]
 
 [[package]]
