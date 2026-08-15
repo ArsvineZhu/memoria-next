@@ -189,7 +189,15 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
         let Some(request) = request else {
             continue;
         };
+        let generation = request.generation;
+        let document_count = request.documents.len();
         let result = {
+            let _build_span = tracing::info_span!(
+                "memoria.derived.build",
+                authority_generation = generation.value(),
+                document_count,
+            )
+            .entered();
             let mut catalog = lock(&inner.catalog);
             inner
                 .compiler
@@ -198,6 +206,12 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
         let mut state = lock(&inner.state);
         state.building = false;
         if let Err(error) = result {
+            tracing::error!(
+                target: "memoria.derived.build",
+                authority_generation = generation.value(),
+                error_code = "DERIVED_BUILD_FAILED",
+                "derived build failed"
+            );
             state.last_error = Some(error.to_string());
         }
         inner.wake.notify_all();

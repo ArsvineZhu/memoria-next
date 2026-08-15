@@ -17,6 +17,7 @@ sha2 = "0.11.0"
 rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+tracing = "=0.1.44"
 
 [dev-dependencies]
 # Enables memoria-mdx's test-only IR counter for this crate's integration tests.

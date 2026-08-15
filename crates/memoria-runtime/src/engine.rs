@@ -801,6 +801,13 @@ impl MemoriaRuntime {
 
     pub fn query_start(&mut self, query: MemoryQuery) -> Result<QueryStep, RuntimeError> {
         self.ensure_open()?;
+        let _query_span = tracing::info_span!(
+            "memoria.query",
+            cue_text_count = query.cue.text.len(),
+            cue_tag_count = query.cue.tags.len(),
+            scope_count = query.scope.spaces.len(),
+        )
+        .entered();
         self.query_operations.cleanup(std::time::Instant::now());
         query.validate()?;
 
@@ -901,6 +908,16 @@ impl MemoriaRuntime {
                     },
                 )
             };
+            tracing::info!(
+                target: "memoria.query.provider_wait",
+                operation_id = %operation_id,
+                work_id = %work.work_id(),
+                capability = match &work {
+                    QueryWork::Embedding(_) => "embedding",
+                    QueryWork::Rerank(_) => "rerank",
+                },
+                "query waiting for provider work"
+            );
             return Ok(QueryStep::ProviderPending { operation_id, work });
         }
 
@@ -1025,6 +1042,16 @@ impl MemoriaRuntime {
                         },
                     )
                 };
+                tracing::info!(
+                    target: "memoria.query.provider_wait",
+                    operation_id = %operation_id,
+                    work_id = %work.work_id(),
+                    capability = match &work {
+                        QueryWork::Embedding(_) => "embedding",
+                        QueryWork::Rerank(_) => "rerank",
+                    },
+                    "query waiting for provider work"
+                );
                 Ok(QueryStep::ProviderPending { operation_id, work })
             }
         }
@@ -1893,6 +1920,13 @@ impl MemoriaRuntime {
             self.derived.mark_build_job_running(job_id)?;
         }
         let work_id = work_id(&pending.work).to_owned();
+        tracing::debug!(
+            target: "memoria.derived.provider_work",
+            job_id = ?pending.job_id.as_deref(),
+            work_id = %work_id,
+            capability = ?pending.work.capability(),
+            "provider work dispatched"
+        );
         let metadata = match &pending.work {
             NeedWork::Embeddings(_) => InflightProviderWork {
                 generation: pending.generation,
@@ -2032,6 +2066,14 @@ impl MemoriaRuntime {
                     self.derived
                         .mark_build_job_failed(job_id, &code, &message, retryable)?;
                 }
+                tracing::error!(
+                    target: "memoria.derived.provider_work",
+                    job_id = ?pending.job_id.as_deref(),
+                    work_id = %work_id,
+                    error_code = %code,
+                    retryable,
+                    "provider work failed"
+                );
                 self.last_error = Some(format!(
                     "provider failure for `{work_id}` ({code}, retryable={retryable}): {message}"
                 ));

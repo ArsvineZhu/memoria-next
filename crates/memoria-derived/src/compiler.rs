@@ -169,6 +169,13 @@ impl DerivedCompiler {
         I: IntoIterator<Item = LexicalDocument>,
     {
         let documents = documents.into_iter().collect::<Vec<_>>();
+        let _build_span = tracing::info_span!(
+            "memoria.derived.build",
+            authority_generation = generation.value(),
+            producer_signature = %self.producer_signature,
+            document_count = documents.len(),
+        )
+        .entered();
         let current_targets = documents
             .iter()
             .map(|document| {
@@ -253,6 +260,12 @@ impl DerivedCompiler {
         } else {
             catalog.publish_manifest_rebased_at_generation(artifact_ids, generation, Vec::new())?
         };
+        tracing::debug!(
+            target: "memoria.derived.build",
+            authority_generation = generation.value(),
+            document_count = documents.len(),
+            "derived base build completed"
+        );
         Ok(BaseReadyReport {
             provider_work_items: 0,
             coverage: generation,
