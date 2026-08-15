@@ -24,6 +24,7 @@ const CORE_ELEMENT_NAMES: &[&str] = &[
     "Extension",
 ];
 const MAX_NESTING_DEPTH: usize = 128;
+const HTML_COMMENT_MASK: u8 = 1;
 
 /// Parse restricted-MDX input into the mature markdown-rs syntax tree.
 ///
@@ -37,15 +38,9 @@ pub fn parse_mdast(source: &str) -> Result<Node, MdxError> {
         Ok(tree) => Ok(tree),
         Err(_error) if source.contains("<!--") => {
             let masked = mask_html_comments(source);
-            markdown::to_mdast(&masked, &options).map_err(|error| MdxError::MalformedElement {
-                message: error.to_string(),
-                span: message_span(&error.place),
-            })
+            markdown::to_mdast(&masked, &options).map_err(|error| markdown_error(error, source))
         }
-        Err(error) => Err(MdxError::MalformedElement {
-            message: error.to_string(),
-            span: message_span(&error.place),
-        }),
+        Err(error) => Err(markdown_error(error, source)),
     }
 }
 
@@ -183,7 +178,7 @@ fn semantic_element_from_jsx(
     let text = if self_closing {
         String::new()
     } else {
-        node.to_string()
+        strip_comment_masks(&node.to_string())
     };
 
     Ok(make_element_with_text(
@@ -366,6 +361,28 @@ fn message_span(place: &Option<Box<Place>>) -> Range<usize> {
     }
 }
 
+fn markdown_error(error: markdown::message::Message, source: &str) -> MdxError {
+    let message = error.to_string();
+    if let Some(name) = unclosed_element_name(&message) {
+        let start = source.find(&format!("<{name}")).unwrap_or(0);
+        return MdxError::UnclosedElement {
+            name,
+            span: start..source.len(),
+        };
+    }
+    MdxError::MalformedElement {
+        message,
+        span: message_span(&error.place),
+    }
+}
+
+fn unclosed_element_name(message: &str) -> Option<String> {
+    let marker = "Expected a closing tag for `<";
+    let start = message.find(marker)? + marker.len();
+    let end = message[start..].find('>')? + start;
+    Some(message[start..end].to_owned())
+}
+
 fn mask_html_comments(source: &str) -> String {
     let mut masked = source.as_bytes().to_vec();
     let mut cursor = 0;
@@ -377,10 +394,17 @@ fn mask_html_comments(source: &str) -> String {
         let end = start + 4 + relative_end + 3;
         for byte in &mut masked[start..end] {
             if *byte != b'\n' && *byte != b'\r' {
-                *byte = b' ';
+                *byte = HTML_COMMENT_MASK;
             }
         }
         cursor = end;
     }
     String::from_utf8(masked).expect("masking ASCII comment bytes preserves UTF-8")
+}
+
+fn strip_comment_masks(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| *character != char::from(HTML_COMMENT_MASK))
+        .collect()
 }
