@@ -89,15 +89,6 @@ pub(crate) fn make_element(
     span: Range<usize>,
     attributes: Vec<SemanticAttribute>,
     self_closing: bool,
-) -> SemanticElement {
-    make_element_with_text(name, span, attributes, self_closing, String::new())
-}
-
-pub(crate) fn make_element_with_text(
-    name: String,
-    span: Range<usize>,
-    attributes: Vec<SemanticAttribute>,
-    self_closing: bool,
     text: String,
 ) -> SemanticElement {
     SemanticElement {

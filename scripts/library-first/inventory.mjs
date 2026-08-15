@@ -9,11 +9,23 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const baselineReportPath = join(repoRoot, "docs", "reports", "library-first-baseline.json");
+const baselineReportPath = join(
+  repoRoot,
+  "docs",
+  "reports",
+  "library-first-baseline.json",
+);
 
-const classes = ["DOMAIN", "ALGORITHM", "INTEGRATION", "INFRASTRUCTURE", "REVIEW_REQUIRED"];
+const classes = [
+  "DOMAIN",
+  "ALGORITHM",
+  "INTEGRATION",
+  "INFRASTRUCTURE",
+  "REVIEW_REQUIRED",
+];
 
 const candidates = [
+  ["Markdown/MDX syntax foundation", "markdown = 1.0.0"],
   ["SQLite schema migration", "rusqlite_migration = 2.6.0"],
   ["atomic source-object writes", "atomic-write-file = 0.3.0"],
   ["TypeScript provider retry", "p-retry = 8.0.0"],
@@ -31,7 +43,11 @@ function normalizePath(path) {
 
 function collectFiles(root, predicate, output = []) {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if ([".git", "node_modules", "target", "dist", "dist-test"].includes(entry.name)) {
+    if (
+      [".git", "node_modules", "target", "dist", "dist-test"].includes(
+        entry.name,
+      )
+    ) {
       continue;
     }
     const entryPath = join(root, entry.name);
@@ -54,9 +70,17 @@ function sourceFiles() {
       files.push(...collectFiles(sourceRoot, (path) => path.endsWith(".rs")));
     }
   }
-  files.push(...collectFiles(join(repoRoot, "src"), (path) => path.endsWith(".ts")));
-  files.push(...collectFiles(join(repoRoot, "scripts"), (path) => path.endsWith(".mjs")));
-  files.push(...collectFiles(join(repoRoot, "benchmarks"), (path) => path.endsWith(".ts")));
+  files.push(
+    ...collectFiles(join(repoRoot, "src"), (path) => path.endsWith(".ts")),
+  );
+  files.push(
+    ...collectFiles(join(repoRoot, "scripts"), (path) => path.endsWith(".mjs")),
+  );
+  files.push(
+    ...collectFiles(join(repoRoot, "benchmarks"), (path) =>
+      path.endsWith(".ts"),
+    ),
+  );
   return files.sort();
 }
 
@@ -65,48 +89,97 @@ function rule(className, reason, predicate) {
 }
 
 const rules = [
-  rule("DOMAIN", "Memoria type and identity semantics", (path) => path.startsWith("crates/memoria-types/src/")),
+  rule("DOMAIN", "Memoria type and identity semantics", (path) =>
+    path.startsWith("crates/memoria-types/src/"),
+  ),
   rule("DOMAIN", "Authority lifecycle and mutation semantics", (path) =>
-    /^(crates\/memoria-authority\/src\/(model|mutation|read|purge)\.rs)$/.test(path)),
+    /^(crates\/memoria-authority\/src\/(model|mutation|read|purge)\.rs)$/.test(
+      path,
+    ),
+  ),
   rule("INFRASTRUCTURE", "Authority storage and file mechanics", (path) =>
-    /^crates\/memoria-authority\/src\//.test(path)),
-  rule("INFRASTRUCTURE", "Custom Markdown/MDX lexical foundation", (path) =>
-    path === "crates/memoria-mdx/src/semantic_lexer.rs"),
+    /^crates\/memoria-authority\/src\//.test(path),
+  ),
   rule("DOMAIN", "Restricted MDX and canonical Memory semantics", (path) =>
-    path.startsWith("crates/memoria-mdx/src/")),
-  rule("ALGORITHM", "Original query algorithms and ranking semantics", (path) =>
-    /^crates\/memoria-query\/src\/algorithms\//.test(path) ||
-    /^(crates\/memoria-query\/src\/(adaptive|fusion|relation_expand|semantic|tags|exact|history|lexical|rerank)\.rs)$/.test(path)),
+    path.startsWith("crates/memoria-mdx/src/"),
+  ),
+  rule(
+    "ALGORITHM",
+    "Original query algorithms and ranking semantics",
+    (path) =>
+      /^crates\/memoria-query\/src\/algorithms\//.test(path) ||
+      /^(crates\/memoria-query\/src\/(adaptive|fusion|relation_expand|semantic|tags|exact|history|lexical|rerank)\.rs)$/.test(
+        path,
+      ),
+  ),
   rule("DOMAIN", "Structured query and retrieval contract types", (path) =>
-    /^(crates\/memoria-query\/src\/(assessment|evidence|model|response|snapshot|trace|validate)\.rs)$/.test(path)),
-  rule("INFRASTRUCTURE", "Custom query graph container", (path) =>
-    path === "crates/memoria-query/src/association.rs"),
+    /^(crates\/memoria-query\/src\/(assessment|evidence|model|response|snapshot|trace|validate)\.rs)$/.test(
+      path,
+    ),
+  ),
+  rule(
+    "INFRASTRUCTURE",
+    "Custom query graph container",
+    (path) => path === "crates/memoria-query/src/association.rs",
+  ),
   rule("INTEGRATION", "Query planning and execution integration", (path) =>
-    path.startsWith("crates/memoria-query/src/")),
+    path.startsWith("crates/memoria-query/src/"),
+  ),
   rule("DOMAIN", "Adaptive event and feedback semantics", (path) =>
-    /^(crates\/memoria-adaptive\/src\/(event|model|reducer|purge)\.rs)$/.test(path)),
-  rule("INFRASTRUCTURE", "Adaptive persistence and checkpoint mechanics", (path) =>
-    path.startsWith("crates/memoria-adaptive/src/")),
-  rule("INFRASTRUCTURE", "Custom Derived physical artifact infrastructure", (path) =>
-    /^(crates\/memoria-derived\/src\/(artifact|catalog|gc|lease|lexical_artifact|scheduler|vector)\.rs)$/.test(path)),
+    /^(crates\/memoria-adaptive\/src\/(event|model|reducer|purge)\.rs)$/.test(
+      path,
+    ),
+  ),
+  rule(
+    "INFRASTRUCTURE",
+    "Adaptive persistence and checkpoint mechanics",
+    (path) => path.startsWith("crates/memoria-adaptive/src/"),
+  ),
+  rule(
+    "INFRASTRUCTURE",
+    "Custom Derived physical artifact infrastructure",
+    (path) =>
+      /^(crates\/memoria-derived\/src\/(artifact|catalog|gc|lease|lexical_artifact|scheduler|vector)\.rs)$/.test(
+        path,
+      ),
+  ),
   rule("DOMAIN", "Derived snapshot and lifecycle domain metadata", (path) =>
-    /^(crates\/memoria-derived\/src\/(manifest|status)\.rs)$/.test(path)),
+    /^(crates\/memoria-derived\/src\/(manifest|status)\.rs)$/.test(path),
+  ),
   rule("INTEGRATION", "Derived projection and provider integration", (path) =>
-    path.startsWith("crates/memoria-derived/src/")),
-  rule("INFRASTRUCTURE", "Generic runtime diagnostics plumbing", (path) =>
-    path === "crates/memoria-runtime/src/diagnostics.rs"),
+    path.startsWith("crates/memoria-derived/src/"),
+  ),
+  rule(
+    "INFRASTRUCTURE",
+    "Generic runtime diagnostics plumbing",
+    (path) => path === "crates/memoria-runtime/src/diagnostics.rs",
+  ),
   rule("INTEGRATION", "Runtime and provider boundary integration", (path) =>
-    path.startsWith("crates/memoria-runtime/src/")),
+    path.startsWith("crates/memoria-runtime/src/"),
+  ),
   rule("INTEGRATION", "N-API integration boundary", (path) =>
-    path.startsWith("crates/memoria-napi/src/")),
-  rule("DOMAIN", "Public authoring, agent, administration, and domain API", (path) =>
-    /^(src\/(domain|authoring|agent|admin)\/)/.test(path)),
+    path.startsWith("crates/memoria-napi/src/"),
+  ),
+  rule(
+    "DOMAIN",
+    "Public authoring, agent, administration, and domain API",
+    (path) => /^(src\/(domain|authoring|agent|admin)\/)/.test(path),
+  ),
   rule("ALGORITHM", "TypeScript retrieval integration algorithm", (path) =>
-    path.startsWith("src/retrieval/")),
-  rule("INTEGRATION", "TypeScript native and provider integration", (path) =>
-    /^(src\/(engine|native|providers)\/)/.test(path) || path === "src/index.ts"),
-  rule("INTEGRATION", "Library-first tooling and benchmark integration", (path) =>
-    path.startsWith("scripts/") || path.startsWith("benchmarks/")),
+    path.startsWith("src/retrieval/"),
+  ),
+  rule(
+    "INTEGRATION",
+    "TypeScript native and provider integration",
+    (path) =>
+      /^(src\/(engine|native|providers)\/)/.test(path) ||
+      path === "src/index.ts",
+  ),
+  rule(
+    "INTEGRATION",
+    "Library-first tooling and benchmark integration",
+    (path) => path.startsWith("scripts/") || path.startsWith("benchmarks/"),
+  ),
 ];
 
 function classify(path) {
@@ -114,7 +187,8 @@ function classify(path) {
   if (!match) {
     return {
       class: "REVIEW_REQUIRED",
-      reason: "No explicit domain, algorithm, integration, or infrastructure rule",
+      reason:
+        "No explicit domain, algorithm, integration, or infrastructure rule",
     };
   }
   return { class: match.class, reason: match.reason };
@@ -129,15 +203,21 @@ function collectDependencyCount() {
   const manifests = [join(repoRoot, "package.json")];
   const cratesRoot = join(repoRoot, "crates");
   for (const entry of readdirSync(cratesRoot, { withFileTypes: true })) {
-    if (entry.isDirectory()) manifests.push(join(cratesRoot, entry.name, "Cargo.toml"));
+    if (entry.isDirectory())
+      manifests.push(join(cratesRoot, entry.name, "Cargo.toml"));
   }
 
   for (const manifest of manifests) {
     if (!existsSync(manifest)) continue;
     if (manifest.endsWith("package.json")) {
       const packageJson = JSON.parse(readFileSync(manifest, "utf8"));
-      for (const section of ["dependencies", "optionalDependencies", "devDependencies"]) {
-        for (const name of Object.keys(packageJson[section] ?? {})) dependencies.add(`npm:${name}`);
+      for (const section of [
+        "dependencies",
+        "optionalDependencies",
+        "devDependencies",
+      ]) {
+        for (const name of Object.keys(packageJson[section] ?? {}))
+          dependencies.add(`npm:${name}`);
       }
       continue;
     }
@@ -158,7 +238,13 @@ function customMarkers(inventory) {
   for (const [path] of Object.entries(inventory)) {
     if (path.startsWith("scripts/library-first/")) continue;
     const source = readFileSync(join(repoRoot, path), "utf8");
-    for (const marker of ["MEMVEC01", "PRAGMA user_version", "tombstone", "compaction", "segment"] ) {
+    for (const marker of [
+      "MEMVEC01",
+      "PRAGMA user_version",
+      "tombstone",
+      "compaction",
+      "segment",
+    ]) {
       if (source.toLowerCase().includes(marker.toLowerCase())) {
         if (!markers.has(marker)) markers.set(marker, []);
         markers.get(marker).push(path);
@@ -175,7 +261,11 @@ function buildInventory() {
     const classification = classify(path);
     inventory[path] = {
       class: classification.class,
-      language: file.endsWith(".rs") ? "rust" : file.endsWith(".ts") ? "typescript" : "javascript",
+      language: file.endsWith(".rs")
+        ? "rust"
+        : file.endsWith(".ts")
+          ? "typescript"
+          : "javascript",
       loc: locOf(readFileSync(file, "utf8")),
       reason: classification.reason,
     };
@@ -184,18 +274,28 @@ function buildInventory() {
 }
 
 function summaryOf(inventory) {
-  const byClass = Object.fromEntries(classes.map((className) => [className, { files: 0, loc: 0 }]));
+  const byClass = Object.fromEntries(
+    classes.map((className) => [className, { files: 0, loc: 0 }]),
+  );
   for (const entry of Object.values(inventory)) {
     byClass[entry.class].files += 1;
     byClass[entry.class].loc += entry.loc;
   }
-  const totalLoc = Object.values(inventory).reduce((sum, entry) => sum + entry.loc, 0);
+  const totalLoc = Object.values(inventory).reduce(
+    (sum, entry) => sum + entry.loc,
+    0,
+  );
   const infrastructureLoc = byClass.INFRASTRUCTURE.loc;
   const physicalRetrievalLoc = Object.entries(inventory)
-    .filter(([path, entry]) => entry.class === "INFRASTRUCTURE" && /memoria-derived|memoria-query/.test(path))
+    .filter(
+      ([path, entry]) =>
+        entry.class === "INFRASTRUCTURE" &&
+        /memoria-derived|memoria-query/.test(path),
+    )
     .reduce((sum, [, entry]) => sum + entry.loc, 0);
   const customStateMachines = Object.keys(inventory).filter((path) =>
-    /(^|\/)(scheduler|gc|lease|ann_segments|vector_membership)\.rs$/.test(path));
+    /(^|\/)(scheduler|gc|lease|ann_segments|vector_membership)\.rs$/.test(path),
+  );
 
   return {
     totalFiles: Object.keys(inventory).length,
@@ -233,24 +333,43 @@ function markdownReport(inventory, summary) {
     "| --- | ---: | ---: |",
   ];
   for (const className of classes) {
-    lines.push(`| ${className} | ${summary.byClass[className].files} | ${summary.byClass[className].loc} |`);
+    lines.push(
+      `| ${className} | ${summary.byClass[className].files} | ${summary.byClass[className].loc} |`,
+    );
   }
   lines.push("", "## Custom persistent markers", "");
   if (summary.customPersistentFormats.length === 0) {
     lines.push("None detected.");
   } else {
     for (const item of summary.customPersistentFormats) {
-      lines.push(`- \`${item.marker}\`: ${item.paths.map((path) => `\`${path}\``).join(", ")}`);
+      lines.push(
+        `- \`${item.marker}\`: ${item.paths.map((path) => `\`${path}\``).join(", ")}`,
+      );
     }
   }
   lines.push("", "## Custom lifecycle/state-machine files", "");
   for (const path of summary.customStateMachines) lines.push(`- \`${path}\``);
   if (summary.customStateMachines.length === 0) lines.push("None detected.");
-  lines.push("", "## Candidate ecosystem replacements", "", "| Concern | Candidate |", "| --- | --- | ");
-  for (const [concern, candidate] of summary.candidates) lines.push(`| ${concern} | ${candidate} |`);
-  lines.push("", "## Module inventory", "", "| Path | Class | LOC | Reason |", "| --- | --- | ---: | --- | ");
+  lines.push(
+    "",
+    "## Candidate ecosystem replacements",
+    "",
+    "| Concern | Candidate |",
+    "| --- | --- | ",
+  );
+  for (const [concern, candidate] of summary.candidates)
+    lines.push(`| ${concern} | ${candidate} |`);
+  lines.push(
+    "",
+    "## Module inventory",
+    "",
+    "| Path | Class | LOC | Reason |",
+    "| --- | --- | ---: | --- | ",
+  );
   for (const [path, entry] of Object.entries(inventory)) {
-    lines.push(`| \`${path}\` | ${entry.class} | ${entry.loc} | ${entry.reason} |`);
+    lines.push(
+      `| \`${path}\` | ${entry.class} | ${entry.loc} | ${entry.reason} |`,
+    );
   }
   lines.push("");
   return lines.join("\n");
@@ -258,8 +377,14 @@ function markdownReport(inventory, summary) {
 
 function writeReports(inventory, summary) {
   const reportDir = join(repoRoot, "docs", "reports");
-  writeFileSync(join(reportDir, "library-first-baseline.json"), `${JSON.stringify({ summary, files: inventory }, null, 2)}\n`);
-  writeFileSync(join(reportDir, "library-first-baseline.md"), markdownReport(inventory, summary));
+  writeFileSync(
+    join(reportDir, "library-first-baseline.json"),
+    `${JSON.stringify({ summary, files: inventory }, null, 2)}\n`,
+  );
+  writeFileSync(
+    join(reportDir, "library-first-baseline.md"),
+    markdownReport(inventory, summary),
+  );
 }
 
 function assertNoReviewRequired(inventory) {
@@ -272,16 +397,24 @@ function assertNoReviewRequired(inventory) {
 }
 
 function compareWithBaseline(summary) {
-  if (!existsSync(baselineReportPath)) throw new Error(`Missing baseline report: ${baselineReportPath}`);
+  if (!existsSync(baselineReportPath))
+    throw new Error(`Missing baseline report: ${baselineReportPath}`);
   const baseline = JSON.parse(readFileSync(baselineReportPath, "utf8")).summary;
-  const reduction = (before, after) => (before === 0 ? 0 : (before - after) / before);
+  const reduction = (before, after) =>
+    before === 0 ? 0 : (before - after) / before;
   return {
     baselineInfrastructureLoc: baseline.byClass.INFRASTRUCTURE.loc,
     currentInfrastructureLoc: summary.byClass.INFRASTRUCTURE.loc,
-    totalInfrastructureReduction: reduction(baseline.byClass.INFRASTRUCTURE.loc, summary.byClass.INFRASTRUCTURE.loc),
+    totalInfrastructureReduction: reduction(
+      baseline.byClass.INFRASTRUCTURE.loc,
+      summary.byClass.INFRASTRUCTURE.loc,
+    ),
     baselinePhysicalRetrievalLoc: baseline.physicalRetrievalLoc,
     currentPhysicalRetrievalLoc: summary.physicalRetrievalLoc,
-    physicalRetrievalReduction: reduction(baseline.physicalRetrievalLoc, summary.physicalRetrievalLoc),
+    physicalRetrievalReduction: reduction(
+      baseline.physicalRetrievalLoc,
+      summary.physicalRetrievalLoc,
+    ),
   };
 }
 
@@ -295,9 +428,16 @@ function main(args) {
   const summary = summaryOf(inventory);
   if (args.includes("--compare-baseline")) {
     const comparison = compareWithBaseline(summary);
-    process.stdout.write(`${JSON.stringify({ summary, comparison }, null, 2)}\n`);
-    if (args.includes("--require-pass") && comparison.totalInfrastructureReduction < 0.3) {
-      throw new Error(`Infrastructure deletion budget failed: ${(comparison.totalInfrastructureReduction * 100).toFixed(2)}% < 30%`);
+    process.stdout.write(
+      `${JSON.stringify({ summary, comparison }, null, 2)}\n`,
+    );
+    if (
+      args.includes("--require-pass") &&
+      comparison.totalInfrastructureReduction < 0.3
+    ) {
+      throw new Error(
+        `Infrastructure deletion budget failed: ${(comparison.totalInfrastructureReduction * 100).toFixed(2)}% < 30%`,
+      );
     }
     return;
   }
@@ -312,7 +452,9 @@ function main(args) {
 try {
   main(process.argv.slice(2));
 } catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  );
   process.exitCode = 1;
 }
 

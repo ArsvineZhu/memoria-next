@@ -1,39 +1,33 @@
 {
   "summary": {
-    "totalFiles": 149,
-    "totalLoc": 33268,
+    "totalFiles": 150,
+    "totalLoc": 33445,
     "byClass": {
       "DOMAIN": {
-        "files": 52,
-        "loc": 9382
+        "files": 53,
+        "loc": 9734
       },
       "ALGORITHM": {
         "files": 16,
         "loc": 2731
       },
       "INTEGRATION": {
-        "files": 60,
-        "loc": 14556
+        "files": 61,
+        "loc": 14783
       },
       "INFRASTRUCTURE": {
-        "files": 21,
-        "loc": 6599
+        "files": 20,
+        "loc": 6197
       },
       "REVIEW_REQUIRED": {
         "files": 0,
         "loc": 0
       }
     },
-    "infrastructurePercentage": 0.1983587832151016,
-    "physicalRetrievalLoc": 3732,
-    "dependencyCount": 28,
+    "infrastructurePercentage": 0.185289280908955,
+    "physicalRetrievalLoc": 3750,
+    "dependencyCount": 32,
     "customPersistentFormats": [
-      {
-        "marker": "PRAGMA user_version",
-        "paths": [
-          "crates/memoria-authority/src/db.rs"
-        ]
-      },
       {
         "marker": "tombstone",
         "paths": [
@@ -76,6 +70,10 @@
       "crates/memoria-derived/src/scheduler.rs"
     ],
     "candidates": [
+      [
+        "Markdown/MDX syntax foundation",
+        "markdown = 1.0.0"
+      ],
       [
         "SQLite schema migration",
         "rusqlite_migration = 2.6.0"
@@ -190,7 +188,7 @@
     "crates/memoria-adaptive/src/log.rs": {
       "class": "INFRASTRUCTURE",
       "language": "rust",
-      "loc": 696,
+      "loc": 700,
       "reason": "Adaptive persistence and checkpoint mechanics"
     },
     "crates/memoria-adaptive/src/model.rs": {
@@ -220,13 +218,13 @@
     "crates/memoria-authority/src/cas.rs": {
       "class": "INFRASTRUCTURE",
       "language": "rust",
-      "loc": 220,
+      "loc": 74,
       "reason": "Authority storage and file mechanics"
     },
     "crates/memoria-authority/src/db.rs": {
       "class": "INFRASTRUCTURE",
       "language": "rust",
-      "loc": 329,
+      "loc": 324,
       "reason": "Authority storage and file mechanics"
     },
     "crates/memoria-authority/src/integrity.rs": {
@@ -292,13 +290,13 @@
     "crates/memoria-derived/src/catalog.rs": {
       "class": "INFRASTRUCTURE",
       "language": "rust",
-      "loc": 1521,
+      "loc": 1525,
       "reason": "Custom Derived physical artifact infrastructure"
     },
     "crates/memoria-derived/src/compiler.rs": {
       "class": "INTEGRATION",
       "language": "rust",
-      "loc": 245,
+      "loc": 258,
       "reason": "Derived projection and provider integration"
     },
     "crates/memoria-derived/src/dependency.rs": {
@@ -412,7 +410,7 @@
     "crates/memoria-derived/src/scheduler.rs": {
       "class": "INFRASTRUCTURE",
       "language": "rust",
-      "loc": 195,
+      "loc": 209,
       "reason": "Custom Derived physical artifact infrastructure"
     },
     "crates/memoria-derived/src/status.rs": {
@@ -460,13 +458,19 @@
     "crates/memoria-mdx/src/lib.rs": {
       "class": "DOMAIN",
       "language": "rust",
-      "loc": 55,
+      "loc": 33,
       "reason": "Restricted MDX and canonical Memory semantics"
     },
     "crates/memoria-mdx/src/lint.rs": {
       "class": "DOMAIN",
       "language": "rust",
       "loc": 83,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/mdast_adapter.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 389,
       "reason": "Restricted MDX and canonical Memory semantics"
     },
     "crates/memoria-mdx/src/patch.rs": {
@@ -481,16 +485,10 @@
       "loc": 195,
       "reason": "Restricted MDX and canonical Memory semantics"
     },
-    "crates/memoria-mdx/src/semantic_lexer.rs": {
-      "class": "INFRASTRUCTURE",
-      "language": "rust",
-      "loc": 273,
-      "reason": "Custom Markdown/MDX lexical foundation"
-    },
     "crates/memoria-mdx/src/source.rs": {
       "class": "DOMAIN",
       "language": "rust",
-      "loc": 79,
+      "loc": 85,
       "reason": "Restricted MDX and canonical Memory semantics"
     },
     "crates/memoria-mdx/src/syntax.rs": {
@@ -514,7 +512,7 @@
     "crates/memoria-mdx/src/validate.rs": {
       "class": "DOMAIN",
       "language": "rust",
-      "loc": 374,
+      "loc": 353,
       "reason": "Restricted MDX and canonical Memory semantics"
     },
     "crates/memoria-napi/src/convert.rs": {
@@ -736,7 +734,7 @@
     "crates/memoria-runtime/src/engine.rs": {
       "class": "INTEGRATION",
       "language": "rust",
-      "loc": 2923,
+      "loc": 2965,
       "reason": "Runtime and provider boundary integration"
     },
     "crates/memoria-runtime/src/lib.rs": {
@@ -838,7 +836,13 @@
     "scripts/library-first/inventory.mjs": {
       "class": "INTEGRATION",
       "language": "javascript",
-      "loc": 292,
+      "loc": 295,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "scripts/library-first/verify-policy.mjs": {
+      "class": "INTEGRATION",
+      "language": "javascript",
+      "loc": 154,
       "reason": "Library-first tooling and benchmark integration"
     },
     "scripts/run-tests.mjs": {
@@ -994,13 +998,13 @@
     "src/providers/host.ts": {
       "class": "INTEGRATION",
       "language": "typescript",
-      "loc": 291,
+      "loc": 304,
       "reason": "TypeScript native and provider integration"
     },
     "src/providers/types.ts": {
       "class": "INTEGRATION",
       "language": "typescript",
-      "loc": 148,
+      "loc": 150,
       "reason": "TypeScript native and provider integration"
     },
     "src/retrieval/rerank.ts": {

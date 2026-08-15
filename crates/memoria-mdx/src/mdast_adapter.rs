@@ -7,7 +7,7 @@ use markdown::{
     unist::Position,
 };
 
-use crate::source::{ParsedSource, SemanticAttribute, make_attribute, make_element_with_text};
+use crate::source::{ParsedSource, SemanticAttribute, make_attribute, make_element};
 use crate::syntax::MdxError;
 
 const CORE_ELEMENT_NAMES: &[&str] = &[
@@ -181,7 +181,7 @@ fn semantic_element_from_jsx(
         strip_comment_masks(&node.to_string())
     };
 
-    Ok(make_element_with_text(
+    Ok(make_element(
         semantic_name,
         span,
         converted_attributes,

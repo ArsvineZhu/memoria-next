@@ -8,24 +8,23 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 
 | Metric | Value |
 | --- | ---: |
-| Source files | 149 |
-| Non-empty LOC | 33268 |
-| Direct dependency count | 28 |
-| Self-authored infrastructure LOC | 6599 |
-| Infrastructure LOC percentage | 19.84% |
-| Physical retrieval infrastructure LOC | 3732 |
+| Source files | 150 |
+| Non-empty LOC | 33445 |
+| Direct dependency count | 32 |
+| Self-authored infrastructure LOC | 6197 |
+| Infrastructure LOC percentage | 18.53% |
+| Physical retrieval infrastructure LOC | 3750 |
 
 | Class | Files | LOC |
 | --- | ---: | ---: |
-| DOMAIN | 52 | 9382 |
+| DOMAIN | 53 | 9734 |
 | ALGORITHM | 16 | 2731 |
-| INTEGRATION | 60 | 14556 |
-| INFRASTRUCTURE | 21 | 6599 |
+| INTEGRATION | 61 | 14783 |
+| INFRASTRUCTURE | 20 | 6197 |
 | REVIEW_REQUIRED | 0 | 0 |
 
 ## Custom persistent markers
 
-- `PRAGMA user_version`: `crates/memoria-authority/src/db.rs`
 - `tombstone`: `crates/memoria-derived/src/catalog.rs`, `crates/memoria-derived/src/gc.rs`, `crates/memoria-derived/src/lib.rs`, `crates/memoria-derived/src/vector.rs`, `crates/memoria-runtime/src/engine.rs`
 - `segment`: `crates/memoria-derived/src/catalog.rs`, `crates/memoria-derived/src/compiler.rs`, `crates/memoria-derived/src/gc.rs`, `crates/memoria-derived/src/lib.rs`, `crates/memoria-derived/src/projection/embedding_view.rs`, `crates/memoria-derived/src/vector.rs`, `crates/memoria-runtime/src/engine.rs`
 - `compaction`: `crates/memoria-derived/src/lib.rs`, `crates/memoria-derived/src/vector.rs`
@@ -41,6 +40,7 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 
 | Concern | Candidate |
 | --- | --- | 
+| Markdown/MDX syntax foundation | markdown = 1.0.0 |
 | SQLite schema migration | rusqlite_migration = 2.6.0 |
 | atomic source-object writes | atomic-write-file = 0.3.0 |
 | TypeScript provider retry | p-retry = 8.0.0 |
@@ -67,13 +67,13 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `crates/memoria-adaptive/src/checkpoint.rs` | INFRASTRUCTURE | 30 | Adaptive persistence and checkpoint mechanics |
 | `crates/memoria-adaptive/src/event.rs` | DOMAIN | 164 | Adaptive event and feedback semantics |
 | `crates/memoria-adaptive/src/lib.rs` | INFRASTRUCTURE | 19 | Adaptive persistence and checkpoint mechanics |
-| `crates/memoria-adaptive/src/log.rs` | INFRASTRUCTURE | 696 | Adaptive persistence and checkpoint mechanics |
+| `crates/memoria-adaptive/src/log.rs` | INFRASTRUCTURE | 700 | Adaptive persistence and checkpoint mechanics |
 | `crates/memoria-adaptive/src/model.rs` | DOMAIN | 214 | Adaptive event and feedback semantics |
 | `crates/memoria-adaptive/src/purge.rs` | DOMAIN | 15 | Adaptive event and feedback semantics |
 | `crates/memoria-adaptive/src/reducer.rs` | DOMAIN | 66 | Adaptive event and feedback semantics |
 | `crates/memoria-adaptive/src/reset.rs` | INFRASTRUCTURE | 29 | Adaptive persistence and checkpoint mechanics |
-| `crates/memoria-authority/src/cas.rs` | INFRASTRUCTURE | 220 | Authority storage and file mechanics |
-| `crates/memoria-authority/src/db.rs` | INFRASTRUCTURE | 329 | Authority storage and file mechanics |
+| `crates/memoria-authority/src/cas.rs` | INFRASTRUCTURE | 74 | Authority storage and file mechanics |
+| `crates/memoria-authority/src/db.rs` | INFRASTRUCTURE | 324 | Authority storage and file mechanics |
 | `crates/memoria-authority/src/integrity.rs` | INFRASTRUCTURE | 701 | Authority storage and file mechanics |
 | `crates/memoria-authority/src/layout.rs` | INFRASTRUCTURE | 171 | Authority storage and file mechanics |
 | `crates/memoria-authority/src/lib.rs` | INFRASTRUCTURE | 26 | Authority storage and file mechanics |
@@ -84,8 +84,8 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `crates/memoria-authority/src/read.rs` | DOMAIN | 482 | Authority lifecycle and mutation semantics |
 | `crates/memoria-authority/src/schema.rs` | INFRASTRUCTURE | 297 | Authority storage and file mechanics |
 | `crates/memoria-derived/src/artifact.rs` | INFRASTRUCTURE | 163 | Custom Derived physical artifact infrastructure |
-| `crates/memoria-derived/src/catalog.rs` | INFRASTRUCTURE | 1521 | Custom Derived physical artifact infrastructure |
-| `crates/memoria-derived/src/compiler.rs` | INTEGRATION | 245 | Derived projection and provider integration |
+| `crates/memoria-derived/src/catalog.rs` | INFRASTRUCTURE | 1525 | Custom Derived physical artifact infrastructure |
+| `crates/memoria-derived/src/compiler.rs` | INTEGRATION | 258 | Derived projection and provider integration |
 | `crates/memoria-derived/src/dependency.rs` | INTEGRATION | 199 | Derived projection and provider integration |
 | `crates/memoria-derived/src/embedding.rs` | INTEGRATION | 283 | Derived projection and provider integration |
 | `crates/memoria-derived/src/enrichment.rs` | INTEGRATION | 272 | Derived projection and provider integration |
@@ -104,7 +104,7 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `crates/memoria-derived/src/projection/structural.rs` | INTEGRATION | 61 | Derived projection and provider integration |
 | `crates/memoria-derived/src/projection/tags.rs` | INTEGRATION | 83 | Derived projection and provider integration |
 | `crates/memoria-derived/src/projection/temporal.rs` | INTEGRATION | 58 | Derived projection and provider integration |
-| `crates/memoria-derived/src/scheduler.rs` | INFRASTRUCTURE | 195 | Custom Derived physical artifact infrastructure |
+| `crates/memoria-derived/src/scheduler.rs` | INFRASTRUCTURE | 209 | Custom Derived physical artifact infrastructure |
 | `crates/memoria-derived/src/status.rs` | DOMAIN | 29 | Derived snapshot and lifecycle domain metadata |
 | `crates/memoria-derived/src/tag_dictionary.rs` | INTEGRATION | 139 | Derived projection and provider integration |
 | `crates/memoria-derived/src/tag_graph.rs` | INTEGRATION | 308 | Derived projection and provider integration |
@@ -112,16 +112,16 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `crates/memoria-mdx/src/canonical.rs` | DOMAIN | 215 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/diff.rs` | DOMAIN | 265 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/ir.rs` | DOMAIN | 185 | Restricted MDX and canonical Memory semantics |
-| `crates/memoria-mdx/src/lib.rs` | DOMAIN | 55 | Restricted MDX and canonical Memory semantics |
+| `crates/memoria-mdx/src/lib.rs` | DOMAIN | 33 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/lint.rs` | DOMAIN | 83 | Restricted MDX and canonical Memory semantics |
+| `crates/memoria-mdx/src/mdast_adapter.rs` | DOMAIN | 389 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/patch.rs` | DOMAIN | 516 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/profile.rs` | DOMAIN | 195 | Restricted MDX and canonical Memory semantics |
-| `crates/memoria-mdx/src/semantic_lexer.rs` | INFRASTRUCTURE | 273 | Custom Markdown/MDX lexical foundation |
-| `crates/memoria-mdx/src/source.rs` | DOMAIN | 79 | Restricted MDX and canonical Memory semantics |
+| `crates/memoria-mdx/src/source.rs` | DOMAIN | 85 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/syntax.rs` | DOMAIN | 53 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/test_support.rs` | DOMAIN | 19 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-mdx/src/time.rs` | DOMAIN | 197 | Restricted MDX and canonical Memory semantics |
-| `crates/memoria-mdx/src/validate.rs` | DOMAIN | 374 | Restricted MDX and canonical Memory semantics |
+| `crates/memoria-mdx/src/validate.rs` | DOMAIN | 353 | Restricted MDX and canonical Memory semantics |
 | `crates/memoria-napi/src/convert.rs` | INTEGRATION | 1205 | N-API integration boundary |
 | `crates/memoria-napi/src/error.rs` | INTEGRATION | 7 | N-API integration boundary |
 | `crates/memoria-napi/src/lib.rs` | INTEGRATION | 346 | N-API integration boundary |
@@ -158,7 +158,7 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `crates/memoria-runtime/src/backup.rs` | INTEGRATION | 440 | Runtime and provider boundary integration |
 | `crates/memoria-runtime/src/diagnostics.rs` | INFRASTRUCTURE | 31 | Generic runtime diagnostics plumbing |
 | `crates/memoria-runtime/src/discovery.rs` | INTEGRATION | 54 | Runtime and provider boundary integration |
-| `crates/memoria-runtime/src/engine.rs` | INTEGRATION | 2923 | Runtime and provider boundary integration |
+| `crates/memoria-runtime/src/engine.rs` | INTEGRATION | 2965 | Runtime and provider boundary integration |
 | `crates/memoria-runtime/src/lib.rs` | INTEGRATION | 47 | Runtime and provider boundary integration |
 | `crates/memoria-runtime/src/limits.rs` | INTEGRATION | 46 | Runtime and provider boundary integration |
 | `crates/memoria-runtime/src/privacy.rs` | INTEGRATION | 243 | Runtime and provider boundary integration |
@@ -175,7 +175,8 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `crates/memoria-types/src/lib.rs` | DOMAIN | 31 | Memoria type and identity semantics |
 | `crates/memoria-types/src/snapshot.rs` | DOMAIN | 158 | Memoria type and identity semantics |
 | `crates/memoria-types/src/time.rs` | DOMAIN | 87 | Memoria type and identity semantics |
-| `scripts/library-first/inventory.mjs` | INTEGRATION | 292 | Library-first tooling and benchmark integration |
+| `scripts/library-first/inventory.mjs` | INTEGRATION | 295 | Library-first tooling and benchmark integration |
+| `scripts/library-first/verify-policy.mjs` | INTEGRATION | 154 | Library-first tooling and benchmark integration |
 | `scripts/run-tests.mjs` | INTEGRATION | 31 | Library-first tooling and benchmark integration |
 | `scripts/verify-docs.mjs` | INTEGRATION | 192 | Library-first tooling and benchmark integration |
 | `scripts/verify-memory-skill.mjs` | INTEGRATION | 35 | Library-first tooling and benchmark integration |
@@ -201,6 +202,6 @@ This report classifies source modules before library substitution. `REVIEW_REQUI
 | `src/index.ts` | INTEGRATION | 43 | TypeScript native and provider integration |
 | `src/native/binding.ts` | INTEGRATION | 17 | TypeScript native and provider integration |
 | `src/native/protocol.ts` | INTEGRATION | 423 | TypeScript native and provider integration |
-| `src/providers/host.ts` | INTEGRATION | 291 | TypeScript native and provider integration |
-| `src/providers/types.ts` | INTEGRATION | 148 | TypeScript native and provider integration |
+| `src/providers/host.ts` | INTEGRATION | 304 | TypeScript native and provider integration |
+| `src/providers/types.ts` | INTEGRATION | 150 | TypeScript native and provider integration |
 | `src/retrieval/rerank.ts` | ALGORITHM | 105 | TypeScript retrieval integration algorithm |

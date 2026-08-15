@@ -5,7 +5,6 @@ mod lint;
 mod mdast_adapter;
 mod patch;
 mod profile;
-mod semantic_lexer;
 mod source;
 mod syntax;
 mod time;

@@ -2,11 +2,11 @@
 
 ## Restricted MDX and canonical IR
 
-The MDX crate parses Markdown syntax and a closed semantic profile. Its
-semantic lexer is protected from code spans/fenced code, rejects unsupported
-runtime constructs, validates attributes and references, and emits a
-canonical `MemoryIr` with a `SemanticHash` and source mappings. Canonical IR is
-Derived from Authority source; raw MDX is not sent directly to providers.
+The MDX crate uses markdown-rs as its Markdown/MDX syntax foundation and owns a
+closed semantic profile. The Memoria adapter rejects unsupported runtime
+constructs, validates literal attributes and references, and emits a canonical
+`MemoryIr` with a `SemanticHash` and source mappings. Canonical IR is Derived
+from Authority source; raw MDX is not sent directly to providers.
 
 Typed patch operations preserve source while changing a bounded semantic
 target. Transition, correction, supersession, and merge are explicit revision
