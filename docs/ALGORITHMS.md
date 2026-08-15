@@ -88,6 +88,31 @@ provider-free lexical profile; advanced operators remain explicit until a
 broader corpus and measured budgets justify a default change. See
 [ADR 0002](decisions/0002-retrieval-defaults.md).
 
+## Physical serving executor
+
+The production query path is a Rust-owned Physical Query Executor, not a
+choice between mutually exclusive Exact, Lexical, and Semantic branches. A
+snapshot-pinned query can execute lexical, direct semantic, Tag Basis
+residual, Tag readout, Activation, Diffusion, Relation, and exact channels as
+its compiled capabilities and quality profile allow. Their ranked evidence is
+merged with RRF (`k = 60`), correlation-aware support/structure bonuses, and
+one consolidated candidate per Memory before optional reranking.
+
+Semantic direct retrieval remains present when the Tag Basis residual channel
+is used. Required capabilities never silently degrade under
+`onNotReady: "wait"`; the operation waits for readiness or returns a
+capability error.
+Reranking consumes the actual consolidated candidate handles and provider
+scores are applied once at the query barrier. The optional
+`QueryOperatorTrace` is diagnostics-only and reports the channels and bounded
+counters that the executor actually ran.
+
+The runtime retrieval benchmark uses this public path end to end: it creates a
+temporary Store, writes Authority records, waits for Derived/provider
+coverage, calls `Memoria.query()`, and measures the returned trace. It does
+not reproduce retrieval scoring in TypeScript. See [runtime retrieval
+validation](reports/runtime-retrieval-validation.md).
+
 The planner keeps the original operators behind bounded quality profiles:
 Tag-driven seeding and Space-local readout, Tag Basis projection/residuals,
 bounded Activation, independent normalized Graph Diffusion, propagation
@@ -100,10 +125,14 @@ are independently traced and remain available in the Thorough profile.
 
 ## Adaptive V1
 
-Adaptive state is replayed from explicit feedback events keyed by Space and
-Memory, with revision evidence retained separately. The prior has a fixed
-maximum influence and is applied only as a bounded tie-breaker over admissible
-base candidates. Accessibility decays at read time; it is not an exclusion
-filter. The event log and materialized state are persisted in `adaptive.sqlite`
-and reopened before query snapshots are built, preserving the Adaptive
-generation across restart. See [ADR 0003](decisions/0003-adaptive-v1.md).
+Adaptive state is built from explicit feedback events keyed by Space and
+Memory, with revision evidence retained separately. The event log and
+materialized state are persisted in `adaptive.sqlite` and reopened before
+query snapshots are built. A query reads the materialized snapshot pinned to
+its compiled Adaptive generation; it does not replay the complete event log on
+every request.
+
+The prior has a fixed maximum influence and is applied only as a bounded
+tie-breaker over admissible base candidates. Adaptive is absent unless the
+query explicitly requests the capability. Accessibility decays at read time;
+it is not an exclusion filter. See [ADR 0003](decisions/0003-adaptive-v1.md).

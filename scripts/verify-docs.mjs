@@ -19,6 +19,7 @@ const requiredFiles = [
   "docs/TESTING.md",
   "docs/CONFIGURATION.md",
   "docs/TROUBLESHOOTING.md",
+  "docs/reports/runtime-retrieval-validation.md",
 ];
 const requiredTopics = [
   "MDX Authority",
@@ -76,6 +77,39 @@ for (const path of files) {
   contents.set(path, text);
   failures.push(...findForbiddenTerms(path, text));
   failures.push(...findBrokenLinks(path, text));
+}
+
+const remediationAdr = contents.get(
+  join(root, "docs", "decisions", "0013-runtime-remediation-complete.md"),
+);
+const runtimeValidationReport = contents.get(
+  join(root, "docs", "reports", "runtime-retrieval-validation.md"),
+);
+const requiredCompletionEvidence = [
+  "QueryOperatorTrace",
+  "Memoria.query()",
+  "benchmarks/retrieval/run.ts",
+  "hard-constraint violations",
+  "no TypeScript retrieval simulator",
+  "Local gate status: PASS",
+];
+for (const marker of requiredCompletionEvidence) {
+  if (
+    !remediationAdr?.includes(marker) &&
+    !runtimeValidationReport?.includes(marker)
+  ) {
+    failures.push(
+      `ADR 0013 completion evidence is missing required runtime marker: ${marker}`,
+    );
+  }
+}
+if (
+  remediationAdr?.match(/Status[\s\S]{0,80}Accepted/i) &&
+  !remediationAdr.includes("production serving integration complete")
+) {
+  failures.push(
+    "ADR 0013 cannot claim Accepted without the production serving integration status",
+  );
 }
 
 const allText = [...contents.values()].join("\n").toLowerCase();

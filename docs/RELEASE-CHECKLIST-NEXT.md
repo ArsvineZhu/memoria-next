@@ -19,16 +19,16 @@ system has passed. GitHub Actions are intentionally disabled for this line.
 
 ## Local verification gates
 
-The following checks passed on 2026-08-14 from source baseline
-`622d89245c5e49eaeaaf3a8430a9ada7f0a338c5`:
+The following checks passed on 2026-08-14 from the runtime evidence commit
+`9f4240873d562ea781358396f91056ed2fb72901`:
 
 - [x] `cargo fmt --all -- --check`
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [x] `cargo test --workspace`
+- [x] `cargo test --workspace -- --test-threads=1`
 - [x] `corepack pnpm format:check`
 - [x] `corepack pnpm lint`
 - [x] `corepack pnpm typecheck`
-- [x] `corepack pnpm test` — 78 TypeScript tests passed after the Rust suite.
+- [x] `corepack pnpm test:ts` — 100 TypeScript tests passed after the Rust suite.
 - [x] `corepack pnpm verify:docs`
 - [x] `corepack pnpm verify:public`
 - [x] `corepack pnpm verify:pack`
@@ -38,13 +38,19 @@ The following checks passed on 2026-08-14 from source baseline
 - [x] `corepack pnpm exec tsx benchmarks/incremental/run.ts`
 - [x] `corepack pnpm exec tsx benchmarks/adaptive/replay.ts --adaptive=on`
 
-The retrieval fixtures recorded the following safety and quality values:
+The runtime retrieval fixture and acceptance results are recorded in
+[runtime retrieval validation](reports/runtime-retrieval-validation.md).
+The benchmark uses the public Runtime path and real `QueryOperatorTrace`; its
+deterministic local-provider metrics are evidence of execution and regression
+behavior, not production-scale latency claims. The acceptance runner kept the
+provider-free lexical profile as the Balanced default and retained advanced
+operators as explicit capabilities.
 
-| Profile  | Recall@k | MRR      | NDCG@k   | Provider/ANN/rerank calls | Hard-constraint violations |
-| -------- | -------- | -------- | -------- | ------------------------- | -------------------------- |
-| Fast     | `1`      | `1`      | `0.9532` | `0/0/0`                   | `0`                        |
-| Balanced | `1`      | `1`      | `0.9532` | `0/0/0`                   | `0`                        |
-| Thorough | `1`      | `0.9375` | `0.9387` | `8/8/8`                   | `0`                        |
+The default parallel `cargo test --workspace` wrapper was also attempted, but
+this Windows workstation intermittently returned OS error 33 while temporary
+Derived/Tantivy files were being created or removed. The full Rust workspace
+passed with one test thread; this is an environment-specific test execution
+note, not a serving assertion failure.
 
 The incremental harness recorded two embedding, 16 enrichment, and zero
 rerank calls. Formatting/comment-only, EntityRef-only, explicit-Tag-only,

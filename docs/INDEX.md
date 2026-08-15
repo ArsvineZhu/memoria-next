@@ -2,17 +2,18 @@
 
 ## Current behavior
 
-| Document                                               | Purpose                                                                                       | Canonical owner                                                       |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)                     | Layering, ownership, authority boundaries, and runtime flow                                   | Rust workspace and TypeScript source                                  |
-| [API.md](API.md)                                       | Public package imports, `Memoria` methods, errors, providers, and Agent tools                 | `src/index.ts` and generated declarations                             |
-| [PERSISTENCE.md](PERSISTENCE.md)                       | Store layout, generations, revision history, CAS, lock, backup, transfer, and purge           | `memoria-authority` and `memoria-runtime`                             |
-| [ALGORITHMS.md](ALGORITHMS.md)                         | MDX/IR, invalidation, Derived projections, query channels, Tags, graph evidence, and Adaptive | `memoria-mdx`, `memoria-derived`, `memoria-query`, `memoria-adaptive` |
-| [CONFIGURATION.md](CONFIGURATION.md)                   | Validated `createMemoria` configuration and privacy/resource boundaries                       | `src/domain/config.ts` and `src/engine/create-memoria.ts`             |
-| [TESTING.md](TESTING.md)                               | Local Rust, TypeScript, package, benchmark, and documentation gates                           | `package.json`, Cargo workspace, scripts                              |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)               | Failure classification and safe recovery                                                      | error mapping, tests, and release checks                              |
-| [NATIVE-MATRIX.md](NATIVE-MATRIX.md)                   | Native build/load and local platform release matrix                                           | `crates/memoria-napi`, local release checks                           |
-| [RELEASE-CHECKLIST-NEXT.md](RELEASE-CHECKLIST-NEXT.md) | Release-hardening checklist and open platform evidence                                        | local release gates and Gate J                                        |
+| Document                                                                   | Purpose                                                                                       | Canonical owner                                                       |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                                         | Layering, ownership, authority boundaries, and runtime flow                                   | Rust workspace and TypeScript source                                  |
+| [API.md](API.md)                                                           | Public package imports, `Memoria` methods, errors, providers, and Agent tools                 | `src/index.ts` and generated declarations                             |
+| [PERSISTENCE.md](PERSISTENCE.md)                                           | Store layout, generations, revision history, CAS, lock, backup, transfer, and purge           | `memoria-authority` and `memoria-runtime`                             |
+| [ALGORITHMS.md](ALGORITHMS.md)                                             | MDX/IR, invalidation, Derived projections, query channels, Tags, graph evidence, and Adaptive | `memoria-mdx`, `memoria-derived`, `memoria-query`, `memoria-adaptive` |
+| [CONFIGURATION.md](CONFIGURATION.md)                                       | Validated `createMemoria` configuration and privacy/resource boundaries                       | `src/domain/config.ts` and `src/engine/create-memoria.ts`             |
+| [TESTING.md](TESTING.md)                                                   | Local Rust, TypeScript, package, benchmark, and documentation gates                           | `package.json`, Cargo workspace, scripts                              |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                                   | Failure classification and safe recovery                                                      | error mapping, tests, and release checks                              |
+| [NATIVE-MATRIX.md](NATIVE-MATRIX.md)                                       | Native build/load and local platform release matrix                                           | `crates/memoria-napi`, local release checks                           |
+| [RELEASE-CHECKLIST-NEXT.md](RELEASE-CHECKLIST-NEXT.md)                     | Release-hardening checklist and open platform evidence                                        | local release gates and Gate J                                        |
+| [runtime-retrieval-validation.md](reports/runtime-retrieval-validation.md) | Real Runtime retrieval benchmark, acceptance, and invariant evidence                          | `Memoria.query()` and `QueryOperatorTrace`                            |
 
 ## Decision records
 

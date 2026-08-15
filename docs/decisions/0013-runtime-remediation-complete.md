@@ -2,105 +2,130 @@
 
 ## Status
 
-Accepted — production serving integration verified on Windows.
+Accepted — production serving integration complete on the executed Windows
+matrix. Linux and macOS remain open under platform disposition, and GitHub
+Actions remain disabled by design.
 
-The remediation is complete for the executed Windows matrix. Linux and macOS
-remain open under Platform disposition, and GitHub Actions remain disabled by
-design.
+Local gate status: PASS on the reproducible Windows matrix (Rust workspace
+executed with one test thread; TypeScript suite 100/100).
+
+- Baseline reviewed commit: `605bdbb4860778051c0f6c1218044db89de46e38`
+- Completion evidence commit: `9f4240873d562ea781358396f91056ed2fb72901`
+- Validation record: [runtime retrieval validation](../reports/runtime-retrieval-validation.md)
 
 ## Decision
 
-The remediation plan is implemented as a Rust-owned Authority/Derived/Adaptive
-runtime with explicit provider work, manifest-pinned serving, durable
-governance state, and local release evidence. The production executor pins a
-snapshot, applies hard constraints before ranking, executes the bounded
-lexical, semantic, Tag, propagation, relation, fusion, consolidation, and
-rerank operators, and only applies Adaptive when the compiled query requests
-it. A capability is documented as serving only when the runtime path,
-persistence boundary, regression test, and operator/benchmark evidence all
-agree. Module existence alone is not release evidence.
+Memoria's serving contract is implemented by a Rust-owned Physical Query
+Executor. A query pins its Authority and Derived snapshot, applies scope and
+hard constraints before ranking, executes the requested physical channels,
+fuses and consolidates evidence, crosses a real rerank barrier when requested,
+and applies Adaptive only when the compiled query uses that capability.
 
-## Review-finding traceability
+The TypeScript retrieval benchmark is release evidence only when it creates a
+real Store, writes through Authority, waits for Derived/provider readiness,
+calls public `Memoria.query()`, and measures the returned `QueryOperatorTrace`.
+The checked-in benchmark now follows that path and contains no TypeScript
+retrieval simulator.
 
-The following records each finding from the remediation traceability matrix,
-the implementation commits, the regression evidence, and public API impact.
+## Resolved findings
 
-| Review finding                                                                     | Repair commits                                        | Regression evidence                                                                                                                                                                                 | Public API impact                                                                                                                                                  |
-| ---------------------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Semantic capability could appear ready without usable vectors or an artifact.      | `22b0691`, `68819f7`, `809fa36`, `74747e9`, `9a4dbca` | `memoria-derived/tests/embedding_publication.rs`, `memoria-runtime/tests/semantic_serving.rs`, `tests/integration/semantic-query.test.ts`                                                           | Semantic serving is still explicit; readiness now requires a validated manifest-pinned ANN artifact.                                                               |
-| Embedding work could send raw MDX.                                                 | `2ec56d9`, `16ded00`                                  | `memoria-derived/tests/provider_projection.rs`, `tests/security/provider-egress.test.ts`                                                                                                            | Provider payloads remain projection-shaped; raw source is not a supported provider input.                                                                          |
-| Runtime could rescan Authority or use a substring path instead of Derived serving. | `61f2244`, `c2d4a21`                                  | `memoria-runtime/tests/remediation_baseline.rs::normal_current_query_does_not_reparse_every_authority_source`, `memoria-runtime/tests/serving_path.rs`, `memoria-derived/tests/lexical_artifact.rs` | Current queries use a manifest-pinned Tantivy artifact and Derived records; historical/rebuild paths retain source reads.                                          |
-| Adaptive event/state was process-memory only.                                      | `9a4dbca`, `7461ebe`                                  | `memoria-runtime/tests/adaptive_restart.rs`, `memoria-adaptive/tests/persistence.rs`, `memoria-runtime/tests/adaptive_query_gate.rs`                                                                | Feedback and Adaptive generations survive restart, and query ordering is capability-gated.                                                                         |
-| Background provider/Derived jobs could be lost on restart.                         | `809fa36`, `9a4dbca`                                  | `memoria-derived/tests/scheduler_recovery.rs`, `memoria-runtime/tests/restart_recovery.rs`                                                                                                          | Reopen recovers queued/running durable jobs; provider work remains typed.                                                                                          |
-| Backup copied live SQLite files instead of a consistent snapshot.                  | `cef9f05`                                             | `memoria-runtime/tests/backup_consistency.rs`, `tests/security/backup-restore.test.ts`                                                                                                              | `admin.createBackup` and `restoreBackup` retain their names but now use Rust online backup, pinned generations, reachable CAS verification, and staged activation. |
-| Portable import did not rewrite package-internal `MemoryRef` values.               | `cef9f05`                                             | `memoria-runtime/tests/import_remap.rs::internal_memory_refs_are_rewritten_to_target_memory_ids`, `tests/security/import.test.ts`                                                                   | Import returns target mappings and unresolved external references; internal references are remapped before commit.                                                 |
-| Import idempotency was process-memory only.                                        | `cef9f05`                                             | `memoria-runtime/tests/import_remap.rs::import_retry_after_process_restart_returns_same_mapping`, `::same_idempotency_key_with_different_package_fingerprint_conflicts`                             | Retry is durable; a changed fingerprint returns `IDEMPOTENCY_CONFLICT`.                                                                                            |
-| Purge journal/state was process-memory only.                                       | `cef9f05`                                             | `memoria-runtime/tests/purge_recovery.rs`, `tests/security/purge.test.ts`                                                                                                                           | Purge is a durable `planned → committed → cleaning → completed` operation and resumes after reopen.                                                                |
-| N-API query conversion collapsed structured intent to scope plus text.             | `1510bb5`, `a83e21c`, `e43d81e`                       | `memoria-napi/tests/query_conversion.rs`, `tests/public/native-protocol.test.ts`                                                                                                                    | Structured scope, constraints, history, readiness, budget, and quality remain explicit in the native contract.                                                     |
-| N-API inferred semantic capability from a text cue.                                | `54e535d`, `a83e21c`, `e43d81e`                       | `memoria-napi/tests/query_conversion.rs::text_only_native_query_has_no_semantic_capability`, `tests/integration/remediation-baseline.test.ts`                                                       | Text-only queries remain provider-free; semantic required/preferred must be requested explicitly.                                                                  |
-| Merge `RevisionId` depended on parent input order.                                 | `cef9f05`                                             | `memoria-authority/tests/authority_lifecycle.rs::merge_revision_keeps_all_valid_same_memory_parents`, `::merge_batch_publishes_one_generation_and_updates_head`                                     | Merge identity is deterministic; duplicate/invalid parent sets are rejected.                                                                                       |
-| Restricted MDX accepted raw lowercase HTML.                                        | `cef9f05`                                             | `memoria-mdx/tests/profile_golden.rs`, including script/img/comment/fenced-code cases                                                                                                               | The restricted authoring boundary is narrower: raw HTML is rejected while comments and code remain nonsemantic source text.                                        |
-| EntityRef grammar was duplicated and inconsistent.                                 | `cef9f05`                                             | `memoria-types/tests/entity_ref.rs`, `memoria-mdx/tests/referential_semantics.rs`                                                                                                                   | One canonical namespace-qualified grammar is used across MDX, query, Derived, and N-API conversion.                                                                |
-| Core `kind` used a global rather than element-specific whitelist.                  | `cef9f05`                                             | `memoria-mdx/tests/referential_semantics.rs::core_kind_is_checked_against_the_element_schema`                                                                                                       | Invalid Core kinds are rejected; opaque extension `class` metadata remains allowed.                                                                                |
-| CAS existing-object reuse trusted a corrupt object.                                | `cef9f05`                                             | `memoria-authority/tests/crash_protocol.rs`, CAS unit coverage                                                                                                                                      | Existing CAS objects are rehashed before reuse; a mismatch is surfaced as `CORRUPTION`.                                                                            |
-| SQLite default journaling/busy behavior was weak under reader/writer contention.   | `cef9f05`                                             | `memoria-authority/tests/concurrency.rs`, `memoria-derived/tests/catalog_concurrency.rs`, `memoria-adaptive/tests/concurrency.rs`                                                                   | Authority, Derived, and Adaptive use explicit WAL, busy timeout, and bounded immediate-transaction retry policy.                                                   |
-| Provider privacy was Store-global rather than Space-scoped.                        | `16ded00`, `3219f28`, `c2d4a21`                       | `tests/security/space-provider-policy.test.ts`, `memoria-runtime/tests/query_operation.rs`, `memoria-runtime/tests/provider_trust_gate.rs`                                                          | Space policy is Authority-owned; Rust gates route trust before work emission and TypeScript gates network egress.                                                  |
-| Original algorithms existed but did not participate in serving.                    | `6e1c72f`, `10ec95e`, `39edd0e`, `002e825`, `4b2f6a5` | `memoria-runtime/tests/physical_executor_e2e.rs`, `multichannel_executor.rs`, `physical_executor_regressions.rs`, `retrieval benchmark trace`                                                       | Named channels execute behind bounded profiles; default text retrieval remains provider-free lexical.                                                              |
-| Graph Diffusion was an Activation alias.                                           | `9a4dbca`, `002e825`                                  | `memoria-query/tests/diffusion.rs`, `memoria-query/tests/algorithm_trace.rs`, `memoria-runtime/tests/physical_executor_e2e.rs`                                                                      | Diffusion is independently normalized, budgeted, and traced; it remains a Thorough operator rather than a Balanced default.                                        |
-| Provider rerank scores were returned but discarded.                                | `39edd0e`, `4b2f6a5`                                  | `memoria-runtime/tests/rerank_barrier.rs`, `physical_executor_regressions.rs`, operator trace `rerankApplied`                                                                                       | Provider scores now cross the query operation barrier and affect post-consolidation ordering.                                                                      |
-| Required semantic plus `wait` could silently degrade to lexical fallback.          | `09977d2`                                             | `memoria-runtime/tests/capability_wait.rs`, `physical_executor_regressions.rs`                                                                                                                      | Required capabilities remain hard contracts; timeout/readiness failure is surfaced instead of degraded fallback.                                                   |
-| Semantic and lexical execution were mutually exclusive.                            | `d5f3774`, `6e1c72f`, `10ec95e`                       | `memoria-runtime/tests/multichannel_executor.rs`, `physical_executor_e2e.rs`                                                                                                                        | Explicit semantic queries retain lexical evidence and fuse multiple retrieval channels.                                                                            |
-| Semantic publication could be lost after a compatible Authority generation moved.  | `fa731ab`, `c2d4a21`                                  | `memoria-derived/tests/semantic_rebase.rs`, `memoria-runtime/tests/semantic_rebase.rs`, `semantic_serving.rs`                                                                                       | Compatible immutable payloads rebase to the latest revision/space/generation; changed content supersedes them.                                                     |
-| Tag provenance weights were defined but absent from propagation dynamics.          | `f863611`                                             | `memoria-query/tests/provenance_weighting.rs`                                                                                                                                                       | Activation and Diffusion seed mass now honors Explicit, ExactSupport, Semantic, Generated, and Inherited provenance weights.                                       |
-| The retrieval benchmark simulated algorithms outside the production Runtime.       | `344f4b0`, `4b2f6a5`                                  | `benchmarks/retrieval/run.ts`, runtime operator trace, deterministic local providers                                                                                                                | Benchmark profiles create a real Store, write through Authority, build Derived, call native `Memoria.query()`, and measure the returned trace.                     |
+| Finding                                                       | Current resolution                                                                                                                                                                                                        | Production-path evidence                                                                                           |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Original algorithms existed without serving participation     | Physical executor runs lexical, direct semantic, Tag Basis residual, Tag readout, Activation, Diffusion, Relation, fusion, support/structure, consolidation, rerank, and Recall Assessment stages behind bounded profiles | `physical_executor_e2e`, `multichannel_executor`, `production_algorithm_channels`, and the runtime benchmark trace |
+| Rerank scores were discarded                                  | Rerank work is built from actual consolidated candidates, stored across the query barrier, validated, and applied once                                                                                                    | `rerank_barrier`, `physical_executor_regressions`, runtime `rerankApplied` trace                                   |
+| Required semantic wait degraded to lexical                    | Required capability remains a hard contract; wait ends in readiness or `CAPABILITY_NOT_READY`                                                                                                                             | `capability_wait`, `physical_executor_regressions`                                                                 |
+| Semantic replaced lexical                                     | Explicit semantic execution retains the lexical channel and fuses both rank lists                                                                                                                                         | `multichannel_executor`, `physical_executor_e2e`                                                                   |
+| Semantic publication lost after a compatible generation moved | Compatible immutable artifacts rebase to the latest serving generation; changed projections supersede late work                                                                                                           | `semantic_rebase`, `phase2_integration`                                                                            |
+| Adaptive was applied unconditionally or replayed per query    | Adaptive is capability-gated and reads a snapshot-pinned materialized state                                                                                                                                               | `adaptive_query_gate`, `adaptive_restart`                                                                          |
+| Provenance weights were metadata-only                         | Activation and Diffusion seed mass uses the locked Explicit, ExactSupport, Semantic, Generated, and Inherited weights                                                                                                     | `provenance_weighting`, `phase2_integration`                                                                       |
+| Thorough budget did not match the locked profile              | Thorough uses 192 active tags, 4096 edge visits, 4 hops, and independent Diffusion                                                                                                                                        | `retrieval_profiles`, `phase2_integration`                                                                         |
+| Rust provider trust gate was incomplete                       | Rust resolves route trust and Space policy before emitting external work; TypeScript remains a second egress gate                                                                                                         | `provider_trust_gate`, `phase2_integration`                                                                        |
+| Benchmark simulated retrieval outside Runtime                 | Fixture, fake providers, public query, diagnostics trace, metrics, ablations, and acceptance all run through the real Runtime                                                                                             | `benchmark-runtime-path.test.ts`, `runtime-ablation.test.ts`, and `runtime-retrieval-validation.md`                |
 
-## Durability and security invariants
+## Production-path evidence
 
-The final local gate covers zero provider calls for text-only queries, explicit
-semantic behavior, Rust-owned pending query work, vector round trips, zero raw
-MDX provider leakage, manifest-only semantic readiness, zero normal current
-Authority reparses, persisted lexical and ANN contribution, Tag
-Basis/Residual, Activation, Diffusion, Relation, fusion, consolidation, and
-post-consolidation rerank traces, hard-constraint ordering, generated-Tag
-restart persistence, job and Adaptive recovery, backup identity consistency,
-import reference remapping, purge recovery, raw HTML rejection, single-source
-EntityRef validation, merge canonicalization, CAS corruption rejection,
-SQLite contention, Space provider policy, and the packed consumer.
+The focused serving evidence is covered by these Rust suites:
 
-The public surface changes are intentional and limited to the hard-reset
-contract: native backup/restore/import entry points are generated and wired,
-`CORRUPTION` is recognized by the TypeScript error mapper, provider route
-availability is explicit, and the restricted MDX/EntityRef/kind validation
-boundary rejects inputs that were previously accepted ambiguously. The query
-response now carries an optional operator trace for serving evidence; existing
-`Memoria` method names remain stable.
+- `cargo test -p memoria-runtime --test physical_executor_e2e`
+- `cargo test -p memoria-runtime --test physical_executor_regressions`
+- `cargo test -p memoria-runtime --test multichannel_executor`
+- `cargo test -p memoria-runtime --test phase2_integration`
+- `cargo test -p memoria-runtime --test rerank_barrier`
+- `cargo test -p memoria-runtime --test capability_wait`
+- `cargo test -p memoria-runtime --test adaptive_query_gate`
+- `cargo test -p memoria-runtime --test provider_trust_gate`
+- `cargo test -p memoria-runtime --test semantic_rebase`
 
-## Benchmark disposition
+The public and benchmark evidence is covered by:
 
-The checked-in retrieval fixture now runs through the real Windows native
-Runtime path: temporary Store, Authority writes, Derived build, deterministic
-local provider work, `Memoria.query()`, and returned `QueryOperatorTrace`.
-Every profile in the final `--profile all` run reported `runtimeBacked: true`
-and zero hard-constraint violations. The table is one final fixture run, not a
-production latency claim or a normative quality threshold.
+- `tests/public/query-diagnostics.test.ts`
+- `tests/integration/benchmark-runtime-path.test.ts`
+- `tests/integration/retrieval-benchmark-metrics.test.ts`
+- `tests/integration/runtime-ablation.test.ts`
+- `tests/integration/retrieval-acceptance.test.ts`
+- `tests/integration/remediation-baseline.test.ts`
 
-| Profile            | Recall@K |    MRR | nDCG@K | Provider calls | ANN searches | Graph visits | Diffusion iterations | Rerank calls |
-| ------------------ | -------: | -----: | -----: | -------------: | -----------: | -----------: | -------------------: | -----------: |
-| lexical            |   0.4583 | 0.4167 | 0.3585 |              0 |            0 |            0 |                    0 |            0 |
-| lexical+semantic   |   0.9583 | 0.7542 | 0.7125 |              8 |           16 |            0 |                    0 |            0 |
-| tag-basis-residual |   1.0000 | 0.6750 | 0.7377 |              8 |           16 |          132 |                    0 |            0 |
-| diffusion          |   0.6250 | 0.5625 | 0.5666 |              0 |            0 |           51 |                   32 |            0 |
-| rerank             |   0.4583 | 0.4000 | 0.3247 |              4 |            0 |            0 |                    0 |            4 |
-| thorough           |   1.0000 | 0.6250 | 0.6602 |             16 |           16 |          132 |                   64 |            8 |
+The release commands are:
 
-The trace also observed `exact`, `lexical`, `semantic-direct`,
-`semantic-residual`, `tag-readout`, `activation`, `diffusion`, and `relation`
-channels in the profiles that request them. The benchmark deliberately uses
-local deterministic providers and does not claim external-provider latency or
-quality.
+```text
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile fast
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile thorough
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced --ablation all
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --evaluate-acceptance
+```
 
-## Platform disposition
+The generated report paths and hashes from the executed run are recorded in
+[runtime retrieval validation](../reports/runtime-retrieval-validation.md).
 
-Windows `win32-x64-msvc` is the executed local matrix. Linux and macOS remain
-OPEN until their native hosts execute the same matrix. GitHub Actions remain
-disabled by design and are not substituted for local platform evidence.
+## Algorithm preservation
+
+The following original algorithm surfaces remain implemented and are proven
+through the real executor rather than only by isolated module tests:
+
+- Tag Basis projection and semantic-residual retrieval;
+- direct semantic retrieval as an independent channel;
+- scoped Tag readout and provenance-weighted Activation;
+- independent normalized Graph Diffusion;
+- explicit Relation expansion;
+- RRF fusion with `k = 60`;
+- support/structure bonuses and correlation suppression;
+- hierarchical evidence consolidation;
+- real provider reranking after consolidation;
+- Recall, accessibility, and effort assessment;
+- capability-gated Adaptive ordering from the materialized snapshot.
+
+## Profile disposition
+
+The acceptance runner compares every candidate against the same eight-query
+fixture set. It applies these exact promotion rules:
+
+```text
+hard-constraint violations == 0
+overall nDCG@10 decrease <= 0.005 absolute
+target Recall@10 improvement >= 0.05 absolute
+P95 latency increase <= 25%
+no new provider call without the corresponding requested capability
+```
+
+The executed deterministic local-provider run promoted no advanced profile to
+Balanced. The automatically selected Balanced default remains provider-free
+lexical; advanced semantic, associative, rerank, and Adaptive capabilities
+remain explicit, and Diffusion remains Thorough-only. This is a measured
+profile decision, not a claim that the algorithms are absent or incorrect.
+
+## Known limitations
+
+- The measured provider is deterministic and local; its latency and ranking
+  values are not external-provider or production-scale claims.
+- The benchmark fixture is intentionally small and is a regression/proof
+  corpus, not a substitute for a larger relevance evaluation.
+- The executed native matrix is Windows `win32-x64-msvc`; Linux and macOS
+  still require their native local matrices.
+- Benchmark result files are ignored machine artifacts. Their exact paths and
+  SHA-256 values are recorded for this validation run, but they are not
+  committed as package data.
+- The default parallel Rust workspace wrapper can encounter transient Windows
+  OS error 33 while temporary Derived/Tantivy files are created or removed;
+  the serialized workspace gate passes and the failure is not a serving
+  assertion or product error.

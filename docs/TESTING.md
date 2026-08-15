@@ -83,6 +83,28 @@ The incremental release harness is run with:
 corepack pnpm exec tsx benchmarks/incremental/run.ts
 ```
 
+The retrieval benchmark is release evidence only through the real Runtime
+path. Each run creates a temporary Store, writes through Authority, waits for
+Derived/provider coverage, calls public `Memoria.query()`, and measures the
+opt-in `QueryOperatorTrace`; it does not contain a TypeScript retrieval
+simulator. Run the profile and acceptance gates with:
+
+```text
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile fast
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile thorough
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --profile balanced --ablation all
+corepack pnpm exec tsx benchmarks/retrieval/run.ts --evaluate-acceptance
+```
+
+The runner writes ignored JSON/Markdown reports under
+`benchmarks/retrieval/results/`. Acceptance compares the same labeled query
+set and enforces zero hard-constraint violations, no more than a 0.005 nDCG
+drop, at least +0.05 target Recall@10, no more than a 25% P95 increase, and no
+unrequested provider calls. The current deterministic fixture keeps the
+provider-free lexical profile as the Balanced default; advanced capabilities
+remain explicit. See [runtime retrieval validation](reports/runtime-retrieval-validation.md).
+
 The release validation runs the `fast`, `balanced`, and `thorough` retrieval
 profiles plus the incremental harness. The profiles are diagnostic fixture
 measurements, not production latency claims. The incremental harness must

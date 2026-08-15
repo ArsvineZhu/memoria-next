@@ -1,7 +1,7 @@
 # ADR 0015: Serving integration hardening
 
-- Status: Accepted for Phase 2 integration; Phase 3 runtime benchmark and
-  acceptance evidence remain required before ADR 0013 can be accepted.
+- Status: Accepted; Phase 2 integration and Phase 3 runtime benchmark/
+  acceptance evidence are complete for the executed Windows matrix.
 - Date: 2026-08-14
 
 ## Context
@@ -67,6 +67,8 @@ The integrated Phase 2 regression suite is
 `crates/memoria-runtime/tests/phase2_integration.rs`. It exercises semantic
 publication, generated-versus-explicit Tag ranking, runtime Diffusion,
 provider work emission, and the serving trace. The same runtime-selected
-quality levels are checked against the locked planner budgets. Phase 3 must
-add the real runtime benchmark fixture, opt-in diagnostics, metrics, ablations,
-acceptance rules, and final report.
+quality levels are checked against the locked planner budgets. Phase 3 adds
+the real runtime benchmark fixture, opt-in diagnostics, metrics, ablations,
+acceptance rules, and final report. Those Phase 3 deliverables are now present
+and summarized in [ADR 0013](0013-runtime-remediation-complete.md) and the
+[runtime retrieval validation report](../reports/runtime-retrieval-validation.md).

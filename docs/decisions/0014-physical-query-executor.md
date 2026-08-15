@@ -104,7 +104,8 @@ The TypeScript regression suite additionally verifies that the public text-only
 query contract does not infer Semantic capability and that readiness pending
 continues through the native operation protocol.
 
-ADR 0013 remains incomplete until the Phase 2 publication/provider fixes and
-the Phase 3 real-runtime benchmark provide release evidence. This ADR records
-the serving architecture and its Phase 1 proof; it does not turn a module or a
-simulated benchmark into completion evidence.
+ADR 0013 is now accepted after the Phase 2 publication/provider fixes and the
+Phase 3 real-runtime benchmark provided release evidence. This ADR records
+the serving architecture and its Phase 1 proof; the completion decision is
+recorded in [ADR 0013](0013-runtime-remediation-complete.md) and its runtime
+validation report.

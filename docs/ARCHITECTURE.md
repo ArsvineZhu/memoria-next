@@ -100,17 +100,28 @@ silent success.
 
 ## Query and learning flow
 
-The Host supplies a structured scope and cue. The Rust query pipeline applies
-scope and hard constraints, resolves admissible references at a pinned
-snapshot, gathers exact/lexical/structural/temporal/relation/semantic/Tag
-evidence, and consolidates results without duplicate evidence. Reranking and
-advanced graph operators are explicit capabilities.
+The Host supplies a structured scope and cue. The Rust Physical Query Executor
+pins the Authority/Derived snapshot, applies scope and hard constraints before
+ranking, resolves admissible references, and executes the requested physical
+channels. Exact, lexical, direct semantic, Tag Basis residual, Tag readout,
+Activation, Diffusion, Relation, and structural/temporal evidence are separate
+ranked inputs to RRF fusion and correlation-aware consolidation. Reranking and
+advanced graph operators are explicit capabilities; semantic does not replace
+lexical, and required capability readiness never silently degrades.
 
-Adaptive ranking reads a bounded replayed model only after ordinary query
-admissibility. It learns from explicit feedback tied to a retrieval receipt;
-retrieval exposure, top-K selection, or an unused result is not feedback.
-The event log and materialized state are durable in `adaptive.sqlite`, so a
-restart preserves the Adaptive generation and replayable events.
+The query operation stores typed provider work and results across asynchronous
+barriers. Rerank scores are applied to the actual consolidated candidates, and
+the optional `QueryOperatorTrace` is emitted only when diagnostics are
+requested. The runtime retrieval benchmark exercises this public
+`Memoria.query()` path with a real Store and deterministic providers; it does
+not implement a parallel retrieval simulator.
+
+Adaptive ranking reads a bounded materialized snapshot only after ordinary
+query admissibility and only when the compiled query requests Adaptive. It
+learns from explicit feedback tied to a retrieval receipt; retrieval exposure,
+top-K selection, or an unused result is not feedback. The event log and
+materialized state are durable in `adaptive.sqlite`, so a restart preserves the
+Adaptive generation without requiring a full event-log replay per query.
 
 ## Host and Agent boundary
 
