@@ -30,6 +30,7 @@ pub struct SemanticElement {
     span: Range<usize>,
     attributes: Vec<SemanticAttribute>,
     self_closing: bool,
+    text: String,
 }
 
 impl SemanticElement {
@@ -51,6 +52,10 @@ impl SemanticElement {
     #[must_use]
     pub fn self_closing(&self) -> bool {
         self.self_closing
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -85,10 +90,21 @@ pub(crate) fn make_element(
     attributes: Vec<SemanticAttribute>,
     self_closing: bool,
 ) -> SemanticElement {
+    make_element_with_text(name, span, attributes, self_closing, String::new())
+}
+
+pub(crate) fn make_element_with_text(
+    name: String,
+    span: Range<usize>,
+    attributes: Vec<SemanticAttribute>,
+    self_closing: bool,
+    text: String,
+) -> SemanticElement {
     SemanticElement {
         name,
         span,
         attributes,
         self_closing,
+        text,
     }
 }

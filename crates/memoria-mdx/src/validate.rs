@@ -27,7 +27,6 @@ pub fn parse_and_validate(source: &str) -> Result<ValidatedDocument, MdxError> {
 pub fn validate_parsed(parsed: ParsedSource) -> Result<ValidatedDocument, MdxError> {
     let mut nodes = Vec::new();
     let mut ids = HashMap::<SemanticNodeId, std::ops::Range<usize>>::new();
-    let source = parsed.source().to_owned();
     for element in parsed.semantic_elements() {
         if nodes.len() >= MAX_SEMANTIC_ELEMENTS {
             return Err(MdxError::ResourceLimit {
@@ -65,7 +64,7 @@ pub fn validate_parsed(parsed: ParsedSource) -> Result<ValidatedDocument, MdxErr
                 span: element.span(),
             });
         }
-        let text = element_text(&source, element)?;
+        let text = element.text().to_owned();
         if text.len() > MAX_ELEMENT_TEXT_BYTES {
             return Err(MdxError::ResourceLimit {
                 resource: "semantic element text",
@@ -330,27 +329,6 @@ fn parse_temporal_attribute(
             })
         })
         .transpose()
-}
-
-fn element_text(source: &str, element: &SemanticElement) -> Result<String, MdxError> {
-    let span = element.span();
-    let Some(open_end_relative) = source[span.clone()].find('>') else {
-        return Err(MdxError::MalformedElement {
-            message: "element opening tag is not closed".to_owned(),
-            span,
-        });
-    };
-    let open_end = span.start + open_end_relative + 1;
-    if element.self_closing() {
-        return Ok(String::new());
-    }
-    let Some(close_start_relative) = source[open_end..span.end].rfind("</") else {
-        return Err(MdxError::UnclosedElement {
-            name: element.name().to_owned(),
-            span,
-        });
-    };
-    Ok(source[open_end..open_end + close_start_relative].to_owned())
 }
 
 fn valid_source_locator(value: &str) -> bool {
