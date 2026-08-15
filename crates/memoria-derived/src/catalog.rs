@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::{collections::BTreeSet, fs, thread, time::Duration};
+use std::{collections::BTreeSet, fs, time::Duration};
 
+use backon::{BlockingRetryable, ExponentialBuilder};
 use memoria_types::{AuthorityGeneration, MemoryId, RevisionId, SpaceId};
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -1308,22 +1309,20 @@ impl DerivedCatalog {
     }
 
     pub(crate) fn begin_immediate_with_retry(&self) -> Result<Transaction<'_>, DerivedError> {
-        self.begin_immediate_with_retry_count(0)
+        (|| Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate))
+            .retry(Self::sqlite_retry_policy())
+            .when(is_busy_or_locked)
+            .call()
+            .map_err(Into::into)
     }
 
-    fn begin_immediate_with_retry_count(
-        &self,
-        retry: usize,
-    ) -> Result<Transaction<'_>, DerivedError> {
-        const RETRY_DELAYS_MS: [u64; 3] = [10, 50, 200];
-        match Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate) {
-            Ok(transaction) => Ok(transaction),
-            Err(error) if is_busy_or_locked(&error) && retry < RETRY_DELAYS_MS.len() => {
-                thread::sleep(Duration::from_millis(RETRY_DELAYS_MS[retry]));
-                self.begin_immediate_with_retry_count(retry + 1)
-            }
-            Err(error) => Err(error.into()),
-        }
+    fn sqlite_retry_policy() -> ExponentialBuilder {
+        ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(10))
+            .with_factor(4.0)
+            .with_max_delay(Duration::from_millis(200))
+            .with_max_times(3)
+            .with_jitter()
     }
 }
 

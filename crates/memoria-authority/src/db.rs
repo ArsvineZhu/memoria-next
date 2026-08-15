@@ -1,10 +1,10 @@
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
-    thread,
     time::Duration,
 };
 
+use backon::{BlockingRetryable, ExponentialBuilder};
 use memoria_types::{AuthorityGeneration, MemoriaError};
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 use rusqlite_migration::{M, Migrations, SchemaVersion};
@@ -178,22 +178,19 @@ fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
 }
 
 fn begin_immediate_with_retry(connection: &Connection) -> rusqlite::Result<Transaction<'_>> {
-    begin_immediate_with_retry_count(connection, 0)
+    (|| Transaction::new_unchecked(connection, TransactionBehavior::Immediate))
+        .retry(sqlite_retry_policy())
+        .when(is_busy_or_locked)
+        .call()
 }
 
-fn begin_immediate_with_retry_count(
-    connection: &Connection,
-    retry: usize,
-) -> rusqlite::Result<Transaction<'_>> {
-    const RETRY_DELAYS_MS: [u64; 3] = [10, 50, 200];
-    match Transaction::new_unchecked(connection, TransactionBehavior::Immediate) {
-        Ok(transaction) => Ok(transaction),
-        Err(error) if is_busy_or_locked(&error) && retry < RETRY_DELAYS_MS.len() => {
-            thread::sleep(Duration::from_millis(RETRY_DELAYS_MS[retry]));
-            begin_immediate_with_retry_count(connection, retry + 1)
-        }
-        Err(error) => Err(error),
-    }
+fn sqlite_retry_policy() -> ExponentialBuilder {
+    ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(10))
+        .with_factor(4.0)
+        .with_max_delay(Duration::from_millis(200))
+        .with_max_times(3)
+        .with_jitter()
 }
 
 fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
@@ -202,6 +199,56 @@ fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if matches!(failure.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn transient_busy_is_retried_and_non_busy_error_is_not() {
+        let busy_attempts = AtomicUsize::new(0);
+        let busy_result: rusqlite::Result<()> = (|| {
+            let attempt = busy_attempts.fetch_add(1, Ordering::Relaxed);
+            if attempt < 2 {
+                Err(sqlite_failure(ErrorCode::DatabaseBusy))
+            } else {
+                Ok(())
+            }
+        })
+        .retry(sqlite_retry_policy())
+        .when(is_busy_or_locked)
+        .sleep(|_| {})
+        .call();
+
+        assert!(busy_result.is_ok());
+        assert_eq!(busy_attempts.load(Ordering::Relaxed), 3);
+
+        let non_busy_attempts = AtomicUsize::new(0);
+        let non_busy_result: rusqlite::Result<()> = (|| {
+            non_busy_attempts.fetch_add(1, Ordering::Relaxed);
+            Err(sqlite_failure(ErrorCode::ConstraintViolation))
+        })
+        .retry(sqlite_retry_policy())
+        .when(is_busy_or_locked)
+        .sleep(|_| {})
+        .call();
+
+        assert!(non_busy_result.is_err());
+        assert_eq!(non_busy_attempts.load(Ordering::Relaxed), 1);
+    }
+
+    fn sqlite_failure(code: ErrorCode) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code,
+                extended_code: 0,
+            },
+            None,
+        )
+    }
 }
 
 fn initialize_schema(connection: &mut Connection) -> rusqlite::Result<()> {

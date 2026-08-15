@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
+backon = "=1.6.0"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rusqlite_migration = "=2.6.0"
 serde = { version = "1.0.229", features = ["derive"] }

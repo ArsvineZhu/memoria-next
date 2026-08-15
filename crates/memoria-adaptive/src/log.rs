@@ -7,12 +7,13 @@ use rusqlite::{
 };
 use rusqlite_migration::{M, Migrations};
 use sha2::{Digest, Sha256};
-use std::{thread, time::Duration};
+use std::time::Duration;
 
 use crate::{
     AdaptiveCheckpoint, AdaptiveError, AdaptiveEvent, AdaptiveReadSnapshot, AdaptiveStateV1,
     FeedbackEventInput,
 };
+use backon::{BlockingRetryable, ExponentialBuilder};
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS adaptive_meta(
@@ -478,22 +479,19 @@ fn insert_event(
 }
 
 fn begin_immediate_with_retry(connection: &Connection) -> rusqlite::Result<Transaction<'_>> {
-    begin_immediate_with_retry_count(connection, 0)
+    (|| Transaction::new_unchecked(connection, TransactionBehavior::Immediate))
+        .retry(sqlite_retry_policy())
+        .when(is_busy_or_locked)
+        .call()
 }
 
-fn begin_immediate_with_retry_count(
-    connection: &Connection,
-    retry: usize,
-) -> rusqlite::Result<Transaction<'_>> {
-    const RETRY_DELAYS_MS: [u64; 3] = [10, 50, 200];
-    match Transaction::new_unchecked(connection, TransactionBehavior::Immediate) {
-        Ok(transaction) => Ok(transaction),
-        Err(error) if is_busy_or_locked(&error) && retry < RETRY_DELAYS_MS.len() => {
-            thread::sleep(Duration::from_millis(RETRY_DELAYS_MS[retry]));
-            begin_immediate_with_retry_count(connection, retry + 1)
-        }
-        Err(error) => Err(error),
-    }
+fn sqlite_retry_policy() -> ExponentialBuilder {
+    ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(10))
+        .with_factor(4.0)
+        .with_max_delay(Duration::from_millis(200))
+        .with_max_times(3)
+        .with_jitter()
 }
 
 fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
