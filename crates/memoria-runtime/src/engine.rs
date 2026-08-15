@@ -28,9 +28,9 @@ use memoria_query::{
     ReadSession, ReadinessBehavior, RelationLink, RerankBatch, RerankScore as QueryRerankScore,
     RetrievalResponse, SemanticCandidateIndex, SemanticChannel, SemanticResidualOperator,
     SemanticResolution, TagSeedProvenance, TagVectorCandidate, apply_rerank, assess,
-    build_rerank_batch, build_response, execute_algorithm_channels, execute_exact, execute_lexical,
-    execute_semantic, fuse_candidate_pool, rank_with_adaptive, rerank_limit_for_quality,
-    resolve_explicit_tag_seeds,
+    build_rerank_batch, build_response, execute_algorithm_channels_with_state, execute_exact,
+    execute_lexical, execute_semantic, fuse_candidate_pool, rank_with_adaptive,
+    rerank_limit_for_quality, resolve_explicit_tag_seeds,
 };
 use memoria_types::{AuthorityGeneration, MemoriaError, MemoryId, RevisionId, SpaceId};
 use sha2::{Digest, Sha256};
@@ -47,7 +47,10 @@ use crate::provider::{
     ProviderWorkResult, RerankBatchRequest, validate_provider_result,
 };
 use crate::purge::{PurgeCoordinator, PurgePlan, PurgeState};
-use crate::query_operation::{QueryOperationStage, QueryOperationTable, QueryStep, QueryWork};
+use crate::query_operation::{
+    QueryOperationPayload, QueryOperationStage, QueryOperationState, QueryOperationTable,
+    QueryStep, QueryWork,
+};
 use crate::receipt::{FeedbackCommit, FeedbackSubmission, ReceiptError, RetrievalReceipt};
 use crate::status::RuntimeStatus;
 use crate::transfer::{PortableImportRequest, PortableMemory, rewrite_memory_ref_source};
@@ -274,6 +277,11 @@ impl SemanticResidualOperator for RuntimeSemanticResidualOperator<'_> {
         )
         .results)
     }
+}
+
+struct QueryStageResult {
+    response: RetrievalResponse,
+    state: QueryOperationState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -866,14 +874,18 @@ impl MemoriaRuntime {
         let semantic_pending = requested_semantic && compiled.execution.used("semantic");
         if semantic_pending {
             let work = query_embedding_work(&query, space_policy, semantic_route);
+            let state = QueryOperationState::with_plan(PhysicalQueryPlanner::plan(&compiled));
             let operation_id = if let Some(operation_id) = continuation_operation_id {
                 self.query_operations.replace_provider(
                     &operation_id,
                     compiled.clone(),
                     work.clone(),
-                    None,
-                    None,
-                    adaptive_snapshot.clone(),
+                    QueryOperationPayload {
+                        pending_response: None,
+                        rerank_batch: None,
+                        adaptive_snapshot: adaptive_snapshot.clone(),
+                        state,
+                    },
                 );
                 operation_id
             } else {
@@ -881,20 +893,23 @@ impl MemoriaRuntime {
                     compiled.query.clone(),
                     compiled,
                     work.clone(),
-                    None,
-                    None,
-                    adaptive_snapshot.clone(),
+                    QueryOperationPayload {
+                        pending_response: None,
+                        rerank_batch: None,
+                        adaptive_snapshot: adaptive_snapshot.clone(),
+                        state,
+                    },
                 )
             };
             return Ok(QueryStep::ProviderPending { operation_id, work });
         }
 
-        let response = self.execute_compiled_query_stage(&compiled, None)?;
+        let stage = self.execute_compiled_query_stage(&compiled, None)?;
         if compiled.execution.used("reranking") {
             return self.begin_rerank_barrier(
                 compiled.query.clone(),
                 compiled,
-                response,
+                stage,
                 continuation_operation_id,
                 space_policy,
                 adaptive_snapshot,
@@ -906,7 +921,7 @@ impl MemoriaRuntime {
         }
         Ok(QueryStep::Complete(self.finalize_query_response(
             &compiled,
-            response,
+            stage.response,
             adaptive_snapshot.as_ref(),
         )?))
     }
@@ -915,11 +930,15 @@ impl MemoriaRuntime {
         &mut self,
         query: MemoryQuery,
         compiled: memoria_query::CompiledQuery,
-        mut response: RetrievalResponse,
+        stage: QueryStageResult,
         continuation_operation_id: Option<String>,
         space_policy: SpaceProviderPolicy,
         adaptive_snapshot: Option<AdaptiveReadSnapshot>,
     ) -> Result<QueryStep, RuntimeError> {
+        let QueryStageResult {
+            mut response,
+            state,
+        } = stage;
         let batch = build_rerank_batch(
             query.cue.text.join(" "),
             &response.results,
@@ -985,9 +1004,12 @@ impl MemoriaRuntime {
                         &operation_id,
                         compiled,
                         work.clone(),
-                        Some(response),
-                        Some(batch),
-                        adaptive_snapshot.clone(),
+                        QueryOperationPayload {
+                            pending_response: Some(response),
+                            rerank_batch: Some(batch),
+                            adaptive_snapshot: adaptive_snapshot.clone(),
+                            state,
+                        },
                     );
                     operation_id
                 } else {
@@ -995,9 +1017,12 @@ impl MemoriaRuntime {
                         query,
                         compiled,
                         work.clone(),
-                        Some(response),
-                        Some(batch),
-                        adaptive_snapshot,
+                        QueryOperationPayload {
+                            pending_response: Some(response),
+                            rerank_batch: Some(batch),
+                            adaptive_snapshot,
+                            state,
+                        },
                     )
                 };
                 Ok(QueryStep::ProviderPending { operation_id, work })
@@ -1229,12 +1254,12 @@ impl MemoriaRuntime {
             .as_ref()
             .expect("embedding operation must have a compiled query")
             .clone();
-        let response = self.execute_compiled_query_stage(&compiled, query_vector.clone())?;
+        let stage = self.execute_compiled_query_stage(&compiled, query_vector.clone())?;
         if compiled.execution.used("reranking") {
             return self.begin_rerank_barrier(
                 compiled.query.clone(),
                 compiled,
-                response,
+                stage,
                 Some(operation_id.to_owned()),
                 operation
                     .work
@@ -1249,7 +1274,7 @@ impl MemoriaRuntime {
         self.query_operations.cleanup(now);
         Ok(QueryStep::Complete(self.finalize_query_response(
             &compiled,
-            response,
+            stage.response,
             operation.adaptive_snapshot.as_ref(),
         )?))
     }
@@ -1356,15 +1381,15 @@ impl MemoriaRuntime {
         query_vector: Option<Vec<f32>>,
     ) -> Result<RetrievalResponse, RuntimeError> {
         let adaptive_snapshot = self.adaptive_snapshot_for(&compiled)?;
-        let response = self.execute_compiled_query_stage(&compiled, query_vector)?;
-        self.finalize_query_response(&compiled, response, adaptive_snapshot.as_ref())
+        let stage = self.execute_compiled_query_stage(&compiled, query_vector)?;
+        self.finalize_query_response(&compiled, stage.response, adaptive_snapshot.as_ref())
     }
 
     fn execute_compiled_query_stage(
         &mut self,
         compiled: &memoria_query::CompiledQuery,
         query_vector: Option<Vec<f32>>,
-    ) -> Result<RetrievalResponse, RuntimeError> {
+    ) -> Result<QueryStageResult, RuntimeError> {
         let records =
             self.records_for_query(&compiled.query, compiled.snapshot.authority_generation)?;
         let exact = ExactIndex::new(records);
@@ -1375,6 +1400,7 @@ impl MemoriaRuntime {
             capability_degraded: compiled.execution.degraded,
             ..QueryOperatorTrace::default()
         };
+        let mut tag_basis = None;
 
         if plan.channels.contains(&PhysicalChannel::Exact) {
             pool.insert_response(PhysicalChannel::Exact, execute_exact(compiled, &exact));
@@ -1437,14 +1463,16 @@ impl MemoriaRuntime {
                 compiled,
                 exact: &exact,
             };
-            trace.merge(execute_algorithm_channels(
+            let algorithm_state = execute_algorithm_channels_with_state(
                 compiled,
                 query_vector.as_deref().unwrap_or(&[]),
                 &exact,
                 &mut pool,
                 &inputs,
                 Some(&residual_operator),
-            )?);
+            )?;
+            trace.merge(algorithm_state.trace);
+            tag_basis = algorithm_state.tag_basis;
         }
 
         let fused = fuse_candidate_pool(
@@ -1460,17 +1488,32 @@ impl MemoriaRuntime {
             .iter()
             .map(|candidate| candidate.correlation_suppressed_evidence)
             .sum();
-        let candidates = fused;
+        let fused_candidates = fused;
+        let fused_evidence = fused_candidates
+            .iter()
+            .map(|candidate| candidate.evidence.clone())
+            .collect::<Vec<_>>();
         self.next_retrieval_id = self.next_retrieval_id.saturating_add(1);
         let mut response = build_response(
             format!("RET_{}", self.next_retrieval_id),
             compiled,
-            candidates,
+            fused_candidates,
         )?;
         response.trace = trace;
         response.trace.rerank_requested = compiled.execution.used("reranking");
         response.assessment = assess(&response.results);
-        Ok(response)
+        Ok(QueryStageResult {
+            state: QueryOperationState {
+                plan: Some(plan),
+                query_vector,
+                tag_basis,
+                candidate_pool: pool,
+                fused_candidates: fused_evidence,
+                consolidated: response.results.clone(),
+                trace: Some(response.trace.clone()),
+            },
+            response,
+        })
     }
 
     fn finalize_query_response(
@@ -2918,5 +2961,102 @@ fn work_id(work: &NeedWork) -> &str {
         NeedWork::Embeddings(request) => &request.work_id,
         NeedWork::Rerank(request) => &request.work_id,
         NeedWork::Enrichment(request) => &request.work_id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::EmbeddingVector;
+
+    use super::*;
+
+    fn drain_background_work(runtime: &mut MemoriaRuntime) {
+        while let Some(work) = runtime.provider_poll_work().unwrap() {
+            match work {
+                NeedWork::Embeddings(request) => {
+                    let vectors = request
+                        .items
+                        .iter()
+                        .map(|item| EmbeddingVector {
+                            key: item.key.clone(),
+                            values: vec![1.0; DEFAULT_EMBEDDING_DIMENSIONS],
+                        })
+                        .collect();
+                    runtime
+                        .provider_submit_result(ProviderWorkResult::Embeddings {
+                            work_id: request.work_id,
+                            vectors,
+                        })
+                        .unwrap();
+                }
+                NeedWork::Enrichment(request) => runtime
+                    .provider_submit_result(ProviderWorkResult::Enrichment {
+                        work_id: request.work_id,
+                        tags: Vec::new(),
+                    })
+                    .unwrap(),
+                NeedWork::Rerank(request) => {
+                    panic!("unexpected background rerank work: {}", request.work_id)
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn query_operation_persists_query_vector_across_rerank_barrier() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runtime = MemoriaRuntime::open(directory.path()).unwrap();
+        let space = runtime.create_space("personal").unwrap();
+        runtime
+            .create_memory(space, Some("career"), b"# Career\nRust systems work")
+            .unwrap();
+        drain_background_work(&mut runtime);
+
+        let query = MemoryQuery::builder()
+            .spaces(vec![space])
+            .text_cue("career")
+            .require_capability("semantic")
+            .prefer_capability("reranking")
+            .wait_for(Duration::from_secs(1))
+            .build()
+            .unwrap();
+        let QueryStep::ProviderPending {
+            operation_id,
+            work: QueryWork::Embedding(work),
+        } = runtime.query_start(query).unwrap()
+        else {
+            panic!("expected query embedding work");
+        };
+
+        let step = runtime
+            .query_resume(
+                &operation_id,
+                ProviderWorkResult::Embeddings {
+                    work_id: work.work_id,
+                    vectors: vec![EmbeddingVector {
+                        key: "query".to_owned(),
+                        values: vec![1.0; DEFAULT_EMBEDDING_DIMENSIONS],
+                    }],
+                },
+            )
+            .unwrap();
+        assert!(matches!(step, QueryStep::ProviderPending { .. }));
+
+        let operation = runtime
+            .query_operations
+            .get(&operation_id)
+            .expect("rerank barrier must retain query operation");
+        assert_eq!(
+            operation.query_vector,
+            Some(vec![1.0; DEFAULT_EMBEDDING_DIMENSIONS])
+        );
+        assert!(operation.plan.is_some());
+        assert!(!operation.candidate_pool.by_key.is_empty());
+        assert!(!operation.fused_candidates.is_empty());
+        assert!(!operation.consolidated.is_empty());
+        assert!(operation.rerank_batch.is_some());
+        assert!(operation.trace.is_some());
     }
 }

@@ -50,9 +50,10 @@ pub use exact::{
     ExactIndex, ExactRecord, MemoryReference, ReferenceStatus, ResolvedReference, execute_exact,
 };
 pub use executor::{
-    AdaptivePolicy, AlgorithmChannelInputs, CandidateKey, CandidatePool, CompiledConstraints,
-    DerivedUnitId, PhysicalChannel, PhysicalQueryPlan, PhysicalQueryPlanner, RerankPolicy,
-    SemanticResidualOperator, execute_algorithm_channels,
+    AdaptivePolicy, AlgorithmChannelExecution, AlgorithmChannelInputs, CandidateKey, CandidatePool,
+    CompiledConstraints, DerivedUnitId, PhysicalChannel, PhysicalQueryPlan, PhysicalQueryPlanner,
+    RerankPolicy, SemanticResidualOperator, execute_algorithm_channels,
+    execute_algorithm_channels_with_state,
 };
 pub use fusion::{
     FusedCandidate, RRF_K, fuse_candidate_pool, fuse_channels, fuse_channels_scoped,

@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use memoria_adaptive::AdaptiveReadSnapshot;
-use memoria_query::{CompiledQuery, MemoryQuery, RerankBatch, RerankScore, RetrievalResponse};
+use memoria_query::{
+    CandidateEvidence, CandidatePool, CompiledQuery, MemoryQuery, MemoryResult, PhysicalQueryPlan,
+    QueryOperatorTrace, RerankBatch, RerankScore, RetrievalResponse, TagBasisResult,
+};
 use memoria_types::MemoryId;
 
 use crate::privacy::ProviderRoute;
@@ -79,17 +82,51 @@ pub enum QueryOperationStage {
     Complete,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct QueryOperationState {
+    pub(crate) plan: Option<PhysicalQueryPlan>,
+    pub(crate) query_vector: Option<Vec<f32>>,
+    pub(crate) tag_basis: Option<TagBasisResult>,
+    pub(crate) candidate_pool: CandidatePool,
+    pub(crate) fused_candidates: Vec<CandidateEvidence>,
+    pub(crate) consolidated: Vec<MemoryResult>,
+    pub(crate) trace: Option<QueryOperatorTrace>,
+}
+
+impl QueryOperationState {
+    #[must_use]
+    pub(crate) fn with_plan(plan: PhysicalQueryPlan) -> Self {
+        Self {
+            plan: Some(plan),
+            ..Self::default()
+        }
+    }
+}
+
+pub(crate) struct QueryOperationPayload {
+    pub(crate) pending_response: Option<RetrievalResponse>,
+    pub(crate) rerank_batch: Option<RerankBatch>,
+    pub(crate) adaptive_snapshot: Option<AdaptiveReadSnapshot>,
+    pub(crate) state: QueryOperationState,
+}
+
 #[derive(Clone, Debug)]
 pub struct QueryOperation {
     pub(crate) query: MemoryQuery,
     pub(crate) compiled: Option<CompiledQuery>,
+    pub(crate) plan: Option<PhysicalQueryPlan>,
     pub(crate) stage: QueryOperationStage,
     pub(crate) work: Option<QueryWork>,
     pub(crate) pending_response: Option<RetrievalResponse>,
+    pub(crate) query_vector: Option<Vec<f32>>,
+    pub(crate) tag_basis: Option<TagBasisResult>,
+    pub(crate) candidate_pool: CandidatePool,
+    pub(crate) fused_candidates: Vec<CandidateEvidence>,
+    pub(crate) consolidated: Vec<MemoryResult>,
     pub(crate) rerank_batch: Option<RerankBatch>,
     pub(crate) rerank_scores: Option<Vec<RerankScore>>,
+    pub(crate) trace: Option<QueryOperatorTrace>,
     pub(crate) adaptive_snapshot: Option<AdaptiveReadSnapshot>,
-    pub(crate) query_vector: Option<Vec<f32>>,
     pub(crate) created_at: Instant,
     pub(crate) expires_at: Instant,
     pub(crate) readiness_deadline: Option<Instant>,
@@ -102,6 +139,16 @@ impl QueryOperation {
     pub fn is_expired(&self, now: Instant) -> bool {
         now >= self.expires_at
             || now.saturating_duration_since(self.created_at) >= QUERY_OPERATION_TTL
+    }
+
+    fn apply_state(&mut self, state: QueryOperationState) {
+        self.plan = state.plan;
+        self.query_vector = state.query_vector;
+        self.tag_basis = state.tag_basis;
+        self.candidate_pool = state.candidate_pool;
+        self.fused_candidates = state.fused_candidates;
+        self.consolidated = state.consolidated;
+        self.trace = state.trace;
     }
 }
 
@@ -116,39 +163,40 @@ impl QueryOperationTable {
         query: MemoryQuery,
         compiled: CompiledQuery,
         work: QueryWork,
-        pending_response: Option<RetrievalResponse>,
-        rerank_batch: Option<RerankBatch>,
-        adaptive_snapshot: Option<AdaptiveReadSnapshot>,
+        payload: QueryOperationPayload,
     ) -> String {
         let now = Instant::now();
         let mut operations = self.operations.borrow_mut();
         loop {
             let operation_id = MemoryId::new().to_string();
             if !operations.contains_key(&operation_id) {
-                operations.insert(
-                    operation_id.clone(),
-                    QueryOperation {
-                        query,
-                        compiled: Some(compiled),
-                        stage: match &work {
-                            QueryWork::Embedding(_) => {
-                                QueryOperationStage::WaitingForQueryEmbedding
-                            }
-                            QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
-                        },
-                        work: Some(work),
-                        pending_response,
-                        rerank_batch,
-                        rerank_scores: None,
-                        adaptive_snapshot,
-                        query_vector: None,
-                        created_at: now,
-                        expires_at: now + QUERY_OPERATION_TTL,
-                        readiness_deadline: None,
-                        deadline_unix_ms: None,
-                        cancelled: false,
+                let mut operation = QueryOperation {
+                    query,
+                    compiled: Some(compiled),
+                    plan: None,
+                    stage: match &work {
+                        QueryWork::Embedding(_) => QueryOperationStage::WaitingForQueryEmbedding,
+                        QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
                     },
-                );
+                    work: Some(work),
+                    pending_response: payload.pending_response,
+                    query_vector: None,
+                    tag_basis: None,
+                    candidate_pool: CandidatePool::default(),
+                    fused_candidates: Vec::new(),
+                    consolidated: Vec::new(),
+                    rerank_batch: payload.rerank_batch,
+                    rerank_scores: None,
+                    trace: None,
+                    adaptive_snapshot: payload.adaptive_snapshot,
+                    created_at: now,
+                    expires_at: now + QUERY_OPERATION_TTL,
+                    readiness_deadline: None,
+                    deadline_unix_ms: None,
+                    cancelled: false,
+                };
+                operation.apply_state(payload.state);
+                operations.insert(operation_id.clone(), operation);
                 return operation_id;
             }
         }
@@ -167,13 +215,19 @@ impl QueryOperationTable {
                     QueryOperation {
                         query,
                         compiled: None,
+                        plan: None,
                         stage: QueryOperationStage::WaitingForCapabilities,
                         work: None,
                         pending_response: None,
+                        query_vector: None,
+                        tag_basis: None,
+                        candidate_pool: CandidatePool::default(),
+                        fused_candidates: Vec::new(),
+                        consolidated: Vec::new(),
                         rerank_batch: None,
                         rerank_scores: None,
+                        trace: None,
                         adaptive_snapshot: None,
-                        query_vector: None,
                         created_at: now,
                         expires_at: now + QUERY_OPERATION_TTL,
                         readiness_deadline: Some(deadline),
@@ -191,9 +245,7 @@ impl QueryOperationTable {
         operation_id: &str,
         compiled: CompiledQuery,
         work: QueryWork,
-        pending_response: Option<RetrievalResponse>,
-        rerank_batch: Option<RerankBatch>,
-        adaptive_snapshot: Option<AdaptiveReadSnapshot>,
+        payload: QueryOperationPayload,
     ) {
         let mut operations = self.operations.borrow_mut();
         let operation = operations
@@ -206,11 +258,11 @@ impl QueryOperationTable {
             QueryWork::Rerank(_) => QueryOperationStage::WaitingForRerank,
         };
         operation.work = Some(work);
-        operation.pending_response = pending_response;
-        operation.rerank_batch = rerank_batch;
+        operation.pending_response = payload.pending_response;
+        operation.rerank_batch = payload.rerank_batch;
         operation.rerank_scores = None;
-        operation.adaptive_snapshot = adaptive_snapshot;
-        operation.query_vector = None;
+        operation.adaptive_snapshot = payload.adaptive_snapshot;
+        operation.apply_state(payload.state);
         operation.readiness_deadline = None;
         operation.deadline_unix_ms = None;
     }

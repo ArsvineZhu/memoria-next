@@ -4,7 +4,8 @@ use memoria_derived::{TagDictionary, TagGraph};
 use memoria_types::{MemoryId, RevisionId, SpaceId};
 
 use crate::algorithms::{
-    activation_propagate, diffusion_propagate, l2_norm, project_tag_basis_with_limit,
+    TagBasisResult, activation_propagate, diffusion_propagate, l2_norm,
+    project_tag_basis_with_limit,
 };
 use crate::compile::CompiledQuery;
 use crate::evidence::{
@@ -178,6 +179,12 @@ pub trait SemanticResidualOperator {
     ) -> Result<Vec<CandidateEvidence>, QueryError>;
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AlgorithmChannelExecution {
+    pub trace: QueryOperatorTrace,
+    pub tag_basis: Option<TagBasisResult>,
+}
+
 pub fn execute_algorithm_channels(
     compiled: &CompiledQuery,
     query_vector: &[f32],
@@ -186,6 +193,25 @@ pub fn execute_algorithm_channels(
     inputs: &AlgorithmChannelInputs,
     residual_operator: Option<&dyn SemanticResidualOperator>,
 ) -> Result<QueryOperatorTrace, QueryError> {
+    Ok(execute_algorithm_channels_with_state(
+        compiled,
+        query_vector,
+        exact,
+        pool,
+        inputs,
+        residual_operator,
+    )?
+    .trace)
+}
+
+pub fn execute_algorithm_channels_with_state(
+    compiled: &CompiledQuery,
+    query_vector: &[f32],
+    exact: &ExactIndex,
+    pool: &mut CandidatePool,
+    inputs: &AlgorithmChannelInputs,
+    residual_operator: Option<&dyn SemanticResidualOperator>,
+) -> Result<AlgorithmChannelExecution, QueryError> {
     let plan = PhysicalQueryPlanner::plan(compiled);
     let mut trace = QueryOperatorTrace {
         authority_generation: compiled.snapshot.authority_generation,
@@ -346,7 +372,7 @@ pub fn execute_algorithm_channels(
     if tag_basis.is_none() {
         trace.tag_basis_rank = None;
     }
-    Ok(trace)
+    Ok(AlgorithmChannelExecution { trace, tag_basis })
 }
 
 fn record_channel(
