@@ -10,6 +10,7 @@ license.workspace = true
 test-support = []
 
 [dependencies]
+markdown = "=1.0.0"
 memoria-types = { version = "0.1.0", path = "../memoria-types" }
 pulldown-cmark = "0.13.0"
 sha2 = "0.11.0"

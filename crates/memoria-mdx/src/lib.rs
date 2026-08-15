@@ -2,6 +2,7 @@ mod canonical;
 mod diff;
 mod ir;
 mod lint;
+mod mdast_adapter;
 mod patch;
 mod profile;
 mod semantic_lexer;
@@ -23,6 +24,7 @@ pub use ir::{IrNode, MEMORY_IR_VERSION, MemoryIr, SemanticHash, SourceMapping};
 pub use lint::{
     LintResult, MdxDiagnostic, REFERENTIAL_CLOSURE_RISK, lint_document, parse_validate_and_lint,
 };
+pub use mdast_adapter::{mdast_source_span, parse_mdast};
 pub use memoria_types::RevisionSemanticIntent;
 pub use patch::{
     CorrectionPatch, PatchOp, SupersessionPatch, TransitionState, apply_correction_patch,
