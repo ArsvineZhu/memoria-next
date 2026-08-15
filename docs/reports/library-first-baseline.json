@@ -1,0 +1,1013 @@
+{
+  "summary": {
+    "totalFiles": 149,
+    "totalLoc": 33268,
+    "byClass": {
+      "DOMAIN": {
+        "files": 52,
+        "loc": 9382
+      },
+      "ALGORITHM": {
+        "files": 16,
+        "loc": 2731
+      },
+      "INTEGRATION": {
+        "files": 60,
+        "loc": 14556
+      },
+      "INFRASTRUCTURE": {
+        "files": 21,
+        "loc": 6599
+      },
+      "REVIEW_REQUIRED": {
+        "files": 0,
+        "loc": 0
+      }
+    },
+    "infrastructurePercentage": 0.1983587832151016,
+    "physicalRetrievalLoc": 3732,
+    "dependencyCount": 28,
+    "customPersistentFormats": [
+      {
+        "marker": "PRAGMA user_version",
+        "paths": [
+          "crates/memoria-authority/src/db.rs"
+        ]
+      },
+      {
+        "marker": "tombstone",
+        "paths": [
+          "crates/memoria-derived/src/catalog.rs",
+          "crates/memoria-derived/src/gc.rs",
+          "crates/memoria-derived/src/lib.rs",
+          "crates/memoria-derived/src/vector.rs",
+          "crates/memoria-runtime/src/engine.rs"
+        ]
+      },
+      {
+        "marker": "segment",
+        "paths": [
+          "crates/memoria-derived/src/catalog.rs",
+          "crates/memoria-derived/src/compiler.rs",
+          "crates/memoria-derived/src/gc.rs",
+          "crates/memoria-derived/src/lib.rs",
+          "crates/memoria-derived/src/projection/embedding_view.rs",
+          "crates/memoria-derived/src/vector.rs",
+          "crates/memoria-runtime/src/engine.rs"
+        ]
+      },
+      {
+        "marker": "compaction",
+        "paths": [
+          "crates/memoria-derived/src/lib.rs",
+          "crates/memoria-derived/src/vector.rs"
+        ]
+      },
+      {
+        "marker": "MEMVEC01",
+        "paths": [
+          "crates/memoria-derived/src/vector.rs"
+        ]
+      }
+    ],
+    "customStateMachines": [
+      "crates/memoria-derived/src/gc.rs",
+      "crates/memoria-derived/src/lease.rs",
+      "crates/memoria-derived/src/scheduler.rs"
+    ],
+    "candidates": [
+      [
+        "SQLite schema migration",
+        "rusqlite_migration = 2.6.0"
+      ],
+      [
+        "atomic source-object writes",
+        "atomic-write-file = 0.3.0"
+      ],
+      [
+        "TypeScript provider retry",
+        "p-retry = 8.0.0"
+      ],
+      [
+        "Rust transient retry",
+        "backon = 1.6.0"
+      ],
+      [
+        "generic Rust diagnostics",
+        "tracing = 0.1.44"
+      ],
+      [
+        "association graph container",
+        "petgraph = 0.8.3"
+      ],
+      [
+        "process cache eviction and TTL",
+        "moka = 0.12.15"
+      ],
+      [
+        "physical lexical/vector retrieval",
+        "lancedb = 0.33.0 (POC-gated)"
+      ],
+      [
+        "durable build-job queue",
+        "apalis = 0.7.4 (POC-gated)"
+      ]
+    ]
+  },
+  "files": {
+    "benchmarks/adaptive/replay.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 440,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/encryption/measure.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 274,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/incremental/run.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 327,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/retrieval/acceptance.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 120,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/retrieval/fake-providers.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 95,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/retrieval/metrics.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 304,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/retrieval/report.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 84,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/retrieval/run.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 509,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "benchmarks/retrieval/runtime-fixture.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 254,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "crates/memoria-adaptive/src/checkpoint.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 30,
+      "reason": "Adaptive persistence and checkpoint mechanics"
+    },
+    "crates/memoria-adaptive/src/event.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 164,
+      "reason": "Adaptive event and feedback semantics"
+    },
+    "crates/memoria-adaptive/src/lib.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 19,
+      "reason": "Adaptive persistence and checkpoint mechanics"
+    },
+    "crates/memoria-adaptive/src/log.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 696,
+      "reason": "Adaptive persistence and checkpoint mechanics"
+    },
+    "crates/memoria-adaptive/src/model.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 214,
+      "reason": "Adaptive event and feedback semantics"
+    },
+    "crates/memoria-adaptive/src/purge.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 15,
+      "reason": "Adaptive event and feedback semantics"
+    },
+    "crates/memoria-adaptive/src/reducer.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 66,
+      "reason": "Adaptive event and feedback semantics"
+    },
+    "crates/memoria-adaptive/src/reset.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 29,
+      "reason": "Adaptive persistence and checkpoint mechanics"
+    },
+    "crates/memoria-authority/src/cas.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 220,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-authority/src/db.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 329,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-authority/src/integrity.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 701,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-authority/src/layout.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 171,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-authority/src/lib.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 26,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-authority/src/lock.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 45,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-authority/src/model.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 608,
+      "reason": "Authority lifecycle and mutation semantics"
+    },
+    "crates/memoria-authority/src/mutation.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 1872,
+      "reason": "Authority lifecycle and mutation semantics"
+    },
+    "crates/memoria-authority/src/purge.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 296,
+      "reason": "Authority lifecycle and mutation semantics"
+    },
+    "crates/memoria-authority/src/read.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 482,
+      "reason": "Authority lifecycle and mutation semantics"
+    },
+    "crates/memoria-authority/src/schema.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 297,
+      "reason": "Authority storage and file mechanics"
+    },
+    "crates/memoria-derived/src/artifact.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 163,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-derived/src/catalog.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 1521,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-derived/src/compiler.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 245,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/dependency.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 199,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/embedding.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 283,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/enrichment.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 272,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/gc.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 134,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-derived/src/lease.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 48,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-derived/src/lexical_artifact.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 369,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-derived/src/lib.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 142,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/manifest.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 123,
+      "reason": "Derived snapshot and lifecycle domain metadata"
+    },
+    "crates/memoria-derived/src/projection/embedding_view.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 175,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/entities.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 68,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/lexical.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 197,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/mod.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 17,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/relations.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 74,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/rerank_view.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 83,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/serving.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 79,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/structural.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 61,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/tags.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 83,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/projection/temporal.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 58,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/scheduler.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 195,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-derived/src/status.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 29,
+      "reason": "Derived snapshot and lifecycle domain metadata"
+    },
+    "crates/memoria-derived/src/tag_dictionary.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 139,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/tag_graph.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 308,
+      "reason": "Derived projection and provider integration"
+    },
+    "crates/memoria-derived/src/vector.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 1162,
+      "reason": "Custom Derived physical artifact infrastructure"
+    },
+    "crates/memoria-mdx/src/canonical.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 215,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/diff.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 265,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/ir.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 185,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/lib.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 55,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/lint.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 83,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/patch.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 516,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/profile.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 195,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/semantic_lexer.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 273,
+      "reason": "Custom Markdown/MDX lexical foundation"
+    },
+    "crates/memoria-mdx/src/source.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 79,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/syntax.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 53,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/test_support.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 19,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/time.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 197,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-mdx/src/validate.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 374,
+      "reason": "Restricted MDX and canonical Memory semantics"
+    },
+    "crates/memoria-napi/src/convert.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 1205,
+      "reason": "N-API integration boundary"
+    },
+    "crates/memoria-napi/src/error.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 7,
+      "reason": "N-API integration boundary"
+    },
+    "crates/memoria-napi/src/lib.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 346,
+      "reason": "N-API integration boundary"
+    },
+    "crates/memoria-query/src/adaptive.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 88,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/algorithms/activation.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 193,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/algorithms/diffusion.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 212,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/algorithms/mod.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 18,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/algorithms/structure.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 57,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/algorithms/support.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 71,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/algorithms/tag_basis.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 216,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/assessment.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 86,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-query/src/association.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 140,
+      "reason": "Custom query graph container"
+    },
+    "crates/memoria-query/src/compile.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 59,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/consolidate.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 222,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/continuation.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 115,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/evidence.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 71,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-query/src/exact.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 335,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/executor.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 529,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/fusion.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 268,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/history.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 103,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/lexical.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 131,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/lexical_operator.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 11,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/lib.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 91,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/model.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 348,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-query/src/planner.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 184,
+      "reason": "Query planning and execution integration"
+    },
+    "crates/memoria-query/src/relation_expand.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 172,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/rerank.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 194,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/response.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 42,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-query/src/semantic.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 285,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/snapshot.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 17,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-query/src/tags.rs": {
+      "class": "ALGORITHM",
+      "language": "rust",
+      "loc": 283,
+      "reason": "Original query algorithms and ranking semantics"
+    },
+    "crates/memoria-query/src/trace.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 76,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-query/src/validate.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 115,
+      "reason": "Structured query and retrieval contract types"
+    },
+    "crates/memoria-runtime/src/backup.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 440,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/diagnostics.rs": {
+      "class": "INFRASTRUCTURE",
+      "language": "rust",
+      "loc": 31,
+      "reason": "Generic runtime diagnostics plumbing"
+    },
+    "crates/memoria-runtime/src/discovery.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 54,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/engine.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 2923,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/lib.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 47,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/limits.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 46,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/privacy.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 243,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/provider.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 246,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/purge.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 104,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/query_operation.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 297,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/receipt.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 155,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/status.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 11,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-runtime/src/transfer.rs": {
+      "class": "INTEGRATION",
+      "language": "rust",
+      "loc": 137,
+      "reason": "Runtime and provider boundary integration"
+    },
+    "crates/memoria-types/src/digest.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 93,
+      "reason": "Memoria type and identity semantics"
+    },
+    "crates/memoria-types/src/entity_ref.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 96,
+      "reason": "Memoria type and identity semantics"
+    },
+    "crates/memoria-types/src/error.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 92,
+      "reason": "Memoria type and identity semantics"
+    },
+    "crates/memoria-types/src/id.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 190,
+      "reason": "Memoria type and identity semantics"
+    },
+    "crates/memoria-types/src/lib.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 31,
+      "reason": "Memoria type and identity semantics"
+    },
+    "crates/memoria-types/src/snapshot.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 158,
+      "reason": "Memoria type and identity semantics"
+    },
+    "crates/memoria-types/src/time.rs": {
+      "class": "DOMAIN",
+      "language": "rust",
+      "loc": 87,
+      "reason": "Memoria type and identity semantics"
+    },
+    "scripts/library-first/inventory.mjs": {
+      "class": "INTEGRATION",
+      "language": "javascript",
+      "loc": 292,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "scripts/run-tests.mjs": {
+      "class": "INTEGRATION",
+      "language": "javascript",
+      "loc": 31,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "scripts/verify-docs.mjs": {
+      "class": "INTEGRATION",
+      "language": "javascript",
+      "loc": 192,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "scripts/verify-memory-skill.mjs": {
+      "class": "INTEGRATION",
+      "language": "javascript",
+      "loc": 35,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "scripts/verify-packed-consumer.mjs": {
+      "class": "INTEGRATION",
+      "language": "javascript",
+      "loc": 118,
+      "reason": "Library-first tooling and benchmark integration"
+    },
+    "src/admin/governance.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 398,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/admin/index.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 72,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/agent/identity.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 186,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/agent/index.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 37,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/agent/memory-owner.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 118,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/agent/tools.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 279,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/authoring/index.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 5,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/authoring/serialize.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 25,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/config.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 106,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/documents.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 92,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/errors.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 93,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/feedback.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 106,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/ids.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 15,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/query.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 201,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/spaces.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 40,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/domain/status.ts": {
+      "class": "DOMAIN",
+      "language": "typescript",
+      "loc": 2,
+      "reason": "Public authoring, agent, administration, and domain API"
+    },
+    "src/engine/create-memoria.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 52,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/engine/memoria.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 552,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/index.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 43,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/native/binding.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 17,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/native/protocol.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 423,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/providers/host.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 291,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/providers/types.ts": {
+      "class": "INTEGRATION",
+      "language": "typescript",
+      "loc": 148,
+      "reason": "TypeScript native and provider integration"
+    },
+    "src/retrieval/rerank.ts": {
+      "class": "ALGORITHM",
+      "language": "typescript",
+      "loc": 105,
+      "reason": "TypeScript retrieval integration algorithm"
+    }
+  }
+}
