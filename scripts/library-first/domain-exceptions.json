@@ -1,0 +1,6 @@
+{
+  "QueryOperatorTrace": "Retrieval-domain evidence, not a generic logging framework.",
+  "DerivedManifest": "Memoria-owned snapshot semantics remain after physical artifact replacement.",
+  "SourceBlobHash": "Memoria owns SHA-256 source identity and content-addressed key semantics.",
+  "PurgeDomainJournal": "Purge recovery is a Memoria lifecycle journal, not a generic queue."
+}

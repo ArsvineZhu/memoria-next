@@ -301,6 +301,10 @@ function main(args) {
     }
     return;
   }
+  if (args.includes("--check")) {
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    return;
+  }
   writeReports(inventory, summary);
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 }

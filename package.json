@@ -40,7 +40,8 @@
     "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
     "verify:public": "corepack pnpm typecheck:public",
     "verify:pack": "node scripts/verify-packed-consumer.mjs",
-    "verify:docs": "node scripts/verify-docs.mjs"
+    "verify:docs": "node scripts/verify-docs.mjs",
+    "verify:library-first": "node scripts/library-first/inventory.mjs --check && node scripts/library-first/verify-policy.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
