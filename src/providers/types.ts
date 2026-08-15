@@ -83,7 +83,6 @@ export type ProviderEgressHook = (
 
 export interface ProviderHostOptions {
   providers: ProviderSet;
-  maxAttempts?: number;
   onDataEgress?: ProviderEgressHook;
 }
 
@@ -125,6 +124,10 @@ export function providerFailure(
     code: metadata.code,
     message: metadata.message || "provider execution failed",
   };
+}
+
+export function isRetryableProviderError(error: unknown): boolean {
+  return providerErrorMetadata(error).retryable;
 }
 
 function providerErrorMetadata(error: unknown): {

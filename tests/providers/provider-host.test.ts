@@ -88,24 +88,28 @@ test("provider host rejects rerank scores for unknown handles", async () => {
   );
 });
 
-test("provider host retries provider-specific failures and applies egress policy", async () => {
+test("retryable provider error is retried with bounded policy", async () => {
   let attempts = 0;
   let sentText = "";
+  const seenWorkIds: string[] = [];
   const host = new ProviderHost({
     providers: {
       embedding: {
         trust: "external",
         async execute(work) {
           attempts += 1;
+          seenWorkIds.push(work.workId);
           sentText = work.items[0]?.text ?? "";
           if (attempts === 1) {
-            throw new Error("transient network failure");
+            throw Object.assign(new Error("transient network failure"), {
+              retryable: true,
+              code: "TRANSIENT_PROVIDER",
+            });
           }
           return { vectors: [{ key: "u2", values: [1, 0, 0] }] };
         },
       },
     },
-    maxAttempts: 2,
     onDataEgress(work) {
       if (work.type !== "embedding") {
         return work;
@@ -130,6 +134,42 @@ test("provider host retries provider-specific failures and applies egress policy
   assert.equal(result.workId, "W2");
   assert.equal(attempts, 2);
   assert.equal(sentText, "redacted");
+  assert.deepEqual(seenWorkIds, ["W2", "W2"]);
+});
+
+test("AbortSignal stops provider retries", async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  const host = new ProviderHost({
+    embedding: {
+      trust: "external",
+      async execute() {
+        attempts += 1;
+        controller.abort();
+        throw Object.assign(new Error("cancelled network failure"), {
+          retryable: true,
+          code: "TRANSIENT_PROVIDER",
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      host.execute(
+        {
+          type: "embedding",
+          workId: "W4",
+          signature: "embedding-v1",
+          dimensions: 3,
+          items: [{ key: "u4", text: "career" }],
+        },
+        controller.signal,
+      ),
+    (error: unknown) =>
+      error instanceof DOMException && error.name === "AbortError",
+  );
+  assert.equal(attempts, 1);
 });
 
 test("provider host exposes bounded provider failure", async () => {

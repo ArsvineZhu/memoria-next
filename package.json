@@ -51,5 +51,8 @@
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "p-retry": "8.0.0"
   }
 }

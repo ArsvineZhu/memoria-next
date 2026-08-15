@@ -1,7 +1,9 @@
 import type { NeedWork } from "../native/protocol.js";
+import pRetry from "p-retry";
 import { MemoriaError } from "../domain/errors.js";
 import {
   ProviderExecutionError,
+  isRetryableProviderError,
   type ProviderTrust,
   type EmbeddingPayload,
   type EmbeddingWork,
@@ -13,6 +15,15 @@ import {
   type RerankWork,
   providerRouteSignature,
 } from "./types.js";
+
+const PROVIDER_RETRY_OPTIONS = {
+  retries: 4,
+  factor: 2,
+  minTimeout: 500,
+  maxTimeout: 8_000,
+  randomize: true,
+  maxRetryTime: 30_000,
+} as const;
 
 export interface ProviderEgressPolicy {
   embedding: boolean;
@@ -38,21 +49,15 @@ export function createProviderEgressGuard(
 
 export class ProviderHost {
   readonly #providers: ProviderSet;
-  readonly #maxAttempts: number;
   readonly #onDataEgress: ProviderHostOptions["onDataEgress"];
 
   constructor(options: ProviderSet | ProviderHostOptions) {
     if ("providers" in options) {
       this.#providers = options.providers;
-      this.#maxAttempts = options.maxAttempts ?? 1;
       this.#onDataEgress = options.onDataEgress;
     } else {
       this.#providers = options;
-      this.#maxAttempts = 1;
       this.#onDataEgress = undefined;
-    }
-    if (!Number.isSafeInteger(this.#maxAttempts) || this.#maxAttempts < 1) {
-      throw new Error("provider maxAttempts must be a positive integer");
     }
   }
 
@@ -66,49 +71,58 @@ export class ProviderHost {
       providerTrust(this.#providers, egressWork.type),
     );
     const providerType = egressWork.type;
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
+    let attempts = 0;
+    try {
+      return await pRetry(
+        async () => {
+          const providerResult = await this.executeOnce(egressWork, signal);
+          const embeddings =
+            egressWork.type === "embedding"
+              ? validateEmbeddingPayload(egressWork, providerResult)
+              : undefined;
+          const scores =
+            egressWork.type === "rerank"
+              ? validateRerankPayload(egressWork, providerResult)
+              : undefined;
+          const tags =
+            egressWork.type === "enrichment"
+              ? validateTagEnrichmentPayload(egressWork, providerResult)
+              : undefined;
+          switch (egressWork.type) {
+            case "embedding":
+              return {
+                type: "embeddings",
+                workId: work.workId,
+                vectors: embeddings!,
+              };
+            case "rerank":
+              return { type: "rerank", workId: work.workId, scores: scores! };
+            case "enrichment":
+              return {
+                type: "enrichment",
+                workId: work.workId,
+                tags: tags!,
+              };
+          }
+        },
+        {
+          ...PROVIDER_RETRY_OPTIONS,
+          signal,
+          onFailedAttempt: ({ attemptNumber }) => {
+            attempts = attemptNumber;
+          },
+          shouldRetry: ({ error }) => isRetryableProviderError(error),
+        },
+      );
+    } catch (error) {
       if (signal.aborted) {
-        throw new DOMException("The operation was aborted", "AbortError");
+        throw (
+          signal.reason ??
+          new DOMException("The operation was aborted", "AbortError")
+        );
       }
-      try {
-        const providerResult = await this.executeOnce(egressWork, signal);
-        const embeddings =
-          egressWork.type === "embedding"
-            ? validateEmbeddingPayload(egressWork, providerResult)
-            : undefined;
-        const scores =
-          egressWork.type === "rerank"
-            ? validateRerankPayload(egressWork, providerResult)
-            : undefined;
-        const tags =
-          egressWork.type === "enrichment"
-            ? validateTagEnrichmentPayload(egressWork, providerResult)
-            : undefined;
-        switch (egressWork.type) {
-          case "embedding":
-            return {
-              type: "embeddings",
-              workId: work.workId,
-              vectors: embeddings!,
-            };
-          case "rerank":
-            return { type: "rerank", workId: work.workId, scores: scores! };
-          case "enrichment":
-            return { type: "enrichment", workId: work.workId, tags: tags! };
-        }
-      } catch (error) {
-        lastError = error;
-        if (signal.aborted || attempt === this.#maxAttempts) {
-          throw new ProviderExecutionError(providerType, attempt, error);
-        }
-      }
+      throw new ProviderExecutionError(providerType, attempts || 1, error);
     }
-    throw new ProviderExecutionError(
-      providerType,
-      this.#maxAttempts,
-      lastError,
-    );
   }
 
   private async executeOnce(
